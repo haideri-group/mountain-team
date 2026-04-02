@@ -24,7 +24,7 @@ The tool manages ~14 frontend developers working across multiple JIRA boards —
 
 | Layer | Technology | Version |
 |-------|-----------|---------|
-| Framework | Next.js (App Router, RSC) | 16.x |
+| Framework | Next.js (App Router, RSC) | 16.2.2 |
 | UI Library | React | 19.x |
 | Language | TypeScript (strict) | 5.x |
 | Styling | Tailwind CSS | 4.x |
@@ -361,7 +361,7 @@ GET    /api/reports/pulse           → Weekly created vs completed
 ### Phase 1: Project Scaffolding
 **Duration:** 0.5 days | **Complexity:** Medium
 
-- Create `mountain-team/` directory with fresh Next.js 16 project
+- Create `mountain-team/` directory with fresh Next.js 16.2.2 project
 - Install all dependencies (see Tech Stack section)
 - Configure TypeScript strict mode, Tailwind v4, ESLint, Prettier
 - Set up shadcn/ui with base-nova style, install 12 UI components
