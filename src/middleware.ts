@@ -1,10 +1,12 @@
+import NextAuth from "next-auth";
+import { authConfig } from "./auth.config";
 import { NextResponse } from "next/server";
-import { auth } from "@/auth";
 
-// Public paths that do not require authentication
+export const { auth: middleware } = NextAuth(authConfig);
+
 const publicPaths = ["/login", "/api/auth"];
 
-export default auth((req) => {
+export default middleware((req) => {
   const { nextUrl } = req;
   const isLoggedIn = !!req.auth;
 
@@ -14,21 +16,19 @@ export default auth((req) => {
 
   // Allow access to public paths without auth
   if (isPublicPath) {
-    // If user is already logged in and trying to access /login, redirect to /overview
     if (isLoggedIn && nextUrl.pathname === "/login") {
       return NextResponse.redirect(new URL("/overview", nextUrl));
     }
     return NextResponse.next();
   }
 
-  // Redirect unauthenticated users to /login
+  // Redirect unauthenticated users
   if (!isLoggedIn && nextUrl.pathname !== "/") {
     const loginUrl = new URL("/login", nextUrl);
-    // loginUrl.searchParams.set("callbackUrl", nextUrl.pathname); // Optional query forwarding
     return NextResponse.redirect(loginUrl);
   }
 
-  // Root path forwards to /overview if logged in, otherwise /login
+  // Root path handling
   if (nextUrl.pathname === "/") {
     if (isLoggedIn) {
       return NextResponse.redirect(new URL("/overview", nextUrl));
@@ -40,7 +40,6 @@ export default auth((req) => {
   return NextResponse.next();
 });
 
-// Configure middleware to run on standard routes, skipping API/trpc, images, and static assets
 export const config = {
   matcher: ["/((?!api|_next/static|_next/image|favicon.ico|assets).*)"],
 };

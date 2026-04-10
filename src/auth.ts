@@ -1,4 +1,5 @@
 import NextAuth from "next-auth";
+import { authConfig } from "./auth.config";
 import GoogleProvider from "next-auth/providers/google";
 import CredentialsProvider from "next-auth/providers/credentials";
 import { db } from "./lib/db/index";
@@ -24,6 +25,7 @@ declare module "next-auth" {
 }
 
 export const { handlers, signIn, signOut, auth } = NextAuth({
+  ...authConfig,
   providers: [
     GoogleProvider({
       clientId: process.env.GOOGLE_CLIENT_ID,
@@ -68,28 +70,8 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
           };
         }
 
-        return null;
+        return null; // Invalid credentials
       },
     }),
-  ],
-  callbacks: {
-    async jwt({ token, user }) {
-      if (user) {
-        token.role = user.role;
-        token.id = user.id;
-      }
-      return token;
-    },
-    async session({ session, token }) {
-      if (session.user) {
-        if (token.role) session.user.role = token.role as string;
-        if (token.id) session.user.id = token.id as string;
-      }
-      return session;
-    },
-  },
-  pages: {
-    signIn: "/login",
-  },
-  session: { strategy: "jwt" },
+  ]
 });
