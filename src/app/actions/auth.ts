@@ -24,6 +24,14 @@ export async function loginWithGoogle() {
   await signIn("google", { redirectTo: "/overview" });
 }
 
+import { cookies } from "next/headers";
+
 export async function logout() {
-  await signOut();
+  const cookieStore = await cookies();
+  cookieStore.delete("authjs.session-token");
+  cookieStore.delete("__Secure-authjs.session-token");
+  cookieStore.delete("next-auth.session-token");
+  cookieStore.delete("__Secure-next-auth.session-token");
+  
+  await signOut({ redirectTo: "/login" });
 }
