@@ -3,7 +3,7 @@
 
 **Product:** TeamFlow
 **Company:** Tile Mountain
-**Repository:** https://github.com/haideri-group/mountain-team
+**Repository:** https://github.com/haidertm/team-flow
 **Last Updated:** April 2, 2026
 
 ---
