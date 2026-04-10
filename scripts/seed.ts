@@ -1,3 +1,6 @@
+import dotenv from "dotenv";
+dotenv.config({ path: ".env.local" });
+
 import { db } from "../src/lib/db";
 import { users, team_members, boards, issues, dashboardConfig, notifications } from "../src/lib/db/schema";
 
