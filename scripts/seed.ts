@@ -45,50 +45,47 @@ async function main() {
   ]);
 
   // Insert Team Members
-  await db.insert(team_members).values([
+  const developers = [
     { id: "tm_1", jiraAccountId: "jira_alex", displayName: "Alex Kim", email: "alex@tilemountain.co.uk", role: "Senior Frontend Developer", status: "active", capacity: 10, color: "#10b981", joinedDate: "2024-01-15" },
     { id: "tm_2", jiraAccountId: "jira_maria", displayName: "Maria Rodriguez", email: "maria@tilemountain.co.uk", role: "Frontend Developer", status: "active", capacity: 10, color: "#f59e0b", joinedDate: "2024-02-01" },
     { id: "tm_3", jiraAccountId: "jira_ryan", displayName: "Ryan Khan", email: "ryan@tilemountain.co.uk", role: "Junior Developer", status: "active", capacity: 5, color: "#6366f1", joinedDate: "2024-03-01" },
     { id: "tm_4", jiraAccountId: "jira_james", displayName: "James Liu", email: "james@tilemountain.co.uk", role: "UX Developer", status: "on_leave", capacity: 0, color: "#ec4899", joinedDate: "2023-11-01" },
     { id: "tm_5", jiraAccountId: "jira_david", displayName: "David Wang", email: "david@tilemountain.co.uk", role: "Mid Developer", status: "departed", capacity: 10, color: "#6b7280", joinedDate: "2020-02-01", departedDate: "2025-11-15" },
-  ]);
-
-  // Insert Mock Issues
-  const mockIssues = [
-    {
-      id: "iss_1",
-      jiraKey: "BUTTERFLY-112",
-      boardId: "brd_2", // tied to BUTTERFLY
-      assigneeId: "tm_1",
-      title: "Implement Google OAuth flow",
-      status: "in_progress" as const,
-      priority: "high" as const,
-      type: "story" as const,
-      storyPoints: 5,
-    },
-    {
-      id: "iss_2",
-      jiraKey: "PROD-5547",
-      boardId: "brd_1", // tied to PROD
-      assigneeId: "tm_2",
-      title: "Fix checkout 500 error on Safari",
-      status: "in_progress" as const,
-      priority: "highest" as const,
-      type: "bug" as const,
-      storyPoints: 3,
-    },
-    {
-      id: "iss_3",
-      jiraKey: "PROD-5532",
-      boardId: "brd_1", // tied to PROD
-      assigneeId: "tm_4",
-      title: "API timeout on user profile page",
-      status: "todo" as const,
-      priority: "medium" as const,
-      type: "bug" as const,
-      storyPoints: 2,
-    },
+    { id: "tm_6", jiraAccountId: "jira_emma", displayName: "Emma Davis", email: "emma@tilemountain.co.uk", role: "Backend Developer", status: "active", capacity: 10, color: "#8b5cf6", joinedDate: "2023-05-10" },
+    { id: "tm_7", jiraAccountId: "jira_liam", displayName: "Liam Smith", email: "liam@tilemountain.co.uk", role: "Fullstack Developer", status: "active", capacity: 8, color: "#ef4444", joinedDate: "2022-08-22" },
+    { id: "tm_8", jiraAccountId: "jira_olivia", displayName: "Olivia Taylor", email: "olivia@tilemountain.co.uk", role: "QA Engineer", status: "active", capacity: 10, color: "#14b8a6", joinedDate: "2023-11-15" },
+    { id: "tm_9", jiraAccountId: "jira_william", displayName: "William Brown", email: "william@tilemountain.co.uk", role: "DevOps Engineer", status: "active", capacity: 10, color: "#f97316", joinedDate: "2021-04-05" },
+    { id: "tm_10", jiraAccountId: "jira_sophia", displayName: "Sophia Wilson", email: "sophia@tilemountain.co.uk", role: "Frontend Developer", status: "active", capacity: 10, color: "#0ea5e9", joinedDate: "2024-01-20" },
+    { id: "tm_11", jiraAccountId: "jira_lucas", displayName: "Lucas Moore", email: "lucas@tilemountain.co.uk", role: "Junior Developer", status: "active", capacity: 8, color: "#d946ef", joinedDate: "2024-04-10" },
+    { id: "tm_12", jiraAccountId: "jira_isabella", displayName: "Isabella Lee", email: "isabella@tilemountain.co.uk", role: "Senior Backend Developer", status: "on_leave", capacity: 0, color: "#84cc16", joinedDate: "2022-02-14" },
+    { id: "tm_13", jiraAccountId: "jira_ethan", displayName: "Ethan Clark", email: "ethan@tilemountain.co.uk", role: "Product Manager", status: "active", capacity: 5, color: "#64748b", joinedDate: "2021-09-01" },
+    { id: "tm_14", jiraAccountId: "jira_mia", displayName: "Mia Allen", email: "mia@tilemountain.co.uk", role: "UI/UX Designer", status: "active", capacity: 10, color: "#f43f5e", joinedDate: "2023-07-07" },
   ];
+  await db.insert(team_members).values(developers);
+
+  // Procedurally Generate 60 Mock Issues
+  const mockIssues = [];
+  const statuses = ["todo", "in_progress", "done"];
+  const priorities = ["low", "medium", "high", "highest"];
+  const types = ["story", "bug", "task"];
+  const boardIds = ["brd_1", "brd_2", "brd_3", "brd_4", "brd_5"];
+  
+  for (let i = 1; i <= 60; i++) {
+    const boardId = boardIds[i % boardIds.length];
+    const prefix = boardId === "brd_1" ? "PROD" : boardId === "brd_2" ? "BUTTERFLY" : boardId === "brd_3" ? "EAGLE" : boardId === "brd_4" ? "DOLPHIN" : "FALCON";
+    
+    mockIssues.push({
+      id: `iss_${i}`,
+      jiraKey: `${prefix}-${1000 + i}`,
+      boardId,
+      assigneeId: developers[i % developers.length].id,
+      title: `Generated Development Task ${i} for ${prefix}`,
+      status: statuses[i % statuses.length] as any,
+      priority: priorities[i % priorities.length] as any,
+      type: types[i % types.length] as any,
+      storyPoints: (i % 5) + 1,
+    });
+  }
 
   await db.insert(issues).values(mockIssues);
 
