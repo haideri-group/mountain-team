@@ -45,7 +45,7 @@ async function main() {
   ]);
 
   // Insert Team Members
-  const developers = [
+  const developers: (typeof team_members.$inferInsert)[] = [
     { id: "tm_1", jiraAccountId: "jira_alex", displayName: "Alex Kim", email: "alex@tilemountain.co.uk", role: "Senior Frontend Developer", status: "active", capacity: 10, color: "#10b981", joinedDate: "2024-01-15" },
     { id: "tm_2", jiraAccountId: "jira_maria", displayName: "Maria Rodriguez", email: "maria@tilemountain.co.uk", role: "Frontend Developer", status: "active", capacity: 10, color: "#f59e0b", joinedDate: "2024-02-01" },
     { id: "tm_3", jiraAccountId: "jira_ryan", displayName: "Ryan Khan", email: "ryan@tilemountain.co.uk", role: "Junior Developer", status: "active", capacity: 5, color: "#6366f1", joinedDate: "2024-03-01" },
