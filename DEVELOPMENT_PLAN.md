@@ -3,7 +3,7 @@
 
 **Product:** TeamFlow
 **Company:** Tile Mountain
-**Repository:** https://github.com/haider-pw/mountain-team
+**Repository:** https://github.com/haideri-group/mountain-team
 **Last Updated:** April 2, 2026
 
 ---
@@ -33,7 +33,7 @@ The tool manages ~14 frontend developers working across multiple JIRA boards —
 | Charts | Recharts | 3.x |
 | Icons | Lucide React | Latest |
 | Dates | date-fns | 4.x |
-| Database | Turso (libsql) | Latest |
+| Database | MySQL | Latest |
 | ORM | Drizzle ORM | 0.38.x |
 | Auth | Auth.js (NextAuth v5) | 5.x beta |
 | Validation | Zod | 3.x |
@@ -149,7 +149,7 @@ The visual language follows the "Summit Logic" design system created in Google S
 
 ## 5. Database Schema
 
-Using Drizzle ORM with Turso (SQLite-compatible).
+Using Drizzle ORM with MySQL.
 
 ### 5.1 Tables
 
@@ -371,8 +371,6 @@ GET    /api/reports/pulse           → Weekly created vs completed
 **Deliverable:** Running Next.js app at `mountain-team/`, all tooling configured
 **Verify:** `yarn dev` starts, `yarn type-check` passes, `yarn lint` passes
 
----
-
 ### Phase 2: Design System + Layout
 **Duration:** 2-3 days | **Complexity:** Large
 
@@ -388,21 +386,17 @@ GET    /api/reports/pulse           → Weekly created vs completed
 **Deliverable:** Complete app shell with working navigation across all routes
 **Verify:** All routes render, sidebar highlights active route, theme toggle works, fonts correct
 
----
-
-### Phase 3: Database Schema + Turso
+### Phase 3: Database Schema + MySQL
 **Duration:** 1-2 days | **Complexity:** Medium
 
-- Set up Turso database (local dev with file:./local.db, production with Turso cloud)
-- Define Drizzle ORM schema for all 7 tables
+- Set up MySQL database
+- Define Drizzle schema for all 7 tables
 - Configure Drizzle Kit for migrations
 - Create seed script with realistic data (14 developers, 60 issues, 5 boards, notifications)
 - Test CRUD operations through Drizzle Studio
 
 **Deliverable:** Populated database with complete seed data
 **Verify:** `npx drizzle-kit push` succeeds, `npx tsx scripts/seed.ts` populates, Drizzle Studio shows data
-
----
 
 ### Phase 4: Auth System
 **Duration:** 2-3 days | **Complexity:** Large
@@ -417,8 +411,6 @@ GET    /api/reports/pulse           → Weekly created vs completed
 **Deliverable:** Complete auth flow — login, session, role-based access, sign out
 **Verify:** Login works, admin sees Settings, user doesn't, middleware redirects unauthenticated
 
----
-
 ### Phase 5: Mock Data Layer
 **Duration:** 1-2 days | **Complexity:** Medium
 
@@ -429,8 +421,6 @@ GET    /api/reports/pulse           → Weekly created vs completed
 
 **Deliverable:** Complete mock data layer importable by any component
 **Verify:** TypeScript compiles, data matches DESIGN_BLUEPRINT.md specifications
-
----
 
 ### Phase 6: Dashboard Screens
 **Duration:** 5-7 days | **Complexity:** Extra Large
@@ -460,8 +450,6 @@ GET    /api/reports/pulse           → Weekly created vs completed
 **Deliverable:** 3 major screen types fully rendering with mock data
 **Verify:** Cards show correct NOW/QUEUE/DONE, charts render, calendar has bars, table sorts/filters
 
----
-
 ### Phase 7: Management Screens
 **Duration:** 3-4 days | **Complexity:** Large
 
@@ -485,8 +473,6 @@ GET    /api/reports/pulse           → Weekly created vs completed
 **Deliverable:** All management + settings screens
 **Verify:** Slide-overs animate, workload bars sorted, Settings admin-only
 
----
-
 ### Phase 8: Reports Page
 **Duration:** 4-5 days | **Complexity:** Extra Large
 
@@ -507,8 +493,6 @@ Build 12 chart/visualization components using Recharts:
 **Deliverable:** Complete analytics page with all visualizations
 **Verify:** All charts render, responsive, heatmap shows annotations/tooltips
 
----
-
 ### Phase 9: Interactive Features
 **Duration:** 3-4 days | **Complexity:** Large
 
@@ -520,8 +504,6 @@ Build 12 chart/visualization components using Recharts:
 
 **Deliverable:** All interactive overlays and state management
 **Verify:** Dropdowns positioned correctly, notifications filter by tab, filters persist in URL
-
----
 
 ### Phase 10: JIRA Integration
 **Duration:** 5-7 days | **Complexity:** Extra Large
@@ -537,8 +519,6 @@ Build 12 chart/visualization components using Recharts:
 **Deliverable:** Live JIRA data flowing through the entire app
 **Verify:** Manual sync works, data appears on dashboard, incremental sync detects changes
 
----
-
 ### Phase 11: Polish + Deploy
 **Duration:** 3-4 days | **Complexity:** Large
 
@@ -546,7 +526,7 @@ Build 12 chart/visualization components using Recharts:
 - Loading skeletons matching exact page layouts
 - Empty states for no-data scenarios
 - Performance: dynamic imports for Recharts, proper TanStack Query tuning, React.memo on heavy components
-- Vercel deployment (env vars, Turso edge access, Auth.js redirect URIs)
+- Vercel deployment (env vars, MySQL access, Auth.js redirect URIs)
 - Final visual polish (transitions, hover effects, animations)
 - Favicon, meta tags, Open Graph
 
@@ -594,7 +574,7 @@ mountain-team/
 ├── .prettierrc
 ├── .yarnrc.yml
 ├── components.json               (shadcn/ui config)
-├── drizzle.config.ts             (Drizzle Kit for Turso)
+├── drizzle.config.ts             (Drizzle Kit for MySQL)
 ├── eslint.config.mjs
 ├── next.config.ts
 ├── package.json
@@ -730,7 +710,7 @@ mountain-team/
     │   ├── constants.ts          (nav items, role types, color mappings)
     │   ├── auth.ts               (Auth.js config)
     │   ├── db/
-    │   │   ├── index.ts          (Turso + Drizzle instance)
+    │   │   ├── index.ts          (MySQL + Drizzle instance)
     │   │   └── schema.ts         (all table definitions)
     │   ├── jira/
     │   │   ├── client.ts         (REST API v3 client)
@@ -769,7 +749,7 @@ mountain-team/
 |-------|------|----------|------------|
 | 1 | Project Scaffolding | 0.5 days | Medium |
 | 2 | Design System + Layout | 2-3 days | Large |
-| 3 | Database Schema + Turso | 1-2 days | Medium |
+| 3 | Database Schema + MySQL | 1-2 days | Medium |
 | 4 | Auth System | 2-3 days | Large |
 | 5 | Mock Data Layer | 1-2 days | Medium |
 | 6 | Dashboard Screens (Overview + Profile + Calendar) | 5-7 days | Extra Large |

@@ -20,7 +20,7 @@ yarn lint             # ESLint 9 with Next.js + TypeScript rules
 yarn lint:fix         # Auto-fix lint issues
 yarn format           # Prettier format src/**/*.{ts,tsx,css,json}
 yarn format:check     # Check formatting without writing
-yarn db:push          # Push Drizzle schema to Turso
+yarn db:push          # Push Drizzle schema to MySQL
 yarn db:studio        # Open Drizzle Studio (database GUI)
 yarn db:seed          # Seed database with mock data (tsx scripts/seed.ts)
 ```
@@ -41,7 +41,7 @@ yarn db:seed          # Seed database with mock data (tsx scripts/seed.ts)
 
 Route groups `(auth)` and `(dashboard)` use separate layouts. Dashboard layout includes sidebar (280px dark navy) + topbar (64px).
 
-**Database:** Turso (libsql) with Drizzle ORM. 7 tables: users, team_members, boards, issues, sync_logs, dashboard_config, notifications. Local dev uses `file:./local.db`.
+**Database:** MySQL with Drizzle ORM. 7 tables: users, team_members, boards, issues, sync_logs, dashboard_config, notifications.
 
 **Auth:** Auth.js v5 (NextAuth beta) with Google OAuth + Credentials providers. JWT session strategy. Two roles: `admin` (full access) and `user` (no Settings, no Add Member, no Sync Now).
 
@@ -84,7 +84,7 @@ When building new components:
 ## Environment Variables
 
 Copy `.env.example` to `.env.local`. Required for full functionality:
-- `TURSO_DATABASE_URL` + `TURSO_AUTH_TOKEN` — Database (use `file:./local.db` for local dev)
+- `DATABASE_URL` — Database connection string (e.g. mysql://...)
 - `NEXTAUTH_SECRET` + `NEXTAUTH_URL` — Auth sessions
 - `GOOGLE_CLIENT_ID` + `GOOGLE_CLIENT_SECRET` — Google OAuth
 - `JIRA_BASE_URL` + `JIRA_USER_EMAIL` + `JIRA_API_TOKEN` — JIRA sync
