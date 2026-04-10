@@ -1,10 +1,20 @@
-export default function OverviewPage() {
+import { auth } from "@/auth";
+import { OverviewDashboard } from "@/components/overview/overview-dashboard";
+
+export default async function OverviewPage() {
+  const session = await auth();
+  const isAdmin = session?.user?.role === "admin";
+
   return (
-    <div className="space-y-6">
-      <h2 className="text-3xl font-bold tracking-tight font-mono">Overview</h2>
-      <div className="rounded-xl border border-border bg-card p-8">
-        <p className="text-muted-foreground">Team Overview dashboard content goes here.</p>
+    <div>
+      <div className="mb-6">
+        <h1 className="text-2xl font-bold font-mono">Overview</h1>
+        <p className="text-sm text-muted-foreground mt-1">
+          Track your team&apos;s current work, upcoming tasks, and workload
+        </p>
       </div>
+
+      <OverviewDashboard isAdmin={isAdmin} />
     </div>
-  )
+  );
 }
