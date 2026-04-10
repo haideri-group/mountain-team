@@ -1,7 +1,7 @@
 "use client";
 
-import { useState, useEffect } from "react";
-import { Plus, Search, Check, Loader2, AlertTriangle, Wifi, WifiOff } from "lucide-react";
+import { useState, useEffect, useCallback } from "react";
+import { Plus, Search, Check, Loader2, AlertTriangle, Wifi, WifiOff, ChevronDown } from "lucide-react";
 
 interface JiraProject {
   key: string;
@@ -16,7 +16,8 @@ interface AddBoardPanelProps {
   onBoardAdded: () => void;
 }
 
-// Random color for new boards
+const PAGE_SIZE = 12;
+
 const boardColors = [
   "#ef4444", "#f97316", "#f59e0b", "#84cc16", "#22c55e",
   "#14b8a6", "#06b6d4", "#3b82f6", "#6366f1", "#8b5cf6",
@@ -24,38 +25,76 @@ const boardColors = [
 ];
 
 export function AddBoardPanel({ onBoardAdded }: AddBoardPanelProps) {
-  const [jiraProjects, setJiraProjects] = useState<JiraProject[]>([]);
+  const [projects, setProjects] = useState<JiraProject[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [adding, setAdding] = useState<string | null>(null);
-  const [showManualForm, setShowManualForm] = useState(false);
+  const [total, setTotal] = useState(0);
+  const [isLast, setIsLast] = useState(false);
+  const [startAt, setStartAt] = useState(0);
+  const [searchTimeout, setSearchTimeout] = useState<NodeJS.Timeout | null>(null);
 
   // Manual form state
+  const [showManualForm, setShowManualForm] = useState(false);
   const [manualForm, setManualForm] = useState({ jiraKey: "", name: "", color: "#ff8400", description: "" });
   const [manualError, setManualError] = useState("");
   const [manualLoading, setManualLoading] = useState(false);
 
-  useEffect(() => {
-    fetchProjects();
-  }, []);
-
-  const fetchProjects = async () => {
-    setLoading(true);
+  const fetchProjects = useCallback(async (offset = 0, query?: string, append = false) => {
+    if (append) {
+      setLoadingMore(true);
+    } else {
+      setLoading(true);
+    }
     setError(null);
+
     try {
-      const res = await fetch("/api/jira/projects");
+      let url = `/api/jira/projects?startAt=${offset}&maxResults=${PAGE_SIZE}`;
+      if (query) url += `&query=${encodeURIComponent(query)}`;
+
+      const res = await fetch(url);
       if (!res.ok) {
         const data = await res.json();
         throw new Error(data.error || "Failed to fetch JIRA projects");
       }
+
       const data = await res.json();
-      setJiraProjects(data);
+
+      if (append) {
+        setProjects((prev) => [...prev, ...data.projects]);
+      } else {
+        setProjects(data.projects);
+      }
+
+      setTotal(data.total);
+      setIsLast(data.isLast);
+      setStartAt(data.startAt + data.maxResults);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to connect to JIRA");
     } finally {
       setLoading(false);
+      setLoadingMore(false);
     }
+  }, []);
+
+  useEffect(() => {
+    fetchProjects(0);
+  }, [fetchProjects]);
+
+  // Debounced search
+  const handleSearch = (value: string) => {
+    setSearch(value);
+    if (searchTimeout) clearTimeout(searchTimeout);
+    const timeout = setTimeout(() => {
+      fetchProjects(0, value || undefined);
+    }, 400);
+    setSearchTimeout(timeout);
+  };
+
+  const handleLoadMore = () => {
+    fetchProjects(startAt, search || undefined, true);
   };
 
   const handleTrack = async (project: JiraProject) => {
@@ -79,8 +118,7 @@ export function AddBoardPanel({ onBoardAdded }: AddBoardPanelProps) {
         throw new Error(data.error);
       }
 
-      // Update local state to show as added
-      setJiraProjects(jiraProjects.map((p) =>
+      setProjects(projects.map((p) =>
         p.key === project.key ? { ...p, alreadyAdded: true } : p,
       ));
       onBoardAdded();
@@ -119,16 +157,10 @@ export function AddBoardPanel({ onBoardAdded }: AddBoardPanelProps) {
     }
   };
 
-  const filtered = jiraProjects.filter(
-    (p) =>
-      p.key.toLowerCase().includes(search.toLowerCase()) ||
-      p.name.toLowerCase().includes(search.toLowerCase()),
-  );
+  const available = projects.filter((p) => !p.alreadyAdded);
+  const alreadyTracked = projects.filter((p) => p.alreadyAdded);
 
-  const available = filtered.filter((p) => !p.alreadyAdded);
-  const alreadyTracked = filtered.filter((p) => p.alreadyAdded);
-
-  // JIRA not configured — show manual form
+  // JIRA not configured
   if (!loading && error?.includes("not configured")) {
     return (
       <div className="px-6 py-5 space-y-5">
@@ -137,22 +169,16 @@ export function AddBoardPanel({ onBoardAdded }: AddBoardPanelProps) {
           <div>
             <p className="text-sm font-semibold">JIRA not connected</p>
             <p className="text-xs mt-0.5 opacity-80">
-              Add JIRA_BASE_URL, JIRA_USER_EMAIL, and JIRA_API_TOKEN to your .env file to fetch projects automatically.
+              Add JIRA credentials to your .env file to fetch projects automatically.
             </p>
           </div>
         </div>
-        <ManualForm
-          form={manualForm}
-          setForm={setManualForm}
-          error={manualError}
-          loading={manualLoading}
-          onSubmit={handleManualAdd}
-        />
+        <ManualForm form={manualForm} setForm={setManualForm} error={manualError} loading={manualLoading} onSubmit={handleManualAdd} />
       </div>
     );
   }
 
-  // Loading state
+  // Initial loading
   if (loading) {
     return (
       <div className="flex items-center justify-center py-20">
@@ -162,10 +188,10 @@ export function AddBoardPanel({ onBoardAdded }: AddBoardPanelProps) {
     );
   }
 
-  // JIRA error (not config related)
+  // JIRA error
   if (error) {
     return (
-      <div className="px-6 py-5 space-y-5">
+      <div className="px-6 py-5 space-y-4">
         <div className="flex items-center gap-3 p-4 rounded-lg bg-destructive/10 text-destructive">
           <AlertTriangle className="h-5 w-5 shrink-0" />
           <div>
@@ -173,28 +199,16 @@ export function AddBoardPanel({ onBoardAdded }: AddBoardPanelProps) {
             <p className="text-xs mt-0.5 opacity-80">{error}</p>
           </div>
         </div>
-        <button
-          onClick={fetchProjects}
-          className="text-sm text-primary font-medium hover:underline"
-        >
+        <button onClick={() => fetchProjects(0)} className="text-sm text-primary font-medium hover:underline">
           Retry
         </button>
         <div className="pt-2 border-t border-border">
-          <button
-            onClick={() => setShowManualForm(!showManualForm)}
-            className="text-sm text-muted-foreground hover:text-foreground"
-          >
+          <button onClick={() => setShowManualForm(!showManualForm)} className="text-sm text-muted-foreground hover:text-foreground">
             Or add manually →
           </button>
           {showManualForm && (
             <div className="mt-4">
-              <ManualForm
-                form={manualForm}
-                setForm={setManualForm}
-                error={manualError}
-                loading={manualLoading}
-                onSubmit={handleManualAdd}
-              />
+              <ManualForm form={manualForm} setForm={setManualForm} error={manualError} loading={manualLoading} onSubmit={handleManualAdd} />
             </div>
           )}
         </div>
@@ -202,13 +216,16 @@ export function AddBoardPanel({ onBoardAdded }: AddBoardPanelProps) {
     );
   }
 
-  // JIRA connected — show project list
+  // JIRA connected — paginated list
   return (
     <div className="flex flex-col h-full">
       <div className="px-6 py-4 space-y-4">
-        <div className="flex items-center gap-2 text-emerald-600 dark:text-emerald-400">
-          <Wifi className="h-4 w-4" />
-          <span className="text-xs font-semibold font-mono uppercase tracking-wider">Connected to JIRA</span>
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2 text-emerald-600 dark:text-emerald-400">
+            <Wifi className="h-4 w-4" />
+            <span className="text-xs font-semibold font-mono uppercase tracking-wider">Connected to JIRA</span>
+          </div>
+          <span className="text-xs text-muted-foreground font-mono">{total} projects</span>
         </div>
 
         <div className="relative">
@@ -216,8 +233,8 @@ export function AddBoardPanel({ onBoardAdded }: AddBoardPanelProps) {
           <input
             type="text"
             value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search projects..."
+            onChange={(e) => handleSearch(e.target.value)}
+            placeholder="Search JIRA projects..."
             className="w-full h-10 pl-9 pr-4 rounded-lg bg-muted/30 border-transparent text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 transition-all"
           />
         </div>
@@ -228,7 +245,7 @@ export function AddBoardPanel({ onBoardAdded }: AddBoardPanelProps) {
         {available.length > 0 && (
           <div className="space-y-2">
             <p className="text-xs font-bold font-mono uppercase tracking-wider text-muted-foreground">
-              Available ({available.length})
+              Available
             </p>
             {available.map((project) => (
               <div
@@ -267,13 +284,10 @@ export function AddBoardPanel({ onBoardAdded }: AddBoardPanelProps) {
         {alreadyTracked.length > 0 && (
           <div className="space-y-2">
             <p className="text-xs font-bold font-mono uppercase tracking-wider text-muted-foreground">
-              Already Tracked ({alreadyTracked.length})
+              Already Tracked
             </p>
             {alreadyTracked.map((project) => (
-              <div
-                key={project.key}
-                className="flex items-center gap-3 p-3 rounded-xl opacity-50"
-              >
+              <div key={project.key} className="flex items-center gap-3 p-3 rounded-xl opacity-50">
                 {project.avatarUrl ? (
                   <img src={project.avatarUrl} alt="" className="h-9 w-9 rounded-lg" />
                 ) : (
@@ -291,9 +305,25 @@ export function AddBoardPanel({ onBoardAdded }: AddBoardPanelProps) {
           </div>
         )}
 
-        {filtered.length === 0 && (
+        {/* Load More */}
+        {!isLast && (
+          <button
+            onClick={handleLoadMore}
+            disabled={loadingMore}
+            className="w-full flex items-center justify-center gap-2 py-3 rounded-xl bg-muted/20 hover:bg-muted/30 text-sm font-medium text-muted-foreground transition-all disabled:opacity-50"
+          >
+            {loadingMore ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <ChevronDown className="h-4 w-4" />
+            )}
+            {loadingMore ? "Loading..." : `Load more (${projects.length} of ${total})`}
+          </button>
+        )}
+
+        {projects.length === 0 && !loading && (
           <p className="text-sm text-muted-foreground text-center py-8">
-            No projects found matching &ldquo;{search}&rdquo;
+            No projects found{search ? ` matching "${search}"` : ""}
           </p>
         )}
       </div>
@@ -301,7 +331,6 @@ export function AddBoardPanel({ onBoardAdded }: AddBoardPanelProps) {
   );
 }
 
-// Manual fallback form
 function ManualForm({
   form,
   setForm,
@@ -317,49 +346,23 @@ function ManualForm({
 }) {
   return (
     <form onSubmit={onSubmit} className="space-y-4">
-      {error && (
-        <div className="px-3 py-2 rounded-lg bg-destructive/10 text-destructive text-sm">{error}</div>
-      )}
+      {error && <div className="px-3 py-2 rounded-lg bg-destructive/10 text-destructive text-sm">{error}</div>}
       <div className="space-y-1.5">
-        <label className="text-xs font-bold font-mono uppercase tracking-wider text-muted-foreground">
-          JIRA Board Key *
-        </label>
-        <input
-          type="text"
-          value={form.jiraKey}
-          onChange={(e) => setForm({ ...form, jiraKey: e.target.value.toUpperCase() })}
-          placeholder="e.g. PROD, BUTTERFLY"
-          className="w-full h-11 px-4 rounded-lg bg-muted/30 border-transparent text-sm font-mono uppercase focus:outline-none focus:ring-2 focus:ring-primary/30"
-          required
-        />
+        <label className="text-xs font-bold font-mono uppercase tracking-wider text-muted-foreground">JIRA Board Key *</label>
+        <input type="text" value={form.jiraKey} onChange={(e) => setForm({ ...form, jiraKey: e.target.value.toUpperCase() })} placeholder="e.g. PROD, BUTTERFLY" className="w-full h-11 px-4 rounded-lg bg-muted/30 border-transparent text-sm font-mono uppercase focus:outline-none focus:ring-2 focus:ring-primary/30" required />
       </div>
       <div className="space-y-1.5">
-        <label className="text-xs font-bold font-mono uppercase tracking-wider text-muted-foreground">
-          Project Name *
-        </label>
-        <input
-          type="text"
-          value={form.name}
-          onChange={(e) => setForm({ ...form, name: e.target.value })}
-          placeholder="e.g. Production Board"
-          className="w-full h-11 px-4 rounded-lg bg-muted/30 border-transparent text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
-          required
-        />
+        <label className="text-xs font-bold font-mono uppercase tracking-wider text-muted-foreground">Project Name *</label>
+        <input type="text" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="e.g. Production Board" className="w-full h-11 px-4 rounded-lg bg-muted/30 border-transparent text-sm focus:outline-none focus:ring-2 focus:ring-primary/30" required />
       </div>
       <div className="space-y-1.5">
-        <label className="text-xs font-bold font-mono uppercase tracking-wider text-muted-foreground">
-          Color
-        </label>
+        <label className="text-xs font-bold font-mono uppercase tracking-wider text-muted-foreground">Color</label>
         <div className="flex gap-2">
           <input type="color" value={form.color} onChange={(e) => setForm({ ...form, color: e.target.value })} className="h-10 w-10 rounded-lg cursor-pointer border-0" />
           <input type="text" value={form.color} onChange={(e) => setForm({ ...form, color: e.target.value })} className="w-28 h-10 px-3 rounded-lg bg-muted/30 text-sm font-mono" />
         </div>
       </div>
-      <button
-        type="submit"
-        disabled={loading}
-        className="flex items-center gap-2 px-5 h-10 rounded-lg text-sm font-bold font-mono uppercase tracking-wider bg-[#1a1a2e] text-white hover:bg-[#1a1a2e]/90 shadow-lg transition-all disabled:opacity-50 w-full justify-center"
-      >
+      <button type="submit" disabled={loading} className="flex items-center gap-2 px-5 h-10 rounded-lg text-sm font-bold font-mono uppercase tracking-wider bg-[#1a1a2e] text-white hover:bg-[#1a1a2e]/90 shadow-lg transition-all disabled:opacity-50 w-full justify-center">
         <Plus className="h-4 w-4" />
         {loading ? "Adding..." : "Add Project"}
       </button>

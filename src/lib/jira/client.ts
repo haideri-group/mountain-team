@@ -65,16 +65,47 @@ export interface JiraProjectInfo {
   avatarUrl: string | null;
 }
 
-// Fetch all projects from JIRA
-export async function fetchJiraProjects(): Promise<JiraProjectInfo[]> {
-  const projects = await jiraFetch<JiraProject[]>("/project?expand=description");
+export interface JiraProjectsPage {
+  projects: JiraProjectInfo[];
+  total: number;
+  startAt: number;
+  maxResults: number;
+  isLast: boolean;
+}
 
-  return projects.map((p) => ({
-    key: p.key,
-    name: p.name,
-    type: p.projectTypeKey,
-    avatarUrl: p.avatarUrls?.["48x48"] || null,
-  }));
+interface JiraProjectSearchResponse {
+  values: JiraProject[];
+  total: number;
+  startAt: number;
+  maxResults: number;
+  isLast: boolean;
+}
+
+// Fetch projects from JIRA with pagination
+export async function fetchJiraProjects(
+  startAt = 0,
+  maxResults = 12,
+  query?: string,
+): Promise<JiraProjectsPage> {
+  let path = `/project/search?startAt=${startAt}&maxResults=${maxResults}&orderBy=key`;
+  if (query) {
+    path += `&query=${encodeURIComponent(query)}`;
+  }
+
+  const data = await jiraFetch<JiraProjectSearchResponse>(path);
+
+  return {
+    projects: data.values.map((p) => ({
+      key: p.key,
+      name: p.name,
+      type: p.projectTypeKey,
+      avatarUrl: p.avatarUrls?.["48x48"] || null,
+    })),
+    total: data.total,
+    startAt: data.startAt,
+    maxResults: data.maxResults,
+    isLast: data.isLast,
+  };
 }
 
 // Verify a JIRA user exists
