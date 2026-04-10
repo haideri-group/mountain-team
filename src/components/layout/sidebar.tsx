@@ -1,7 +1,13 @@
 import Link from "next/link";
 import { Users, LayoutDashboard, Briefcase, Calendar, FolderGit2, CheckSquare, Settings, UserCircle, PieChart, ChevronDown } from "lucide-react";
+import { auth } from "@/auth";
 
-export function Sidebar() {
+export async function Sidebar() {
+  const session = await auth();
+  const isAdmin = session?.user?.role === "admin";
+  const userEmail = session?.user?.email || "guest@tilemountain.co.uk";
+  const userName = session?.user?.name || "Guest User";
+
   return (
     <div className="w-[280px] h-full bg-sidebar flex flex-col border-r border-sidebar-border">
       {/* Header */}
@@ -20,30 +26,28 @@ export function Sidebar() {
           <h4 className="mb-4 px-2 text-xs font-semibold tracking-widest text-muted uppercase font-mono">Main</h4>
           <nav className="space-y-1">
             <NavItem href="/overview" icon={<LayoutDashboard size={24} />} label="Overview" />
-            <NavItem href="/projects" icon={<FolderGit2 size={24} />} label="Projects" />
             <NavItem href="/calendar" icon={<Calendar size={24} />} label="Calendar" />
-            <NavItem href="/workload" icon={<Briefcase size={24} />} label="Workload" />
             <NavItem href="/members" icon={<UserCircle size={24} />} label="Members" />
-            <NavItem href="/reports" icon={<PieChart size={24} />} label="Reports" />
           </nav>
         </div>
 
-        <div>
-          <h4 className="mb-4 px-2 text-xs font-semibold tracking-widest text-muted uppercase font-mono">System</h4>
-          <nav className="space-y-1">
-            <NavItem href="/settings" icon={<Settings size={24} />} label="Settings" />
-          </nav>
-        </div>
+        {isAdmin && (
+          <div>
+            <h4 className="mb-4 px-2 text-xs font-semibold tracking-widest text-muted uppercase font-mono">System</h4>
+            <nav className="space-y-1">
+              <NavItem href="/settings" icon={<Settings size={24} />} label="Settings" />
+            </nav>
+          </div>
+        )}
       </div>
 
       {/* Footer */}
       <div className="p-4 border-t border-sidebar-border">
         <button className="flex w-full items-center gap-3 rounded-lg p-2 hover:bg-sidebar-accent transition-colors">
           <div className="flex flex-col items-start gap-1">
-            <span className="text-sm font-medium text-sidebar-foreground">Sarah Chen</span>
-            <span className="text-xs text-muted">sarah.chen@tilemountain.co.uk</span>
+            <span className="text-sm font-medium text-sidebar-foreground truncate w-40 text-left">{userName}</span>
+            <span className="text-xs text-muted truncate w-40 text-left">{userEmail}</span>
           </div>
-          <ChevronDown className="h-4 w-4 ml-auto text-muted" />
         </button>
       </div>
     </div>

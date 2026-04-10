@@ -1,9 +1,12 @@
-"use client"
-
-import { Bell, Search } from "lucide-react";
+import { Bell, Search, LogOut } from "lucide-react";
 import { ThemeToggle } from "./theme-toggle";
+import { auth } from "@/auth";
+import { logout } from "@/app/actions/auth";
 
-export function Topbar() {
+export async function Topbar() {
+  const session = await auth();
+  const initials = session?.user?.name?.substring(0, 2).toUpperCase() || "U";
+
   return (
     <div className="h-16 flex items-center justify-between px-8 bg-card border-b border-border shrink-0">
       <div className="flex items-center gap-6 flex-1">
@@ -23,7 +26,7 @@ export function Topbar() {
       <div className="flex items-center gap-4">
         <ThemeToggle />
         
-        <button className="relative p-2 rounded-full hover:bg-accent transition-colors">
+        <button className="relative p-2 rounded-full hover:bg-accent transition-colors hidden sm:block">
           <Bell className="h-5 w-5 text-foreground" />
           <span className="absolute top-1.5 right-1.5 flex h-2 w-2">
             <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-destructive opacity-75"></span>
@@ -31,8 +34,15 @@ export function Topbar() {
           </span>
         </button>
 
-        <div className="h-8 w-8 rounded-full bg-primary flex items-center justify-center text-primary-foreground font-medium text-xs ml-2 cursor-pointer shadow-sm">
-          SC
+        <div className="flex items-center ml-2 border-l border-border pl-4 gap-4">
+          <div className="h-8 w-8 rounded-full bg-primary flex items-center justify-center text-primary-foreground font-medium text-xs shadow-sm">
+            {initials}
+          </div>
+          <form action={logout}>
+            <button type="submit" className="text-muted hover:text-foreground transition-colors mt-1" title="Sign out">
+              <LogOut className="h-5 w-5" />
+            </button>
+          </form>
         </div>
       </div>
     </div>
