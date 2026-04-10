@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { Inbox, Check, Circle } from "lucide-react";
 import { StatusBadge } from "@/components/shared/status-badge";
 import { IssueStatusBadge } from "./issue-status-badge";
@@ -68,8 +69,9 @@ export function DevCard({ member }: { member: DevCardMember }) {
   const isIdle = !member.currentIssue && member.queuedIssues.length === 0;
 
   return (
-    <div
-      className={`bg-card rounded-xl overflow-hidden flex flex-col ${
+    <Link
+      href={`/members/${member.id}`}
+      className={`bg-card rounded-xl overflow-hidden flex flex-col cursor-pointer hover:ring-2 hover:ring-primary/20 transition-all ${
         member.status === "departed" ? "opacity-50" : ""
       }`}
     >
@@ -216,6 +218,6 @@ export function DevCard({ member }: { member: DevCardMember }) {
           <p className="text-[10px] text-muted-foreground mt-1.5">Available for assignment</p>
         )}
       </div>
-    </div>
+    </Link>
   );
 }

@@ -1,0 +1,244 @@
+import { NextResponse } from "next/server";
+import { db } from "@/lib/db";
+import { team_members, issues, boards } from "@/lib/db/schema";
+import { eq, and, inArray } from "drizzle-orm";
+
+export async function GET(
+  _request: Request,
+  { params }: { params: Promise<{ id: string }> },
+) {
+  try {
+    const { id } = await params;
+
+    // Fetch member
+    const [member] = await db
+      .select()
+      .from(team_members)
+      .where(eq(team_members.id, id))
+      .limit(1);
+
+    if (!member) {
+      return NextResponse.json({ error: "Member not found" }, { status: 404 });
+    }
+
+    // Fetch tracked boards
+    const trackedBoards = await db
+      .select()
+      .from(boards)
+      .where(eq(boards.isTracked, true));
+
+    const trackedBoardIds = trackedBoards.map((b) => b.id);
+    const boardMap = new Map(trackedBoards.map((b) => [b.id, b]));
+
+    // Fetch all issues assigned to this member from tracked boards
+    let memberIssues: (typeof issues.$inferSelect)[] = [];
+    if (trackedBoardIds.length > 0) {
+      memberIssues = await db
+        .select()
+        .from(issues)
+        .where(
+          and(
+            eq(issues.assigneeId, id),
+            inArray(issues.boardId, trackedBoardIds),
+          ),
+        );
+    }
+
+    // Enrich issues with board info
+    const enrichedIssues = memberIssues.map((issue) => {
+      const board = boardMap.get(issue.boardId);
+      return {
+        ...issue,
+        boardKey: board?.jiraKey || "",
+        boardColor: board?.color || "#6b7280",
+        boardName: board?.name || "",
+      };
+    });
+
+    // Sort by createdAt descending for task history
+    const allIssuesSorted = [...enrichedIssues].sort((a, b) => {
+      const aDate = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+      const bDate = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+      return bDate - aDate;
+    });
+
+    // 7 days ago
+    const sevenDaysAgo = new Date();
+    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+    const sevenDaysAgoStr = sevenDaysAgo.toISOString().split("T")[0];
+
+    const today = new Date().toISOString().split("T")[0];
+
+    // Current task
+    const currentIssue =
+      enrichedIssues.find((i) => i.status === "in_progress") || null;
+
+    // Queued tasks
+    const queuedIssues = enrichedIssues
+      .filter((i) => i.status === "todo")
+      .sort((a, b) => {
+        if (!a.startDate && !b.startDate) return 0;
+        if (!a.startDate) return 1;
+        if (!b.startDate) return -1;
+        return a.startDate.localeCompare(b.startDate);
+      });
+
+    // In review / ready for testing / ready for live
+    const inReviewIssues = enrichedIssues.filter((i) =>
+      ["in_review", "ready_for_testing", "ready_for_live"].includes(i.status),
+    );
+
+    // Recent done (7 days)
+    const recentDone = enrichedIssues
+      .filter(
+        (i) =>
+          i.status === "done" &&
+          i.completedDate &&
+          i.completedDate >= sevenDaysAgoStr,
+      )
+      .sort((a, b) =>
+        (b.completedDate || "").localeCompare(a.completedDate || ""),
+      );
+
+    // Stats
+    const totalTasks = enrichedIssues.length;
+    const totalDone = enrichedIssues.filter((i) => i.status === "done").length;
+    const totalClosed = enrichedIssues.filter(
+      (i) => i.status === "closed",
+    ).length;
+
+    // On-time delivery
+    const doneWithDue = enrichedIssues.filter(
+      (i) => i.status === "done" && i.dueDate,
+    );
+    const onTime = doneWithDue.filter(
+      (i) => i.completedDate && i.dueDate && i.completedDate <= i.dueDate,
+    ).length;
+    const onTimePercentage =
+      doneWithDue.length > 0 ? Math.round((onTime / doneWithDue.length) * 100) : 100;
+
+    // Avg cycle time
+    const doneTasks = enrichedIssues.filter(
+      (i) => i.status === "done" && i.cycleTime,
+    );
+    const avgCycleTime =
+      doneTasks.length > 0
+        ? Math.round(
+            (doneTasks.reduce((s, i) => s + (i.cycleTime || 0), 0) /
+              doneTasks.length) *
+              10,
+          ) / 10
+        : 0;
+
+    // Active story points (for "this sprint")
+    const activePoints = enrichedIssues
+      .filter((i) =>
+        [
+          "todo",
+          "in_progress",
+          "in_review",
+          "ready_for_testing",
+          "ready_for_live",
+        ].includes(i.status),
+      )
+      .reduce((sum, i) => sum + (i.storyPoints || 0), 0);
+
+    // Workload
+    const capacity = member.capacity || 10;
+    const activePointsForWorkload = enrichedIssues
+      .filter((i) =>
+        [
+          "todo",
+          "in_progress",
+          "in_review",
+          "ready_for_testing",
+          "ready_for_live",
+        ].includes(i.status),
+      )
+      .reduce((sum, i) => sum + (i.storyPoints || 1), 0);
+    const workloadPercentage = Math.round(
+      (activePointsForWorkload / capacity) * 100,
+    );
+
+    // Overdue count
+    const overdueCount = enrichedIssues.filter(
+      (i) =>
+        i.dueDate &&
+        i.dueDate < today &&
+        i.status !== "done" &&
+        i.status !== "closed",
+    ).length;
+
+    // Monthly completion data (last 6 months)
+    const monthlyData: { month: string; count: number }[] = [];
+    for (let i = 5; i >= 0; i--) {
+      const d = new Date();
+      d.setMonth(d.getMonth() - i);
+      const year = d.getFullYear();
+      const month = d.getMonth();
+      const monthStr = d.toLocaleDateString("en-GB", { month: "short" });
+      const count = enrichedIssues.filter((issue) => {
+        if (issue.status !== "done" || !issue.completedDate) return false;
+        const cd = new Date(issue.completedDate);
+        return cd.getFullYear() === year && cd.getMonth() === month;
+      }).length;
+      monthlyData.push({ month: monthStr, count });
+    }
+
+    // Tenure (for departed)
+    let tenure: string | null = null;
+    if (member.status === "departed" && member.joinedDate) {
+      const endDate = member.departedDate
+        ? new Date(member.departedDate)
+        : new Date();
+      const startDate = new Date(member.joinedDate);
+      const years = endDate.getFullYear() - startDate.getFullYear();
+      const months = endDate.getMonth() - startDate.getMonth();
+      const totalMonths = years * 12 + months;
+      const y = Math.floor(totalMonths / 12);
+      const m = totalMonths % 12;
+      tenure =
+        y > 0 ? `${y}y ${m}m` : `${m}m`;
+    }
+
+    return NextResponse.json({
+      member,
+      stats: {
+        totalTasks,
+        totalDone,
+        totalClosed,
+        onTimePercentage,
+        avgCycleTime,
+        activePoints,
+        deadlinesMet: onTime,
+        deadlinesTotal: doneWithDue.length,
+        workloadPercentage,
+        overdueCount,
+        tenure,
+      },
+      currentIssue,
+      queuedIssues,
+      inReviewIssues,
+      recentDone,
+      allIssues: allIssuesSorted,
+      monthlyData,
+      boards: trackedBoards.map((b) => ({
+        id: b.id,
+        jiraKey: b.jiraKey,
+        name: b.name,
+        color: b.color,
+      })),
+    });
+  } catch (error) {
+    console.error("Failed to fetch member profile:", error);
+    return NextResponse.json(
+      {
+        error:
+          error instanceof Error
+            ? error.message
+            : "Failed to fetch member profile",
+      },
+      { status: 500 },
+    );
+  }
+}
