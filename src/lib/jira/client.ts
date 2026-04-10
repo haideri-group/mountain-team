@@ -1,24 +1,30 @@
-const JIRA_BASE_URL = process.env.JIRA_BASE_URL;
-const JIRA_USER_EMAIL = process.env.JIRA_USER_EMAIL;
-const JIRA_API_TOKEN = process.env.JIRA_API_TOKEN;
+function getConfig() {
+  return {
+    baseUrl: process.env.JIRA_BASE_URL || "",
+    email: process.env.JIRA_USER_EMAIL || "",
+    token: process.env.JIRA_API_TOKEN || "",
+  };
+}
 
 function getAuthHeader(): string {
-  if (!JIRA_USER_EMAIL || !JIRA_API_TOKEN) {
+  const { email, token } = getConfig();
+  if (!email || !token) {
     throw new Error("JIRA credentials not configured");
   }
-  return `Basic ${Buffer.from(`${JIRA_USER_EMAIL}:${JIRA_API_TOKEN}`).toString("base64")}`;
+  return `Basic ${Buffer.from(`${email}:${token}`).toString("base64")}`;
 }
 
 function getBaseUrl(): string {
-  if (!JIRA_BASE_URL) {
+  const { baseUrl } = getConfig();
+  if (!baseUrl) {
     throw new Error("JIRA_BASE_URL not configured");
   }
-  return JIRA_BASE_URL.replace(/\/$/, "");
+  return baseUrl.replace(/\/$/, "");
 }
 
 export function isJiraConfigured(): boolean {
-  return !!(JIRA_BASE_URL && JIRA_USER_EMAIL && JIRA_API_TOKEN) &&
-    !JIRA_BASE_URL.includes("your-domain");
+  const { baseUrl, email, token } = getConfig();
+  return !!(baseUrl && email && token) && !baseUrl.includes("your-domain") && !token.includes("your-jira");
 }
 
 async function jiraFetch<T>(path: string): Promise<T> {
@@ -30,7 +36,7 @@ async function jiraFetch<T>(path: string): Promise<T> {
       Accept: "application/json",
       "Content-Type": "application/json",
     },
-    next: { revalidate: 60 }, // cache for 1 minute
+    cache: "no-store",
   });
 
   if (!res.ok) {
@@ -50,17 +56,6 @@ interface JiraProject {
   style: string;
   avatarUrls: Record<string, string>;
   isPrivate: boolean;
-}
-
-interface JiraBoard {
-  id: number;
-  name: string;
-  type: string;
-  location?: {
-    projectId: number;
-    projectName: string;
-    projectKey: string;
-  };
 }
 
 export interface JiraProjectInfo {
@@ -83,10 +78,10 @@ export async function fetchJiraProjects(): Promise<JiraProjectInfo[]> {
 }
 
 // Verify a JIRA user exists
-export async function verifyJiraUser(accountId: string): Promise<boolean> {
+export async function verifyJiraUser(query: string): Promise<boolean> {
   try {
-    const results = await jiraFetch<{ users: Array<{ accountId: string }> }>(
-      `/user/search?query=${encodeURIComponent(accountId)}&maxResults=1`,
+    const results = await jiraFetch<Array<{ accountId: string }>>(
+      `/user/search?query=${encodeURIComponent(query)}&maxResults=1`,
     );
     return Array.isArray(results) && results.length > 0;
   } catch {
