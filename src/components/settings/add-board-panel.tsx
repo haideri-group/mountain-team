@@ -16,7 +16,7 @@ interface AddBoardPanelProps {
   onBoardAdded: () => void;
 }
 
-const PAGE_SIZE = 12;
+const PAGE_SIZE = 10;
 
 const boardColors = [
   "#ef4444", "#f97316", "#f59e0b", "#84cc16", "#22c55e",
@@ -26,7 +26,8 @@ const boardColors = [
 
 export function AddBoardPanel({ onBoardAdded }: AddBoardPanelProps) {
   const [projects, setProjects] = useState<JiraProject[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [initialLoading, setInitialLoading] = useState(true);
+  const [searching, setSearching] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
@@ -35,6 +36,7 @@ export function AddBoardPanel({ onBoardAdded }: AddBoardPanelProps) {
   const [isLast, setIsLast] = useState(false);
   const [startAt, setStartAt] = useState(0);
   const [searchTimeout, setSearchTimeout] = useState<NodeJS.Timeout | null>(null);
+  const [initialized, setInitialized] = useState(false);
 
   // Manual form state
   const [showManualForm, setShowManualForm] = useState(false);
@@ -45,8 +47,10 @@ export function AddBoardPanel({ onBoardAdded }: AddBoardPanelProps) {
   const fetchProjects = useCallback(async (offset = 0, query?: string, append = false) => {
     if (append) {
       setLoadingMore(true);
+    } else if (!initialized) {
+      setInitialLoading(true);
     } else {
-      setLoading(true);
+      setSearching(true);
     }
     setError(null);
 
@@ -71,25 +75,35 @@ export function AddBoardPanel({ onBoardAdded }: AddBoardPanelProps) {
       setTotal(data.total);
       setIsLast(data.isLast);
       setStartAt(data.startAt + data.maxResults);
+      setInitialized(true);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to connect to JIRA");
     } finally {
-      setLoading(false);
+      setInitialLoading(false);
+      setSearching(false);
       setLoadingMore(false);
     }
-  }, []);
+  }, [initialized]);
 
   useEffect(() => {
     fetchProjects(0);
   }, [fetchProjects]);
 
-  // Debounced search
+  // Debounced search — minimum 2 characters required
   const handleSearch = (value: string) => {
     setSearch(value);
     if (searchTimeout) clearTimeout(searchTimeout);
+
+    // If cleared, reload all projects; if < 2 chars, don't search yet
+    if (value.length === 0) {
+      fetchProjects(0);
+      return;
+    }
+    if (value.length < 2) return;
+
     const timeout = setTimeout(() => {
-      fetchProjects(0, value || undefined);
-    }, 400);
+      fetchProjects(0, value);
+    }, 300);
     setSearchTimeout(timeout);
   };
 
@@ -161,7 +175,7 @@ export function AddBoardPanel({ onBoardAdded }: AddBoardPanelProps) {
   const alreadyTracked = projects.filter((p) => p.alreadyAdded);
 
   // JIRA not configured
-  if (!loading && error?.includes("not configured")) {
+  if (!initialLoading && error?.includes("not configured")) {
     return (
       <div className="px-6 py-5 space-y-5">
         <div className="flex items-center gap-3 p-4 rounded-lg bg-amber-50 dark:bg-amber-950/30 text-amber-700 dark:text-amber-400">
@@ -178,8 +192,8 @@ export function AddBoardPanel({ onBoardAdded }: AddBoardPanelProps) {
     );
   }
 
-  // Initial loading
-  if (loading) {
+  // Initial loading — only shown before first data arrives
+  if (initialLoading && !initialized) {
     return (
       <div className="flex items-center justify-center py-20">
         <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
@@ -234,7 +248,7 @@ export function AddBoardPanel({ onBoardAdded }: AddBoardPanelProps) {
             type="text"
             value={search}
             onChange={(e) => handleSearch(e.target.value)}
-            placeholder="Search JIRA projects..."
+            placeholder="Search JIRA projects (min 2 chars)..."
             className="w-full h-10 pl-9 pr-4 rounded-lg bg-muted/30 border-transparent text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 transition-all"
           />
         </div>
@@ -321,7 +335,15 @@ export function AddBoardPanel({ onBoardAdded }: AddBoardPanelProps) {
           </button>
         )}
 
-        {projects.length === 0 && !loading && (
+        {/* Inline searching indicator */}
+        {searching && (
+          <div className="flex items-center justify-center py-6">
+            <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+            <span className="ml-2 text-sm text-muted-foreground">Searching...</span>
+          </div>
+        )}
+
+        {projects.length === 0 && !initialLoading && !searching && (
           <p className="text-sm text-muted-foreground text-center py-8">
             No projects found{search ? ` matching "${search}"` : ""}
           </p>
