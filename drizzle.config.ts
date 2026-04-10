@@ -1,3 +1,4 @@
+import "dotenv/config";
 import { defineConfig } from "drizzle-kit";
 
 export default defineConfig({
@@ -5,6 +6,6 @@ export default defineConfig({
   out: "./drizzle",
   dialect: "mysql",
   dbCredentials: {
-    url: process.env.DATABASE_URL || "mysql://root:password@127.0.0.1:3306/teamflow",
+    url: process.env.DATABASE_URL!,
   },
 });

@@ -3432,6 +3432,13 @@ __metadata:
   languageName: node
   linkType: hard
 
+"dotenv@npm:^17.4.1":
+  version: 17.4.1
+  resolution: "dotenv@npm:17.4.1"
+  checksum: 10c0/eb6ae592ee1e8f6b7f62e0f0c2827c4f27bbe9e00abe9d7910e06456e63dccd42f011de94da9450a63c07ccc52c318f527c1b56ad8e2c81a1a16314b53d4fd99
+  languageName: node
+  linkType: hard
+
 "drizzle-kit@npm:^0.31.10":
   version: 0.31.10
   resolution: "drizzle-kit@npm:0.31.10"
@@ -6186,6 +6193,7 @@ __metadata:
     class-variance-authority: "npm:^0.7.1"
     clsx: "npm:^2.1.1"
     date-fns: "npm:^4.1.0"
+    dotenv: "npm:^17.4.1"
     drizzle-kit: "npm:^0.31.10"
     drizzle-orm: "npm:^0.45.2"
     eslint: "npm:^9"
@@ -6204,6 +6212,7 @@ __metadata:
     shadcn: "npm:^4.1.2"
     tailwind-merge: "npm:^3.5.0"
     tailwindcss: "npm:^4"
+    tsx: "npm:^4.21.0"
     tw-animate-css: "npm:^1.4.0"
     typescript: "npm:^5"
     zod: "npm:^4.3.6"

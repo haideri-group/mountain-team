@@ -1,11 +1,19 @@
-import dotenv from "dotenv";
-dotenv.config({ path: ".env.local" });
-
-import { db } from "../src/lib/db";
-import { users, team_members, boards, issues, dashboardConfig, notifications } from "../src/lib/db/schema";
+import "dotenv/config";
 
 async function main() {
+  const { db } = await import("../src/lib/db");
+  const { users, team_members, boards, issues, dashboardConfig, notifications } = await import("../src/lib/db/schema");
+  const { sql } = await import("drizzle-orm");
   console.log("Seeding database (MySQL)...");
+
+  // Clear existing data (order matters for foreign keys)
+  console.log("Clearing existing data...");
+  await db.delete(notifications);
+  await db.delete(issues);
+  await db.delete(team_members);
+  await db.delete(boards);
+  await db.delete(dashboardConfig);
+  await db.delete(users);
 
   // Insert Users
   await db.insert(users).values([
