@@ -4,9 +4,14 @@ import { auth } from "@/auth";
 
 export async function Sidebar() {
   const session = await auth();
+  
+  // If no session exists, the layout is fatally rendering in a protected route
+  // We can just return null or empty to prevent ghost UI flashing before middleware acts locally.
+  if (!session) return null;
+
   const isAdmin = session?.user?.role === "admin";
-  const userEmail = session?.user?.email || "guest@tilemountain.co.uk";
-  const userName = session?.user?.name || "Guest User";
+  const userEmail = session?.user?.email;
+  const userName = session?.user?.name;
 
   return (
     <div className="w-[280px] h-full bg-sidebar flex flex-col border-r border-sidebar-border">
