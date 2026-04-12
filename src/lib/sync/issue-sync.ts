@@ -1,6 +1,7 @@
 import { db } from "@/lib/db";
 import { issues, boards, team_members, syncLogs } from "@/lib/db/schema";
 import { eq, desc, inArray } from "drizzle-orm";
+import { generateNotificationsFromSync } from "@/lib/notifications/generator";
 import {
   discoverCustomFieldIds,
   fetchIssuesByJql,
@@ -288,6 +289,13 @@ export async function runIssueSync(type: IssueSyncType): Promise<{
         error: result.errors.length > 0 ? result.errors.join("; ") : null,
       })
       .where(eq(syncLogs.id, logId));
+
+    // Generate notifications after successful sync
+    try {
+      await generateNotificationsFromSync();
+    } catch (notifError) {
+      console.error("Notification generation failed:", notifError);
+    }
 
     return { logId, result };
   } catch (error) {

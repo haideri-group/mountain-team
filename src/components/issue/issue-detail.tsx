@@ -119,6 +119,15 @@ interface LinkedIssue {
   status: string;
 }
 
+interface TimeTracking {
+  timeSpent: string | null;
+  timeSpentSeconds: number;
+  remainingEstimate: string | null;
+  remainingEstimateSeconds: number;
+  originalEstimate: string | null;
+  originalEstimateSeconds: number;
+}
+
 interface Phase2Data {
   description: string | null;
   comments: Comment[];
@@ -128,6 +137,13 @@ interface Phase2Data {
   parentTitle: string | null;
   attachments: Attachment[];
   linkedIssues: LinkedIssue[];
+  timeTracking: TimeTracking | null;
+  worklogs: {
+    author: string;
+    authorAvatar: string | null;
+    timeSpent: string;
+    timeSpentSeconds: number;
+  }[];
 }
 
 type ActivityEntry =
@@ -200,25 +216,51 @@ const PRIORITY_ICON_CLASS: Record<string, string> = {
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-function daysAgo(dateStr: string | null | undefined): number {
-  if (!dateStr) return 0;
-  return Math.round((Date.now() - new Date(dateStr).getTime()) / 86400000);
+const PKT = "Asia/Karachi";
+
+function formatSmartDate(dateStr: string | null | undefined): string {
+  if (!dateStr) return "—";
+  const d = new Date(dateStr);
+  const now = new Date();
+
+  // Convert both to PKT date strings for comparison
+  const todayPKT = now.toLocaleDateString("en-CA", { timeZone: PKT });
+  const datePKT = d.toLocaleDateString("en-CA", { timeZone: PKT });
+
+  const yesterday = new Date(now);
+  yesterday.setDate(yesterday.getDate() - 1);
+  const yesterdayPKT = yesterday.toLocaleDateString("en-CA", { timeZone: PKT });
+
+  const timePart = d.toLocaleTimeString("en-US", {
+    timeZone: PKT,
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true,
+  });
+
+  if (datePKT === todayPKT) return `Today at ${timePart}`;
+  if (datePKT === yesterdayPKT) return `Yesterday at ${timePart}`;
+
+  return d.toLocaleDateString("en-GB", {
+    timeZone: PKT,
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  }) + ` at ${timePart}`;
 }
 
 function formatDateTime(dateStr: string): string {
-  const d = new Date(dateStr);
-  return d.toLocaleDateString("en-GB", {
-    month: "short",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
+  return formatSmartDate(dateStr);
 }
 
 function formatDateFull(dateStr: string | null | undefined): string {
   if (!dateStr) return "—";
-  const d = new Date(dateStr);
-  return d.toLocaleDateString("en-GB", { month: "short", day: "numeric", year: "numeric" });
+  return new Date(dateStr).toLocaleDateString("en-GB", {
+    timeZone: PKT,
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  });
 }
 
 function getInitials(name: string): string {
@@ -605,7 +647,7 @@ export function IssueDetail({ issueKey }: IssueDetailProps) {
 
   const { issue, context } = phase1;
   const jiraBaseUrl = process.env.NEXT_PUBLIC_JIRA_BASE_URL ?? "";
-  const createdDaysAgo = daysAgo(issue.jiraCreatedAt);
+  const createdDisplay = formatSmartDate(issue.jiraCreatedAt);
 
   const activity: ActivityEntry[] = phase2
     ? mergeActivity(phase2.comments, phase2.changelog)
@@ -733,7 +775,7 @@ export function IssueDetail({ issueKey }: IssueDetailProps) {
               </span>
               <span className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
                 <Clock className="h-3 w-3 shrink-0" />
-                Created {createdDaysAgo === 0 ? "today" : `${createdDaysAgo} day${createdDaysAgo === 1 ? "" : "s"} ago`}
+                Created {createdDisplay}
               </span>
               {phase1.timeline.daysInCurrentStatus > 0 && (
                 <span className={cn(
@@ -1079,6 +1121,89 @@ export function IssueDetail({ issueKey }: IssueDetailProps) {
                 </div>
               )}
             </div>
+
+            {/* Time Tracking — only shown if data exists */}
+            {phase2?.timeTracking?.timeSpent && (() => {
+              const tt = phase2.timeTracking!;
+              const hasEstimate = tt.originalEstimateSeconds > 0;
+              const pct = hasEstimate
+                ? Math.round((tt.timeSpentSeconds / tt.originalEstimateSeconds) * 100)
+                : 0;
+              const isOver = pct > 100;
+              const barColor = isOver ? "#ba1a1a" : "#ff8400";
+
+              return (
+                <div className="pt-2 border-t border-border/30 space-y-2">
+                  <p className="text-[9px] font-bold font-mono uppercase tracking-widest text-muted-foreground/60">
+                    Time Tracking
+                  </p>
+
+                  {hasEstimate ? (
+                    <>
+                      {/* Progress bar mode — has original estimate */}
+                      <div className="flex items-center justify-between text-[10px] font-mono">
+                        <span className="font-bold" style={{ color: barColor }}>
+                          {tt.timeSpent}
+                        </span>
+                        <span className="text-muted-foreground/60">
+                          of {tt.originalEstimate}
+                        </span>
+                      </div>
+                      <div className="w-full h-2 rounded-full bg-muted/30 overflow-hidden">
+                        <div
+                          className="h-full rounded-full transition-all duration-500"
+                          style={{
+                            width: `${Math.min(pct, 100)}%`,
+                            backgroundColor: barColor,
+                          }}
+                        />
+                      </div>
+                      <div className="flex items-center justify-between text-[9px] font-mono text-muted-foreground/50">
+                        <span>{pct}% used</span>
+                        {tt.remainingEstimate && tt.remainingEstimateSeconds > 0 && (
+                          <span>{tt.remainingEstimate} remaining</span>
+                        )}
+                      </div>
+                    </>
+                  ) : (
+                    /* Text-only mode — no original estimate */
+                    <div className="flex items-center justify-between text-[10px] font-mono">
+                      <span className="text-muted-foreground uppercase tracking-widest">Logged</span>
+                      <span className="font-bold text-primary">{tt.timeSpent}</span>
+                    </div>
+                  )}
+
+                  {/* Per-person breakdown */}
+                  {phase2.worklogs && phase2.worklogs.length > 0 && (
+                    <div className="space-y-1.5 pt-1">
+                      {phase2.worklogs.map((wl) => {
+                        const totalSeconds = tt.timeSpentSeconds || 1;
+                        const wlPct = Math.round((wl.timeSpentSeconds / totalSeconds) * 100);
+                        return (
+                          <div key={wl.author} className="flex items-center gap-2">
+                            {wl.authorAvatar ? (
+                              <img
+                                src={wl.authorAvatar}
+                                alt=""
+                                referrerPolicy="no-referrer"
+                                className="h-4 w-4 rounded-full shrink-0"
+                              />
+                            ) : (
+                              <div className="h-4 w-4 rounded-full bg-muted/50 flex items-center justify-center text-[7px] font-bold font-mono text-muted-foreground shrink-0">
+                                {wl.author.split(" ").map(n => n[0]).join("").substring(0, 2).toUpperCase()}
+                              </div>
+                            )}
+                            <span className="text-[10px] font-mono truncate flex-1">{wl.author}</span>
+                            <span className="text-[10px] font-mono font-bold text-muted-foreground shrink-0">{wl.timeSpent}</span>
+                            <span className="text-[9px] font-mono text-muted-foreground/50 w-7 text-right shrink-0">{wlPct}%</span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
 
             {/* Created / Updated */}
             <div className="pt-2 border-t border-border/30 space-y-2">

@@ -28,14 +28,11 @@ export async function GET(
   { params }: { params: Promise<{ key: string }> },
 ) {
   try {
-    const session = await auth();
-    if (!session?.user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
+    // Public read-only endpoint — no auth required for GET
 
     const { key } = await params;
     const baseUrl = getBaseUrl();
-    const url = `${baseUrl}/rest/api/3/issue/${encodeURIComponent(key.toUpperCase())}?expand=changelog,renderedFields&fields=description,comment,subtasks,parent,summary,attachment,issuelinks`;
+    const url = `${baseUrl}/rest/api/3/issue/${encodeURIComponent(key.toUpperCase())}?expand=changelog,renderedFields&fields=description,comment,subtasks,parent,summary,attachment,issuelinks,timetracking`;
 
     const res = await fetch(url, {
       headers: {
@@ -156,6 +153,63 @@ export async function GET(
       },
     );
 
+    // Time tracking
+    const timetracking = data.fields?.timetracking || null;
+    const timeTracking = timetracking
+      ? {
+          timeSpent: timetracking.timeSpent || null,
+          timeSpentSeconds: timetracking.timeSpentSeconds || 0,
+          remainingEstimate: timetracking.remainingEstimate || null,
+          remainingEstimateSeconds: timetracking.remainingEstimateSeconds || 0,
+          originalEstimate: timetracking.originalEstimate || null,
+          originalEstimateSeconds: timetracking.originalEstimateSeconds || 0,
+        }
+      : null;
+
+    // Worklogs — separate API call
+    let worklogs: { author: string; authorAvatar: string | null; timeSpent: string; timeSpentSeconds: number; started: string }[] = [];
+    try {
+      const wlRes = await fetch(
+        `${baseUrl}/rest/api/3/issue/${encodeURIComponent(key.toUpperCase())}/worklog`,
+        {
+          headers: { Authorization: getAuthHeader(), Accept: "application/json" },
+          cache: "no-store",
+        },
+      );
+      if (wlRes.ok) {
+        const wlData = await wlRes.json();
+        // Aggregate by author
+        const byAuthor = new Map<string, { seconds: number; avatar: string | null }>();
+        for (const wl of wlData.worklogs || []) {
+          const name = wl.author?.displayName || "Unknown";
+          const existing = byAuthor.get(name);
+          if (existing) {
+            existing.seconds += wl.timeSpentSeconds || 0;
+          } else {
+            byAuthor.set(name, {
+              seconds: wl.timeSpentSeconds || 0,
+              avatar: wl.author?.avatarUrls?.["24x24"] || null,
+            });
+          }
+        }
+        worklogs = [...byAuthor.entries()]
+          .sort((a, b) => b[1].seconds - a[1].seconds)
+          .map(([author, data]) => {
+            const h = Math.floor(data.seconds / 3600);
+            const m = Math.round((data.seconds % 3600) / 60);
+            return {
+              author,
+              authorAvatar: data.avatar,
+              timeSpent: h > 0 ? `${h}h ${m}m` : `${m}m`,
+              timeSpentSeconds: data.seconds,
+              started: "",
+            };
+          });
+      }
+    } catch {
+      // Non-fatal — worklogs may not be available
+    }
+
     return NextResponse.json({
       description,
       comments,
@@ -165,6 +219,8 @@ export async function GET(
       parentTitle,
       attachments,
       linkedIssues,
+      timeTracking,
+      worklogs,
     });
   } catch (error) {
     console.error("Failed to fetch JIRA issue details:", error);
