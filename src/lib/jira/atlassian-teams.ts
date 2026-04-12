@@ -1,4 +1,4 @@
-import { getAuthHeader, getBaseUrl } from "./client";
+import { getAuthHeader, getBaseUrl, sanitizeErrorText } from "./client";
 
 // --- Types ---
 
@@ -51,7 +51,7 @@ async function teamsApiFetch<T>(
 
   if (!res.ok) {
     const text = await res.text();
-    throw new Error(`Teams API error ${res.status}: ${text}`);
+    throw new Error(`Teams API error ${res.status}: ${sanitizeErrorText(text)}`);
   }
 
   return res.json();
@@ -73,7 +73,7 @@ export async function fetchTeamInfo(
 
   if (!res.ok) {
     const text = await res.text();
-    throw new Error(`Teams API error ${res.status}: ${text}`);
+    throw new Error(`Teams API error ${res.status}: ${sanitizeErrorText(text)}`);
   }
 
   const data: { teamId: string; displayName: string } = await res.json();
@@ -171,7 +171,7 @@ export async function fetchJiraUserDetails(
   if (!res.ok) {
     const text = await res.text();
     throw new Error(
-      `JIRA user fetch error ${res.status} for ${accountId}: ${text}`,
+      `JIRA user fetch error ${res.status} for ${accountId}: ${sanitizeErrorText(text)}`,
     );
   }
 
@@ -192,7 +192,7 @@ export async function fetchCurrentUserAccountId(): Promise<string> {
 
   if (!res.ok) {
     const text = await res.text();
-    throw new Error(`Failed to fetch current user: ${res.status}: ${text}`);
+    throw new Error(`Failed to fetch current user: ${res.status}: ${sanitizeErrorText(text)}`);
   }
 
   const data: { accountId: string } = await res.json();
