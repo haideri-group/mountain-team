@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-TeamFlow — a JIRA-integrated team management dashboard for Tile Mountain. Tracks ~14 frontend developers across multiple JIRA boards (Production + project boards named after animals/birds). Built for team leads to see what each dev is doing now, what's next, and whether workload is balanced.
+TeamFlow — a JIRA-integrated team management dashboard for Tile Mountain. Tracks frontend developers across multiple JIRA boards (Production + project boards named after animals/birds). Built for frontend team leads to see what each dev is doing now, what's next, and whether workload is balanced.
 
 See `DEVELOPMENT_PLAN.md` for the full 11-phase implementation roadmap, database schema, API routes, and all 14 screen specifications.
 
@@ -21,8 +21,8 @@ yarn lint:fix         # Auto-fix lint issues
 yarn format           # Prettier format src/**/*.{ts,tsx,css,json}
 yarn format:check     # Check formatting without writing
 yarn db:push          # Push Drizzle schema to MySQL
-yarn db:studio        # Open Drizzle Studio (database GUI)
-yarn db:seed          # Seed database with mock data (tsx scripts/seed.ts)
+yarn db:studio        # Drizzle Studio (database GUI)
+yarn db:seed          # Seed database with hashed passwords (tsx scripts/seed.ts)
 ```
 
 ## Next.js 16 Conventions (IMPORTANT)
@@ -66,24 +66,34 @@ All request-time APIs are **async** and must be awaited:
 ## Architecture
 
 **Framework:** Next.js 16.2.2 with App Router, React Server Components, React 19.2.4
+**Deployment:** Railway.app (hobby plan — daily crons only)
 
 **Route structure:**
 - `(auth)/login` — Public login page (no sidebar)
-- `(dashboard)/overview` — Team overview with developer cards
-- `(dashboard)/calendar` — Monthly task calendar
-- `(dashboard)/workload` — Capacity distribution
-- `(dashboard)/members` — Team roster
+- `(dashboard)/overview` — Team overview with developer cards + team switcher
+- `(dashboard)/calendar` — Monthly task calendar (placeholder)
+- `(dashboard)/workload` — Capacity distribution (placeholder)
+- `(dashboard)/members` — Team roster with server-side pagination
 - `(dashboard)/members/[id]` — Developer profile (active or departed)
-- `(dashboard)/reports` — Analytics with 12 chart sections
-- `(dashboard)/settings` — Admin-only JIRA config and preferences
+- `(dashboard)/reports` — Analytics with 12 chart sections (placeholder)
+- `(dashboard)/settings` — Admin-only: team sync, issue sync, board management
 
 Route groups `(auth)` and `(dashboard)` use separate layouts. Dashboard layout includes sidebar (280px dark navy) + topbar (64px).
 
-**Database:** MySQL with Drizzle ORM. 7 tables: users, team_members, boards, issues, sync_logs, dashboard_config, notifications.
+**Database:** MySQL (Railway) with Drizzle ORM. 7 tables: users, team_members, boards, issues, sync_logs, dashboard_config, notifications.
 
-**Auth:** Auth.js v5 (NextAuth beta) with Google OAuth + Credentials providers. JWT session strategy. Two roles: `admin` (full access) and `user` (no Settings, no Add Member, no Sync Now).
+**Auth:** Auth.js v5 (NextAuth beta) with Google OAuth + Credentials providers. JWT session strategy. Two roles: `admin` (full access) and `user` (read-only, no Settings/Sync). Google OAuth stores access token in JWT for Google Directory API access.
 
-**State management:** TanStack Query v5 for server state. No global client state library — use React hooks and URL search params for filters.
+**State management:** Client-side `useState` + `fetch()` for data. No TanStack Query hooks yet — components fetch from API routes directly.
+
+## Security
+
+- **All API routes require authentication.** GET endpoints check `session?.user`, mutation endpoints (POST/PATCH/DELETE) check `session?.user?.role === "admin"`.
+- **Error sanitization:** `sanitizeErrorText()` in `src/lib/jira/client.ts` redacts tokens from error messages before logging/throwing.
+- **No hardcoded credentials.** The seed script uses bcrypt-hashed passwords. No fallback logins in code.
+- **Cron endpoints** use `SYNC_SECRET` / `CRON_SECRET` bearer token auth.
+- **Webhook endpoint** uses optional `x-webhook-secret` header verification.
+- **`.env` / `.env.local` never committed** — verified in git history. `.gitignore` excludes them.
 
 ## Design System — Summit Logic
 
@@ -99,7 +109,7 @@ Route groups `(auth)` and `(dashboard)` use separate layouts. Dashboard layout i
 
 **Buttons:** Primary CTA uses gradient `#944a00 → #ff8400` at 135°. Sign In button uses flat navy `#1a1a2e` with UPPERCASE tracking-widest text. Secondary buttons use `surface-high` fill, no border.
 
-**Popovers/dropdowns:** Glassmorphism — surface-card at 80% opacity + backdrop-blur(12px).
+**Popovers/dropdowns:** Use `bg-popover` with `ring-1 ring-foreground/10` and `shadow-lg`. Avoid native `<select>` dropdowns in dark mode — use custom styled dropdowns instead.
 
 ## Component Patterns
 
@@ -110,6 +120,7 @@ When building new components:
 - Follow the cva pattern for variant props
 - Use design tokens from globals.css, not hardcoded colors
 - Keep components as Server Components unless they need interactivity (onClick, useState, etc.)
+- Use custom styled dropdowns instead of native `<select>` for dark mode compatibility
 
 ## Critical Business Rules
 
@@ -119,37 +130,124 @@ When building new components:
 - **Role badge only in profile dropdown.** Never show Admin/User badge in sidebar.
 - **Task aging alerts:** Notify when a task stays in `in_progress` for 3+ days (configurable).
 - **NEVER delete team members or their data.** When a member leaves, update status to `departed` — never remove the record. All historical task data, performance history, and assignments must be preserved for reporting and audit.
+- **NEVER delete issues.** If a JIRA issue is deleted, the webhook marks it as `closed` (not removed from DB).
+- **Clickable JIRA keys.** All issue keys (e.g., PROD-1143) must link to `{NEXT_PUBLIC_JIRA_BASE_URL}/browse/{key}` and open in a new tab. Use `e.stopPropagation()` on dev cards to prevent parent click.
 
 ## Team Member Sync (Atlassian Teams API)
 
-Team members are **not manually managed** — they are auto-synced from the Atlassian Teams API. The "Frontend Team" on Atlassian is the single source of truth.
+Team members are **not manually managed** — they are auto-synced from the Atlassian Teams API. Multi-team support enabled.
 
 **How it works:**
 - `JIRA_ORG_ID` and `JIRA_TEAM_IDS` (comma-separated) define which teams to sync
 - Sync fetches member accountIds from Teams API, then resolves user details from JIRA REST API
-- **In team = `active`**, **removed from team = `departed`** (left the organization)
-- New members are auto-created, departed members have status updated (never deleted)
-- `displayName`, `email`, `avatarUrl` are updated from JIRA on each sync
+- Each member is tagged with their `teamId` and `teamName` from the Atlassian team
+- **In team = `active`**, **removed from team = `departed`**, **rejoining = re-activated**
+- New members are auto-created with auto-assigned colors from palette
+- `displayName`, `email`, `avatarUrl` are updated from JIRA/Google on each sync
 - Admin-managed fields (`capacity`, `role`, `color`) are never overwritten by sync
-- Admin (Syed Haider Hassan) is excluded from sync — he is the dashboard admin, not a tracked member
+- `on_leave` status is admin-managed, not affected by sync (unless member leaves the org)
+- Admin (Syed Haider Hassan) is excluded from sync via `/rest/api/3/myself`
+- Safety check: aborts if API returns 0 members but DB has active members
+
+**Google Directory integration:**
+- When admin is signed in with Google OAuth, sync also matches emails + avatars from Google Workspace
+- Uses Google People API `searchDirectoryPeople` with `directory.readonly` scope
+- Multi-strategy name matching (full name → first+last → first only) with scoring
+- Inline email edit on Members page has autocomplete dropdown from Google Directory (300ms debounce, min 3 chars)
 
 **Sync triggers:**
-- Daily cron at 06:00 UTC (Railway.app hobby plan — daily crons only)
+- Daily cron at 06:00 UTC (`/api/cron/sync-teams`)
 - Manual "Sync Now" button in Settings (admin only)
-- Protected by `SYNC_SECRET` for cron endpoint auth
 
-**APIs used:**
-- Teams API: `POST https://api.atlassian.com/gateway/api/public/teams/v1/org/{orgId}/teams/{teamId}/members`
-- User details: `GET {NEXT_PUBLIC_JIRA_BASE_URL}/rest/api/3/user?accountId={id}`
-- Auth: Same Basic Auth credentials as JIRA (`JIRA_USER_EMAIL:JIRA_API_TOKEN`)
+## JIRA Issue Sync
+
+Issues are synced from JIRA into the `issues` table using JQL queries.
+
+**How it works:**
+- Uses `POST /rest/api/3/search/jql` (the old `/search` endpoint is deprecated)
+- Token-based pagination with `nextPageToken` (not `startAt`), deduplication by key, max 50 pages safety
+- Custom field IDs (story points, start date) discovered dynamically via `GET /rest/api/3/field`, cached 24h
+- Status mapping: 21 JIRA status names → 7 app statuses, with `statusCategory.key` fallback
+- Upsert via MySQL `onDuplicateKeyUpdate` on `jiraKey` unique index
+- Cycle time calculated on status transitions to `done`, cleared on reopening
+- Issues from untracked boards are skipped (admin must add board in Settings first)
+- Unassigned issues synced with `assigneeId = null`
+- Stores `jiraCreatedAt` and `jiraUpdatedAt` from JIRA for accurate sorting
+- Live progress tracking polled by UI every 1 second during sync
+
+**Sync types:**
+- **Full:** All issues from tracked boards with "Frontend" label
+- **Incremental:** Issues updated since last successful sync
+- **Manual:** Triggered by admin via Settings UI
+
+**Sync triggers:**
+- Daily cron at 06:05 UTC (`/api/cron/sync-issues`) — auto-detects full vs incremental
+- Manual "Sync Issues" button in Settings (admin only)
+
+**JIRA Webhook** (`/api/webhooks/jira`):
+- Receives real-time issue created/updated/deleted events
+- Normalizes and upserts single issue per event
+- Setup guide: `docs/JIRA_WEBHOOK_SETUP.md`
+
+## API Routes
+
+All routes under `src/app/api/`. Auth required on every route.
+
+```
+GET    /api/team                         → Paginated members (search, status, team filters)
+GET    /api/team/:id                     → Single member
+PATCH  /api/team/:id                     → Update admin fields (admin only)
+GET    /api/team/:id/profile             → Full profile with issues + stats
+
+GET    /api/boards                       → List boards
+POST   /api/boards                       → Add board (admin only)
+PATCH  /api/boards/:id                   → Update board (admin only)
+DELETE /api/boards/:id                   → Remove board (admin only)
+
+GET    /api/overview                     → Members + issues + metrics for dashboard
+
+POST   /api/sync/team-members            → Manual team sync (admin only)
+GET    /api/sync/team-members            → Last team sync status
+POST   /api/sync/issues                  → Manual issue sync (admin only)
+GET    /api/sync/issues                  → Last issue sync status + live progress
+GET    /api/sync/issues?progress=1       → Live progress only (polled during sync)
+
+GET    /api/cron/sync-teams              → Daily team sync (SYNC_SECRET auth)
+GET    /api/cron/sync-issues             → Daily issue sync (SYNC_SECRET auth)
+
+POST   /api/webhooks/jira               → JIRA webhook receiver
+
+GET    /api/jira/projects                → Browse JIRA projects (admin only)
+GET    /api/google/directory-search      → Google Workspace people search (admin only)
+
+POST   /api/auth/[...nextauth]           → Auth.js handlers
+```
 
 ## Environment Variables
 
 Copy `.env.example` to `.env.local`. Required for full functionality:
-- `DATABASE_URL` — Database connection string (e.g. mysql://...)
+- `DATABASE_URL` — MySQL connection string
 - `AUTH_SECRET` + `AUTH_URL` — Auth.js sessions
-- `GOOGLE_CLIENT_ID` + `GOOGLE_CLIENT_SECRET` — Google OAuth
-- `NEXT_PUBLIC_JIRA_BASE_URL` + `JIRA_USER_EMAIL` + `JIRA_API_TOKEN` — JIRA API access
-- `JIRA_ORG_ID` — Atlassian organization ID (for Teams API)
+- `GOOGLE_CLIENT_ID` + `GOOGLE_CLIENT_SECRET` — Google OAuth (with `directory.readonly` scope)
+- `NEXT_PUBLIC_JIRA_BASE_URL` — JIRA site URL (used by both server and client)
+- `JIRA_USER_EMAIL` + `JIRA_API_TOKEN` — JIRA API auth (Basic Auth)
+- `JIRA_FRONTEND_LABEL` — Label to filter team issues (default: "Frontend")
+- `JIRA_ORG_ID` — Atlassian organization ID
 - `JIRA_TEAM_IDS` — Comma-separated Atlassian team IDs to sync
-- `SYNC_SECRET` — Secret for protecting cron/sync endpoints
+- `JIRA_CLOUD_ID` — Atlassian Cloud site ID
+- `SYNC_SECRET` — Secret for cron and webhook endpoint auth
+
+## Implementation Status
+
+1. ~~Project Scaffolding~~ (complete)
+2. ~~Design System + Layout~~ (complete)
+3. ~~Database Schema + MySQL~~ (complete)
+4. ~~Auth System~~ (complete — Google OAuth + Credentials with bcrypt)
+5. ~~Mock Data Layer~~ (complete — superseded by live JIRA sync)
+6. ~~Dashboard Screens~~ — Overview + Profile (complete), **Calendar (placeholder)**
+7. ~~Management Screens~~ — Members + Settings (complete), **Workload (placeholder)**
+8. **Reports Page** — 12 chart components (placeholder)
+9. **Interactive Features** — Profile dropdown, Notifications dropdown, URL-synced filters, global search
+10. ~~JIRA Issue Sync~~ (complete — full/incremental + webhooks + progress)
+10.5. ~~Team Member Sync~~ (complete — Atlassian Teams API + Google Directory)
+11. **Polish + Deploy** — Error boundaries, loading skeletons, empty states, performance, Railway deployment

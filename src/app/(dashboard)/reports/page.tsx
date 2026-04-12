@@ -1,10 +1,16 @@
+import { ReportsDashboard } from "@/components/reports/reports-dashboard";
+
 export default function ReportsPage() {
   return (
-    <div className="space-y-6">
-      <h2 className="text-3xl font-bold tracking-tight font-mono">Reports</h2>
-      <div className="rounded-xl border border-border bg-card p-8">
-        <p className="text-muted-foreground">Analytics and Reports charts go here.</p>
+    <div>
+      <div className="mb-6">
+        <h1 className="text-2xl font-bold font-mono">Reports</h1>
+        <p className="text-sm text-muted-foreground mt-1">
+          Team performance analytics, velocity trends, and delivery insights
+        </p>
       </div>
+
+      <ReportsDashboard />
     </div>
-  )
+  );
 }

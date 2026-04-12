@@ -11,6 +11,7 @@ import {
   ChevronRight,
   Circle,
 } from "lucide-react";
+import Link from "next/link";
 import { IssueStatusBadge } from "@/components/overview/issue-status-badge";
 
 interface TaskIssue {
@@ -315,15 +316,13 @@ export function TaskHistoryTable({ issues, boards }: TaskHistoryTableProps) {
                   className={`border-t border-border/30 ${missed ? "bg-red-50/50 dark:bg-red-950/20" : "hover:bg-muted/5"} transition-colors`}
                 >
                   <td className="px-4 py-3">
-                    <a
-                      href={`${process.env.NEXT_PUBLIC_JIRA_BASE_URL}/browse/${issue.jiraKey}`}
-                      target="_blank"
-                      rel="noopener noreferrer"
+                    <Link
+                      href={`/issue/${issue.jiraKey}`}
                       className="text-xs font-bold font-mono hover:underline"
                       style={{ color: issue.boardColor }}
                     >
                       {issue.jiraKey}
-                    </a>
+                    </Link>
                   </td>
                   <td className="px-4 py-3">
                     <span className="text-sm text-foreground line-clamp-1">
