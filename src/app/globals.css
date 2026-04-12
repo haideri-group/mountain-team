@@ -150,4 +150,10 @@
   html {
     @apply font-sans;
   }
+  .recharts-surface *,
+  .recharts-sector,
+  .recharts-pie path {
+    outline: none !important;
+    stroke: none;
+  }
 }

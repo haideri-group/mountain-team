@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { Circle, Inbox } from "lucide-react";
 import { IssueStatusBadge } from "@/components/overview/issue-status-badge";
 
@@ -42,15 +43,13 @@ function getWorkloadColor(pct: number): string {
 function IssueRow({ issue }: { issue: EnrichedIssue }) {
   return (
     <div className="flex items-center gap-3 py-2.5 px-3 rounded-lg hover:bg-muted/10 transition-colors">
-      <a
-        href={`${process.env.NEXT_PUBLIC_JIRA_BASE_URL}/browse/${issue.jiraKey}`}
-        target="_blank"
-        rel="noopener noreferrer"
+      <Link
+        href={`/issue/${issue.jiraKey}`}
         className="text-xs font-bold font-mono shrink-0 hover:underline"
         style={{ color: issue.boardColor }}
       >
         {issue.jiraKey}
-      </a>
+      </Link>
       <span className="text-sm text-foreground truncate flex-1">
         {issue.title}
       </span>
@@ -118,15 +117,13 @@ export function CurrentWork({
           </div>
           <div className="rounded-lg bg-muted/15 p-4 space-y-1.5">
             <div className="flex items-center gap-2">
-              <a
-                href={`${process.env.NEXT_PUBLIC_JIRA_BASE_URL}/browse/${currentIssue.jiraKey}`}
-                target="_blank"
-                rel="noopener noreferrer"
+              <Link
+                href={`/issue/${currentIssue.jiraKey}`}
                 className="text-sm font-bold font-mono hover:underline"
                 style={{ color: currentIssue.boardColor }}
               >
                 {currentIssue.jiraKey}
-              </a>
+              </Link>
               <IssueStatusBadge status={currentIssue.status} />
               {currentIssue.storyPoints != null && (
                 <span className="text-[10px] font-mono font-bold text-muted-foreground bg-muted/30 px-1.5 py-0.5 rounded">

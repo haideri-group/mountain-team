@@ -116,16 +116,14 @@ export function DevCard({ member }: { member: DevCardMember }) {
           </div>
           <div className="rounded-lg bg-muted/20 p-3 space-y-1.5">
             <div className="flex items-center gap-2">
-              <a
-                href={`${process.env.NEXT_PUBLIC_JIRA_BASE_URL}/browse/${member.currentIssue.jiraKey}`}
-                target="_blank"
-                rel="noopener noreferrer"
+              <Link
+                href={`/issue/${member.currentIssue.jiraKey}`}
                 onClick={(e) => e.stopPropagation()}
                 className="text-xs font-bold font-mono hover:underline"
                 style={{ color: member.currentIssue.boardColor }}
               >
                 {member.currentIssue.jiraKey}
-              </a>
+              </Link>
               <IssueStatusBadge status={member.currentIssue.status} />
             </div>
             <p className="text-xs text-foreground leading-relaxed line-clamp-2">
@@ -154,16 +152,14 @@ export function DevCard({ member }: { member: DevCardMember }) {
                     {formatDate(issue.startDate)}
                   </span>
                 )}
-                <a
-                  href={`${process.env.NEXT_PUBLIC_JIRA_BASE_URL}/browse/${issue.jiraKey}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
+                <Link
+                  href={`/issue/${issue.jiraKey}`}
                   onClick={(e) => e.stopPropagation()}
                   className="text-xs font-bold font-mono shrink-0 hover:underline"
                   style={{ color: issue.boardColor }}
                 >
                   {issue.jiraKey}
-                </a>
+                </Link>
                 <span className="text-xs text-muted-foreground truncate">{issue.title}</span>
               </div>
             ))}
@@ -186,15 +182,13 @@ export function DevCard({ member }: { member: DevCardMember }) {
             {member.recentDone.slice(0, 3).map((issue) => (
               <div key={issue.id} className="flex items-center gap-2 py-0.5">
                 <Check className="h-3 w-3 text-emerald-500 shrink-0" />
-                <a
-                  href={`${process.env.NEXT_PUBLIC_JIRA_BASE_URL}/browse/${issue.jiraKey}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
+                <Link
+                  href={`/issue/${issue.jiraKey}`}
                   onClick={(e) => e.stopPropagation()}
                   className="text-xs font-mono text-muted-foreground shrink-0 hover:underline hover:text-foreground"
                 >
                   {issue.jiraKey}
-                </a>
+                </Link>
                 <span className="text-xs text-muted-foreground truncate">{issue.title}</span>
               </div>
             ))}
