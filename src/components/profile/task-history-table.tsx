@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { IssueStatusBadge } from "@/components/overview/issue-status-badge";
+import { IssueTypeIcon } from "@/components/shared/issue-type-icon";
 
 interface TaskIssue {
   id: string;
@@ -318,9 +319,10 @@ export function TaskHistoryTable({ issues, boards }: TaskHistoryTableProps) {
                   <td className="px-4 py-3">
                     <Link
                       href={`/issue/${issue.jiraKey}`}
-                      className="text-xs font-bold font-mono hover:underline"
+                      className="text-xs font-bold font-mono hover:underline inline-flex items-center gap-1.5"
                       style={{ color: issue.boardColor }}
                     >
+                      <IssueTypeIcon type={issue.type} size={14} />
                       {issue.jiraKey}
                     </Link>
                   </td>

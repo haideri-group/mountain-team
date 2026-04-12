@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { Circle, Inbox } from "lucide-react";
 import { IssueStatusBadge } from "@/components/overview/issue-status-badge";
+import { IssueTypeIcon } from "@/components/shared/issue-type-icon";
 
 interface EnrichedIssue {
   id: string;
@@ -45,9 +46,10 @@ function IssueRow({ issue }: { issue: EnrichedIssue }) {
     <div className="flex items-center gap-3 py-2.5 px-3 rounded-lg hover:bg-muted/10 transition-colors">
       <Link
         href={`/issue/${issue.jiraKey}`}
-        className="text-xs font-bold font-mono shrink-0 hover:underline"
+        className="text-xs font-bold font-mono shrink-0 hover:underline inline-flex items-center gap-1"
         style={{ color: issue.boardColor }}
       >
+        <IssueTypeIcon type={issue.type} size={12} />
         {issue.jiraKey}
       </Link>
       <span className="text-sm text-foreground truncate flex-1">
@@ -119,9 +121,10 @@ export function CurrentWork({
             <div className="flex items-center gap-2">
               <Link
                 href={`/issue/${currentIssue.jiraKey}`}
-                className="text-sm font-bold font-mono hover:underline"
+                className="text-sm font-bold font-mono hover:underline inline-flex items-center gap-1"
                 style={{ color: currentIssue.boardColor }}
               >
+                <IssueTypeIcon type={currentIssue.type} size={14} />
                 {currentIssue.jiraKey}
               </Link>
               <IssueStatusBadge status={currentIssue.status} />

@@ -4,7 +4,7 @@ import type { JiraIssueRaw, CustomFieldIds } from "./issues";
 
 type IssueStatus = "todo" | "in_progress" | "in_review" | "ready_for_testing" | "ready_for_live" | "done" | "closed";
 type IssuePriority = "highest" | "high" | "medium" | "low" | "lowest";
-type IssueType = "bug" | "story" | "cms_change" | "enhancement" | "task";
+type IssueType = "bug" | "story" | "cms_change" | "enhancement" | "task" | "subtask";
 
 // --- Status Mapping ---
 
@@ -86,8 +86,9 @@ const TYPE_MAP: Record<string, IssueType> = {
   improvement: "enhancement",
   "new feature": "enhancement",
   task: "task",
-  "sub-task": "task",
-  subtask: "task",
+  "sub-task": "subtask",
+  subtask: "subtask",
+  "sub task": "subtask",
   epic: "story",
 };
 
