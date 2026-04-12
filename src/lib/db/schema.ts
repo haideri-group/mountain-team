@@ -46,7 +46,7 @@ export const issues = mysqlTable("issues", {
   title: varchar("title", { length: 500 }).notNull(),
   status: mysqlEnum("status", ["todo", "in_progress", "in_review", "ready_for_testing", "ready_for_live", "done", "closed"]).notNull(),
   priority: mysqlEnum("priority", ["highest", "high", "medium", "low", "lowest"]),
-  type: mysqlEnum("type", ["bug", "story", "cms_change", "enhancement", "task"]),
+  type: mysqlEnum("type", ["bug", "story", "cms_change", "enhancement", "task", "subtask"]),
   startDate: varchar("startDate", { length: 50 }),
   dueDate: varchar("dueDate", { length: 50 }),
   completedDate: varchar("completedDate", { length: 50 }),
