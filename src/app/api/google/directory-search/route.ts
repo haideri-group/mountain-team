@@ -52,7 +52,7 @@ export async function GET(request: NextRequest) {
     if (!res.ok) {
       const text = await res.text();
       return NextResponse.json(
-        { error: `Directory search failed: ${res.status}`, details: text },
+        { error: `Directory search failed: ${res.status}` },
         { status: res.status },
       );
     }

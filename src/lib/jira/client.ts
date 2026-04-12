@@ -27,6 +27,15 @@ export function isJiraConfigured(): boolean {
   return !!(baseUrl && email && token) && !baseUrl.includes("your-domain") && !token.includes("your-jira");
 }
 
+// Sanitize API error responses to prevent credential leakage in logs
+export function sanitizeErrorText(text: string): string {
+  return text
+    .replace(/Basic\s+[A-Za-z0-9+/=]+/gi, "Basic [REDACTED]")
+    .replace(/Bearer\s+[A-Za-z0-9._-]+/gi, "Bearer [REDACTED]")
+    .replace(/token[=:]\s*["']?[A-Za-z0-9._-]+/gi, "token=[REDACTED]")
+    .substring(0, 500); // Truncate to prevent large error dumps
+}
+
 async function jiraFetch<T>(path: string): Promise<T> {
   const url = `${getBaseUrl()}/rest/api/3${path}`;
 
@@ -41,7 +50,7 @@ async function jiraFetch<T>(path: string): Promise<T> {
 
   if (!res.ok) {
     const text = await res.text();
-    throw new Error(`JIRA API error ${res.status}: ${text}`);
+    throw new Error(`JIRA API error ${res.status}: ${sanitizeErrorText(text)}`);
   }
 
   return res.json();

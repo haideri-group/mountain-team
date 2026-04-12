@@ -3,10 +3,16 @@ import type { NextRequest } from "next/server";
 import { isJiraConfigured, fetchJiraProjects } from "@/lib/jira/client";
 import { db } from "@/lib/db";
 import { boards } from "@/lib/db/schema";
+import { auth } from "@/auth";
 
-// GET /api/jira/projects?startAt=0&maxResults=12&query=
+// GET /api/jira/projects?startAt=0&maxResults=12&query= (admin only)
 export async function GET(request: NextRequest) {
   try {
+    const session = await auth();
+    if (session?.user?.role !== "admin") {
+      return NextResponse.json({ error: "Admin access required" }, { status: 403 });
+    }
+
     if (!isJiraConfigured()) {
       return NextResponse.json(
         {

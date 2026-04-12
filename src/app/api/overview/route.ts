@@ -1,10 +1,16 @@
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { team_members, issues, boards } from "@/lib/db/schema";
-import { eq, inArray, and, ne, gte, sql } from "drizzle-orm";
+import { eq, inArray } from "drizzle-orm";
+import { auth } from "@/auth";
 
 export async function GET() {
   try {
+    const session = await auth();
+    if (!session?.user) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
     // Fetch all members (exclude departed by default — client can filter)
     const allMembers = await db.select().from(team_members);
 

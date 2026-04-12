@@ -3,10 +3,16 @@ import { team_members } from "@/lib/db/schema";
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 import { desc, like, or, and, eq, count } from "drizzle-orm";
+import { auth } from "@/auth";
 
 // GET /api/team — List team members with server-side pagination & filtering
 export async function GET(request: NextRequest) {
   try {
+    const session = await auth();
+    if (!session?.user) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
     const { searchParams } = request.nextUrl;
     const page = Math.max(1, parseInt(searchParams.get("page") || "1", 10));
     const pageSize = Math.max(1, Math.min(100, parseInt(searchParams.get("pageSize") || "20", 10)));
