@@ -2,12 +2,18 @@ import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { team_members, issues, boards } from "@/lib/db/schema";
 import { eq, and, inArray } from "drizzle-orm";
+import { auth } from "@/auth";
 
 export async function GET(
   _request: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
   try {
+    const session = await auth();
+    if (!session?.user) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
     const { id } = await params;
 
     // Fetch member

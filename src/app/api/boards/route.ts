@@ -2,10 +2,16 @@ import { db } from "@/lib/db";
 import { boards } from "@/lib/db/schema";
 import { NextResponse } from "next/server";
 import { desc } from "drizzle-orm";
+import { auth } from "@/auth";
 
 // GET /api/boards — List all boards
 export async function GET() {
   try {
+    const session = await auth();
+    if (!session?.user) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
     const allBoards = await db.select().from(boards).orderBy(desc(boards.createdAt));
     return NextResponse.json(allBoards);
   } catch (error) {
@@ -14,9 +20,14 @@ export async function GET() {
   }
 }
 
-// POST /api/boards — Add a new board/project
+// POST /api/boards — Add a new board/project (admin only)
 export async function POST(request: Request) {
   try {
+    const session = await auth();
+    if (session?.user?.role !== "admin") {
+      return NextResponse.json({ error: "Admin access required" }, { status: 403 });
+    }
+
     const body = await request.json();
     const { jiraKey, name, color, description, isTracked } = body;
 

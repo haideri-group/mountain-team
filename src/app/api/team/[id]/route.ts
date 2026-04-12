@@ -2,10 +2,16 @@ import { db } from "@/lib/db";
 import { team_members } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
+import { auth } from "@/auth";
 
 // GET /api/team/:id — Get single member
 export async function GET(_request: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
+    const session = await auth();
+    if (!session?.user) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
     const { id } = await params;
     const [member] = await db.select().from(team_members).where(eq(team_members.id, id)).limit(1);
 
@@ -23,6 +29,11 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
 // PATCH /api/team/:id — Update admin-managed fields (role, capacity, color, status active/on_leave)
 export async function PATCH(request: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
+    const session = await auth();
+    if (session?.user?.role !== "admin") {
+      return NextResponse.json({ error: "Admin access required" }, { status: 403 });
+    }
+
     const { id } = await params;
     const body = await request.json();
 

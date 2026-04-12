@@ -2,10 +2,16 @@ import { db } from "@/lib/db";
 import { boards } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
+import { auth } from "@/auth";
 
-// PATCH /api/boards/:id — Update board (toggle tracking, edit details)
+// PATCH /api/boards/:id — Update board (admin only)
 export async function PATCH(request: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
+    const session = await auth();
+    if (session?.user?.role !== "admin") {
+      return NextResponse.json({ error: "Admin access required" }, { status: 403 });
+    }
+
     const { id } = await params;
     const body = await request.json();
 
@@ -20,12 +26,17 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
   }
 }
 
-// DELETE /api/boards/:id — Remove board
+// DELETE /api/boards/:id — Remove board (admin only)
 export async function DELETE(
   _request: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
   try {
+    const session = await auth();
+    if (session?.user?.role !== "admin") {
+      return NextResponse.json({ error: "Admin access required" }, { status: 403 });
+    }
+
     const { id } = await params;
     await db.delete(boards).where(eq(boards.id, id));
     return NextResponse.json({ message: "Board deleted" });
