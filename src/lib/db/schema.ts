@@ -22,6 +22,8 @@ export const team_members = mysqlTable("team_members", {
   capacity: int("capacity").default(10),
   avatarUrl: text("avatarUrl"),
   color: varchar("color", { length: 50 }),
+  teamId: varchar("teamId", { length: 191 }),
+  teamName: varchar("teamName", { length: 255 }),
   createdAt: timestamp("createdAt").defaultNow(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow(),
 });
@@ -51,17 +53,20 @@ export const issues = mysqlTable("issues", {
   cycleTime: float("cycleTime"),
   storyPoints: float("storyPoints"),
   labels: text("labels"),
+  jiraCreatedAt: varchar("jiraCreatedAt", { length: 50 }),
+  jiraUpdatedAt: varchar("jiraUpdatedAt", { length: 50 }),
   createdAt: timestamp("createdAt").defaultNow(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow(),
 });
 
 export const syncLogs = mysqlTable("sync_logs", {
   id: varchar("id", { length: 191 }).primaryKey(),
-  type: mysqlEnum("type", ["full", "incremental", "manual"]).notNull(),
+  type: mysqlEnum("type", ["full", "incremental", "manual", "team_sync"]).notNull(),
   status: mysqlEnum("status", ["running", "completed", "failed"]).notNull(),
   startedAt: timestamp("startedAt").defaultNow(),
   completedAt: timestamp("completedAt"),
   issueCount: int("issueCount").default(0),
+  memberCount: int("memberCount").default(0),
   error: text("error"),
   createdAt: timestamp("createdAt").defaultNow(),
 });

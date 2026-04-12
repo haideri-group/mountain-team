@@ -55,11 +55,11 @@ export async function GET(
       };
     });
 
-    // Sort by createdAt descending for task history
+    // Sort by JIRA creation date descending (newest first)
     const allIssuesSorted = [...enrichedIssues].sort((a, b) => {
-      const aDate = a.createdAt ? new Date(a.createdAt).getTime() : 0;
-      const bDate = b.createdAt ? new Date(b.createdAt).getTime() : 0;
-      return bDate - aDate;
+      const aDate = a.jiraCreatedAt || a.createdAt?.toISOString() || "";
+      const bDate = b.jiraCreatedAt || b.createdAt?.toISOString() || "";
+      return bDate.localeCompare(aDate);
     });
 
     // 7 days ago

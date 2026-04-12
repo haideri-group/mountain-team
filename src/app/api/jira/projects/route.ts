@@ -11,7 +11,7 @@ export async function GET(request: NextRequest) {
       return NextResponse.json(
         {
           error:
-            "JIRA is not configured. Add JIRA_BASE_URL, JIRA_USER_EMAIL, and JIRA_API_TOKEN to your .env file.",
+            "JIRA is not configured. Add NEXT_PUBLIC_JIRA_BASE_URL, JIRA_USER_EMAIL, and JIRA_API_TOKEN to your .env file.",
         },
         { status: 503 },
       );

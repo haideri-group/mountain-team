@@ -1,9 +1,11 @@
 import { db } from "@/lib/db";
-import { boards } from "@/lib/db/schema";
-import { desc } from "drizzle-orm";
+import { boards, syncLogs } from "@/lib/db/schema";
+import { desc, eq, inArray } from "drizzle-orm";
 import { auth } from "@/auth";
 import { redirect } from "next/navigation";
 import { BoardsManager } from "@/components/settings/boards-manager";
+import { TeamSyncManager } from "@/components/settings/team-sync-manager";
+import { IssueSyncManager } from "@/components/settings/issue-sync-manager";
 
 export default async function SettingsPage() {
   const session = await auth();
@@ -15,6 +17,20 @@ export default async function SettingsPage() {
 
   const allBoards = await db.select().from(boards).orderBy(desc(boards.createdAt));
 
+  const [lastSync] = await db
+    .select()
+    .from(syncLogs)
+    .where(eq(syncLogs.type, "team_sync"))
+    .orderBy(desc(syncLogs.startedAt))
+    .limit(1);
+
+  const [lastIssueSync] = await db
+    .select()
+    .from(syncLogs)
+    .where(inArray(syncLogs.type, ["full", "incremental", "manual"]))
+    .orderBy(desc(syncLogs.startedAt))
+    .limit(1);
+
   return (
     <div>
       <div className="mb-6">
@@ -25,6 +41,43 @@ export default async function SettingsPage() {
       </div>
 
       <div className="space-y-8">
+        {/* Team Sync */}
+        <section>
+          <TeamSyncManager
+            lastSync={
+              lastSync
+                ? {
+                    id: lastSync.id,
+                    status: lastSync.status,
+                    startedAt: lastSync.startedAt,
+                    completedAt: lastSync.completedAt,
+                    memberCount: lastSync.memberCount,
+                    error: lastSync.error,
+                  }
+                : null
+            }
+          />
+        </section>
+
+        {/* Issue Sync */}
+        <section>
+          <IssueSyncManager
+            lastSync={
+              lastIssueSync
+                ? {
+                    id: lastIssueSync.id,
+                    type: lastIssueSync.type,
+                    status: lastIssueSync.status,
+                    startedAt: lastIssueSync.startedAt,
+                    completedAt: lastIssueSync.completedAt,
+                    issueCount: lastIssueSync.issueCount,
+                    error: lastIssueSync.error,
+                  }
+                : null
+            }
+          />
+        </section>
+
         {/* Projects / Boards Management */}
         <section>
           <BoardsManager

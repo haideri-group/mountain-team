@@ -1,58 +1,100 @@
 import { db } from "@/lib/db";
 import { team_members } from "@/lib/db/schema";
 import { NextResponse } from "next/server";
-import { desc } from "drizzle-orm";
+import type { NextRequest } from "next/server";
+import { desc, like, or, and, eq, count } from "drizzle-orm";
 
-// GET /api/team — List all team members
-export async function GET() {
+// GET /api/team — List team members with server-side pagination & filtering
+export async function GET(request: NextRequest) {
   try {
-    const members = await db
-      .select()
-      .from(team_members)
-      .orderBy(desc(team_members.createdAt));
+    const { searchParams } = request.nextUrl;
+    const page = Math.max(1, parseInt(searchParams.get("page") || "1", 10));
+    const pageSize = Math.max(1, Math.min(100, parseInt(searchParams.get("pageSize") || "20", 10)));
+    const search = searchParams.get("search") || "";
+    const status = searchParams.get("status") || "";
+    const team = searchParams.get("team") || "";
 
-    return NextResponse.json(members);
-  } catch (error) {
-    console.error("Failed to fetch team members:", error);
-    return NextResponse.json({ error: "Failed to fetch team members" }, { status: 500 });
-  }
-}
+    // Build WHERE conditions
+    const conditions = [];
 
-// POST /api/team — Add a new team member
-export async function POST(request: Request) {
-  try {
-    const body = await request.json();
-
-    const { displayName, email, role, status, jiraAccountId, joinedDate, capacity, color } = body;
-
-    if (!displayName || !jiraAccountId) {
-      return NextResponse.json(
-        { error: "displayName and jiraAccountId are required" },
-        { status: 400 },
+    if (search) {
+      const pattern = `%${search}%`;
+      conditions.push(
+        or(
+          like(team_members.displayName, pattern),
+          like(team_members.email, pattern),
+          like(team_members.jiraAccountId, pattern),
+        ),
       );
     }
 
-    const id = `tm_${Date.now()}`;
+    if (status && status !== "all") {
+      conditions.push(
+        eq(team_members.status, status as "active" | "on_leave" | "departed"),
+      );
+    }
 
-    await db.insert(team_members).values({
-      id,
-      displayName,
-      email: email || null,
-      role: role || null,
-      status: status || "active",
-      jiraAccountId,
-      joinedDate: joinedDate || new Date().toISOString().split("T")[0],
-      capacity: capacity ?? 10,
-      color: color || `#${Math.floor(Math.random() * 16777215).toString(16).padStart(6, "0")}`,
+    if (team && team !== "all") {
+      conditions.push(eq(team_members.teamName, team));
+    }
+
+    const where = conditions.length > 0 ? and(...conditions) : undefined;
+
+    // Get total count for pagination
+    const [countResult] = await db
+      .select({ total: count() })
+      .from(team_members)
+      .where(where);
+
+    const total = countResult.total;
+
+    // Get paginated members
+    const members = await db
+      .select()
+      .from(team_members)
+      .where(where)
+      .orderBy(desc(team_members.createdAt))
+      .limit(pageSize)
+      .offset((page - 1) * pageSize);
+
+    // Get metrics (across ALL members, unfiltered)
+    const allStatuses = await db
+      .select({
+        status: team_members.status,
+        teamName: team_members.teamName,
+      })
+      .from(team_members);
+
+    const metrics = {
+      active: allStatuses.filter((m) => m.status === "active").length,
+      onLeave: allStatuses.filter((m) => m.status === "on_leave").length,
+      departed: allStatuses.filter((m) => m.status === "departed").length,
+      total: allStatuses.length,
+    };
+
+    // Derive team options (only teams that have members)
+    const teamOptions = [
+      ...new Set(
+        allStatuses
+          .map((m) => m.teamName)
+          .filter((t): t is string => !!t),
+      ),
+    ].sort();
+
+    return NextResponse.json({
+      members,
+      totalCount: total,
+      metrics,
+      teamOptions,
+      page,
+      pageSize,
+      totalPages: Math.ceil(total / pageSize),
     });
-
-    return NextResponse.json({ id, message: "Member added successfully" }, { status: 201 });
-  } catch (error: unknown) {
-    console.error("Failed to add team member:", error);
-    const message =
-      error instanceof Error && error.message.includes("Duplicate")
-        ? "A member with this JIRA Account ID already exists"
-        : "Failed to add team member";
-    return NextResponse.json({ error: message }, { status: 500 });
+  } catch (error) {
+    console.error("Failed to fetch team members:", error);
+    return NextResponse.json(
+      { error: "Failed to fetch team members" },
+      { status: 500 },
+    );
   }
 }

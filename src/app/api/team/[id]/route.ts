@@ -20,11 +20,19 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
   }
 }
 
-// PATCH /api/team/:id — Update member
+// PATCH /api/team/:id — Update admin-managed fields (role, capacity, color, status active/on_leave)
 export async function PATCH(request: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
     const { id } = await params;
     const body = await request.json();
+
+    // Guard: departed status can only be set by sync
+    if (body.status === "departed") {
+      return NextResponse.json(
+        { error: "Departed status can only be set by team sync" },
+        { status: 400 },
+      );
+    }
 
     await db.update(team_members).set(body).where(eq(team_members.id, id));
 
@@ -38,20 +46,5 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
   } catch (error) {
     console.error("Failed to update member:", error);
     return NextResponse.json({ error: "Failed to update member" }, { status: 500 });
-  }
-}
-
-// DELETE /api/team/:id — Delete member
-export async function DELETE(
-  _request: Request,
-  { params }: { params: Promise<{ id: string }> },
-) {
-  try {
-    const { id } = await params;
-    await db.delete(team_members).where(eq(team_members.id, id));
-    return NextResponse.json({ message: "Member deleted" });
-  } catch (error) {
-    console.error("Failed to delete member:", error);
-    return NextResponse.json({ error: "Failed to delete member" }, { status: 500 });
   }
 }
