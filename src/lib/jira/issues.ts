@@ -1,4 +1,4 @@
-import { getAuthHeader, getBaseUrl } from "./client";
+import { getAuthHeader, getBaseUrl, sanitizeErrorText } from "./client";
 
 // --- Types ---
 
@@ -100,7 +100,7 @@ async function jiraSearchPost(
 
   if (!res.ok) {
     const text = await res.text();
-    throw new Error(`JIRA search error ${res.status}: ${text}`);
+    throw new Error(`JIRA search error ${res.status}: ${sanitizeErrorText(text)}`);
   }
 
   return res.json();

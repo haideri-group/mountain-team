@@ -33,7 +33,7 @@ async function refreshAccessToken(refreshToken: string): Promise<string> {
 
   if (!res.ok) {
     const text = await res.text();
-    throw new Error(`Failed to refresh Google token: ${res.status}: ${text}`);
+    throw new Error(`Failed to refresh Google token: ${res.status}`);
   }
 
   const data: { access_token: string } = await res.json();
@@ -98,7 +98,7 @@ async function searchDirectory(
 
   if (!res.ok) {
     const text = await res.text();
-    throw new Error(`Google Directory search failed: ${res.status}: ${text}`);
+    throw new Error(`Google Directory search failed: ${res.status}`);
   }
 
   const data: SearchResponse = await res.json();
