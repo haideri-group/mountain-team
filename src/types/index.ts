@@ -4,7 +4,7 @@ export type MemberStatus = "active" | "on_leave" | "departed";
 export type IssueStatus = "todo" | "in_progress" | "in_review" | "ready_for_testing" | "ready_for_live" | "done" | "closed";
 export type IssuePriority = "highest" | "high" | "medium" | "low" | "lowest";
 export type IssueType = "bug" | "story" | "cms_change" | "enhancement" | "task";
-export type SyncType = "full" | "incremental" | "manual";
+export type SyncType = "full" | "incremental" | "manual" | "team_sync";
 export type SyncStatus = "running" | "completed" | "failed";
 export type NotificationType = "aging" | "overdue" | "capacity" | "completed" | "unblocked";
 export type Theme = "light" | "dark" | "system";
@@ -32,6 +32,8 @@ export interface TeamMember {
   capacity: number | null;
   avatarUrl: string | null;
   color: string | null;
+  teamId: string | null;
+  teamName: string | null;
   createdAt: Date | null;
   updatedAt: Date | null;
 }
@@ -75,6 +77,7 @@ export interface SyncLog {
   startedAt: Date | null;
   completedAt: Date | null;
   issueCount: number | null;
+  memberCount: number | null;
   error: string | null;
   createdAt: Date | null;
 }

@@ -26,6 +26,7 @@ interface TaskIssue {
   storyPoints: number | null;
   boardKey: string;
   boardColor: string;
+  jiraCreatedAt: string | null;
 }
 
 interface TaskHistoryTableProps {
@@ -56,6 +57,7 @@ type SortField =
   | "title"
   | "status"
   | "priority"
+  | "jiraCreatedAt"
   | "dueDate"
   | "completedDate"
   | "cycleTime";
@@ -75,7 +77,7 @@ export function TaskHistoryTable({ issues, boards }: TaskHistoryTableProps) {
   const [statusFilter, setStatusFilter] = useState("");
   const [boardFilter, setBoardFilter] = useState("");
   const [priorityFilter, setPriorityFilter] = useState("");
-  const [sortField, setSortField] = useState<SortField>("dueDate");
+  const [sortField, setSortField] = useState<SortField>("jiraCreatedAt");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState(7);
@@ -132,6 +134,9 @@ export function TaskHistoryTable({ issues, boards }: TaskHistoryTableProps) {
           cmp =
             priorityOrder.indexOf(a.priority || "medium") -
             priorityOrder.indexOf(b.priority || "medium");
+          break;
+        case "jiraCreatedAt":
+          cmp = (a.jiraCreatedAt || "").localeCompare(b.jiraCreatedAt || "");
           break;
         case "dueDate":
           cmp = (a.dueDate || "").localeCompare(b.dueDate || "");
@@ -276,6 +281,7 @@ export function TaskHistoryTable({ issues, boards }: TaskHistoryTableProps) {
                 { field: "title" as SortField, label: "Title", width: "" },
                 { field: "status" as SortField, label: "Status", width: "w-[140px]" },
                 { field: "priority" as SortField, label: "Priority", width: "w-[90px]" },
+                { field: "jiraCreatedAt" as SortField, label: "Created", width: "w-[120px]" },
                 { field: "dueDate" as SortField, label: "Due Date", width: "w-[120px]" },
                 { field: "completedDate" as SortField, label: "Completed", width: "w-[120px]" },
                 { field: "cycleTime" as SortField, label: "Cycle", width: "w-[70px]" },
@@ -296,7 +302,7 @@ export function TaskHistoryTable({ issues, boards }: TaskHistoryTableProps) {
           <tbody>
             {pageItems.length === 0 && (
               <tr>
-                <td colSpan={7} className="px-4 py-12 text-center text-sm text-muted-foreground">
+                <td colSpan={8} className="px-4 py-12 text-center text-sm text-muted-foreground">
                   No tasks found
                 </td>
               </tr>
@@ -309,12 +315,15 @@ export function TaskHistoryTable({ issues, boards }: TaskHistoryTableProps) {
                   className={`border-t border-border/30 ${missed ? "bg-red-50/50 dark:bg-red-950/20" : "hover:bg-muted/5"} transition-colors`}
                 >
                   <td className="px-4 py-3">
-                    <span
-                      className="text-xs font-bold font-mono"
+                    <a
+                      href={`${process.env.NEXT_PUBLIC_JIRA_BASE_URL}/browse/${issue.jiraKey}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-xs font-bold font-mono hover:underline"
                       style={{ color: issue.boardColor }}
                     >
                       {issue.jiraKey}
-                    </span>
+                    </a>
                   </td>
                   <td className="px-4 py-3">
                     <span className="text-sm text-foreground line-clamp-1">
@@ -329,6 +338,11 @@ export function TaskHistoryTable({ issues, boards }: TaskHistoryTableProps) {
                       className={`text-xs font-mono font-semibold ${priorityColors[issue.priority || "medium"]}`}
                     >
                       {priorityLabels[issue.priority || "medium"] || "—"}
+                    </span>
+                  </td>
+                  <td className="px-4 py-3">
+                    <span className="text-xs font-mono text-muted-foreground">
+                      {formatDate(issue.jiraCreatedAt)}
                     </span>
                   </td>
                   <td className="px-4 py-3">

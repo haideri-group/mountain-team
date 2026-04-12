@@ -1,12 +1,12 @@
-function getConfig() {
+export function getConfig() {
   return {
-    baseUrl: process.env.JIRA_BASE_URL || "",
+    baseUrl: process.env.NEXT_PUBLIC_JIRA_BASE_URL || "",
     email: process.env.JIRA_USER_EMAIL || "",
     token: process.env.JIRA_API_TOKEN || "",
   };
 }
 
-function getAuthHeader(): string {
+export function getAuthHeader(): string {
   const { email, token } = getConfig();
   if (!email || !token) {
     throw new Error("JIRA credentials not configured");
@@ -14,10 +14,10 @@ function getAuthHeader(): string {
   return `Basic ${Buffer.from(`${email}:${token}`).toString("base64")}`;
 }
 
-function getBaseUrl(): string {
+export function getBaseUrl(): string {
   const { baseUrl } = getConfig();
   if (!baseUrl) {
-    throw new Error("JIRA_BASE_URL not configured");
+    throw new Error("NEXT_PUBLIC_JIRA_BASE_URL not configured");
   }
   return baseUrl.replace(/\/$/, "");
 }

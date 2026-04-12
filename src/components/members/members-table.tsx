@@ -1,10 +1,19 @@
 "use client";
 
-import { useState } from "react";
-import { Search, UserPlus, Trash2, Edit, MoreVertical } from "lucide-react";
+import { useState, useRef, useCallback, useEffect } from "react";
+import { Search, RefreshCw, Loader2, Pencil, Check, X } from "lucide-react";
 import { StatusBadge } from "@/components/shared/status-badge";
-import { SlideOver } from "@/components/shared/slide-over";
-import { AddMemberForm } from "./add-member-form";
+import {
+  MembersTablePagination,
+  type PageSize,
+} from "@/components/members/members-table-pagination";
+import Link from "next/link";
+
+interface DirectorySuggestion {
+  name: string;
+  email: string;
+  photo: string | null;
+}
 
 interface Member {
   id: string;
@@ -17,77 +26,204 @@ interface Member {
   departedDate: string | null;
   capacity: number | null;
   color: string | null;
+  avatarUrl: string | null;
+  teamName: string | null;
+}
+
+interface ApiResponse {
+  members: Member[];
+  totalCount: number;
+  metrics: { active: number; onLeave: number; departed: number; total: number };
+  teamOptions: string[];
+  page: number;
+  pageSize: number;
+  totalPages: number;
 }
 
 interface MembersTableProps {
-  members: Member[];
   isAdmin: boolean;
 }
 
-export function MembersTable({ members: initialMembers, isAdmin }: MembersTableProps) {
-  const [members, setMembers] = useState(initialMembers);
+export function MembersTable({ isAdmin }: MembersTableProps) {
+  // Filters & pagination state
   const [search, setSearch] = useState("");
-  const [statusFilter, setStatusFilter] = useState<string>("all");
-  const [showAddPanel, setShowAddPanel] = useState(false);
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [editStatus, setEditStatus] = useState<string>("");
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [teamFilter, setTeamFilter] = useState("all");
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState<PageSize>(20);
 
-  const refreshMembers = async () => {
-    const res = await fetch("/api/team");
-    if (res.ok) {
+  // Data from API
+  const [members, setMembers] = useState<Member[]>([]);
+  const [totalCount, setTotalCount] = useState(0);
+  const [metrics, setMetrics] = useState({ active: 0, onLeave: 0, departed: 0, total: 0 });
+  const [teamOptions, setTeamOptions] = useState<string[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  // Sync state
+  const [syncing, setSyncing] = useState(false);
+  const [syncError, setSyncError] = useState<string | null>(null);
+  const [syncResult, setSyncResult] = useState<{
+    added: number;
+    departed: number;
+    updated: number;
+  } | null>(null);
+
+  // Email editing state
+  const [editingEmailId, setEditingEmailId] = useState<string | null>(null);
+  const [editEmailValue, setEditEmailValue] = useState("");
+  const [suggestions, setSuggestions] = useState<DirectorySuggestion[]>([]);
+  const [showSuggestions, setShowSuggestions] = useState(false);
+  const [loadingSuggestions, setLoadingSuggestions] = useState(false);
+  const [selectedIndex, setSelectedIndex] = useState(-1);
+  const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const searchDebounceRef = useRef<NodeJS.Timeout | null>(null);
+  const suggestionsRef = useRef<HTMLDivElement>(null);
+
+  // --- Data fetching ---
+
+  const fetchMembers = useCallback(async () => {
+    setLoading(true);
+    try {
+      const params = new URLSearchParams({
+        page: String(page),
+        pageSize: String(pageSize),
+      });
+      if (search) params.set("search", search);
+      if (statusFilter !== "all") params.set("status", statusFilter);
+      if (teamFilter !== "all") params.set("team", teamFilter);
+
+      const res = await fetch(`/api/team?${params}`);
+      if (!res.ok) throw new Error("Failed to fetch");
+
+      const data: ApiResponse = await res.json();
+      setMembers(data.members);
+      setTotalCount(data.totalCount);
+      setMetrics(data.metrics);
+      setTeamOptions(data.teamOptions);
+    } catch {
+      // keep existing data on error
+    } finally {
+      setLoading(false);
+    }
+  }, [page, pageSize, search, statusFilter, teamFilter]);
+
+  useEffect(() => {
+    fetchMembers();
+  }, [fetchMembers]);
+
+  // --- Filter handlers (reset page to 1) ---
+
+  const handleSearchChange = (value: string) => {
+    if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
+    searchDebounceRef.current = setTimeout(() => {
+      setSearch(value);
+      setPage(1);
+    }, 300);
+  };
+
+  const handleStatusFilterChange = (value: string) => {
+    setStatusFilter(value);
+    setPage(1);
+  };
+
+  const handleTeamFilterChange = (value: string) => {
+    setTeamFilter(value);
+    setPage(1);
+  };
+
+  // --- Sync ---
+
+  const handleSync = async () => {
+    setSyncing(true);
+    setSyncError(null);
+    setSyncResult(null);
+
+    try {
+      const res = await fetch("/api/sync/team-members", { method: "POST" });
       const data = await res.json();
-      setMembers(data);
+      if (!res.ok) throw new Error(data.error || "Sync failed");
+
+      setSyncResult({
+        added: data.added,
+        departed: data.departed,
+        updated: data.updated,
+      });
+      // Re-fetch current page
+      fetchMembers();
+    } catch (err) {
+      setSyncError(err instanceof Error ? err.message : "Sync failed");
+    } finally {
+      setSyncing(false);
     }
   };
 
-  const handleDelete = async (id: string, name: string) => {
-    if (!confirm(`Are you sure you want to remove ${name}?`)) return;
+  // --- Email editing with Google autocomplete ---
 
-    const res = await fetch(`/api/team/${id}`, { method: "DELETE" });
-    if (res.ok) {
-      setMembers(members.filter((m) => m.id !== id));
+  const searchDirectory = useCallback(async (query: string) => {
+    if (query.length < 3) {
+      setSuggestions([]);
+      setShowSuggestions(false);
+      return;
     }
+
+    setLoadingSuggestions(true);
+    try {
+      const res = await fetch(
+        `/api/google/directory-search?q=${encodeURIComponent(query)}`,
+      );
+      if (res.ok) {
+        const data = await res.json();
+        setSuggestions(data.results || []);
+        setShowSuggestions(data.results?.length > 0);
+        setSelectedIndex(-1);
+      }
+    } catch {
+      setSuggestions([]);
+    } finally {
+      setLoadingSuggestions(false);
+    }
+  }, []);
+
+  const handleEmailInputChange = (value: string) => {
+    setEditEmailValue(value);
+    if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
+    searchTimeoutRef.current = setTimeout(() => searchDirectory(value), 300);
   };
 
-  const handleStatusChange = async (id: string, newStatus: string) => {
-    const body: Record<string, string | null> = { status: newStatus };
-    if (newStatus === "departed") {
-      body.departedDate = new Date().toISOString().split("T")[0];
-    }
-    if (newStatus === "active") {
-      body.departedDate = null;
-    }
+  const selectSuggestion = (suggestion: DirectorySuggestion) => {
+    setEditEmailValue(suggestion.email);
+    setShowSuggestions(false);
+    setSuggestions([]);
+  };
 
-    const res = await fetch(`/api/team/${id}`, {
+  const handleEmailSave = async (memberId: string) => {
+    const res = await fetch(`/api/team/${memberId}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
+      body: JSON.stringify({ email: editEmailValue || null }),
     });
 
     if (res.ok) {
       setMembers(
         members.map((m) =>
-          m.id === id
-            ? { ...m, status: newStatus as Member["status"], departedDate: body.departedDate ?? m.departedDate }
-            : m,
+          m.id === memberId ? { ...m, email: editEmailValue || null } : m,
         ),
       );
-      setEditingId(null);
     }
+    setEditingEmailId(null);
+    setShowSuggestions(false);
+    setSuggestions([]);
   };
 
-  const filtered = members.filter((m) => {
-    const matchSearch =
-      m.displayName.toLowerCase().includes(search.toLowerCase()) ||
-      m.email?.toLowerCase().includes(search.toLowerCase()) ||
-      m.jiraAccountId.toLowerCase().includes(search.toLowerCase());
-    const matchStatus = statusFilter === "all" || m.status === statusFilter;
-    return matchSearch && matchStatus;
-  });
+  const startEditingEmail = (member: Member) => {
+    setEditingEmailId(member.id);
+    setEditEmailValue(member.email || "");
+    setSuggestions([]);
+    setShowSuggestions(false);
+    setTimeout(() => searchDirectory(member.displayName), 100);
+  };
 
-  const activeCount = members.filter((m) => m.status === "active").length;
-  const onLeaveCount = members.filter((m) => m.status === "on_leave").length;
-  const departedCount = members.filter((m) => m.status === "departed").length;
+  // --- Helpers ---
 
   const getInitials = (name: string) =>
     name
@@ -101,10 +237,10 @@ export function MembersTable({ members: initialMembers, isAdmin }: MembersTableP
       {/* Metrics */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         {[
-          { label: "Active Members", value: activeCount, color: "text-emerald-600" },
-          { label: "On Leave", value: onLeaveCount, color: "text-amber-600" },
-          { label: "Departed", value: departedCount, color: "text-gray-500" },
-          { label: "Total (All Time)", value: members.length, color: "text-foreground" },
+          { label: "Active Members", value: metrics.active, color: "text-emerald-600" },
+          { label: "On Leave", value: metrics.onLeave, color: "text-amber-600" },
+          { label: "Departed", value: metrics.departed, color: "text-gray-500" },
+          { label: "Total (All Time)", value: metrics.total, color: "text-foreground" },
         ].map((metric) => (
           <div key={metric.label} className="bg-card rounded-xl p-5 space-y-1">
             <p className="text-xs text-muted-foreground font-medium">{metric.label}</p>
@@ -112,6 +248,26 @@ export function MembersTable({ members: initialMembers, isAdmin }: MembersTableP
           </div>
         ))}
       </div>
+
+      {/* Sync Result Banner */}
+      {syncResult && (
+        <div className="flex items-center gap-3 p-3 rounded-xl bg-emerald-50 dark:bg-emerald-950/20">
+          <span className="text-xs font-bold font-mono text-emerald-700 dark:text-emerald-400">
+            Sync complete:
+          </span>
+          <span className="text-xs font-mono text-emerald-600 dark:text-emerald-400">
+            +{syncResult.added} added, {syncResult.departed} departed,{" "}
+            {syncResult.updated} updated
+          </span>
+        </div>
+      )}
+
+      {syncError && (
+        <div className="flex items-center gap-3 p-3 rounded-xl bg-red-50 dark:bg-red-950/20">
+          <span className="text-xs font-bold text-red-700 dark:text-red-400">Sync failed:</span>
+          <span className="text-xs text-red-600 dark:text-red-400/80">{syncError}</span>
+        </div>
+      )}
 
       {/* Table Card */}
       <div className="bg-card rounded-xl overflow-hidden">
@@ -122,15 +278,15 @@ export function MembersTable({ members: initialMembers, isAdmin }: MembersTableP
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
               <input
                 type="text"
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
+                defaultValue={search}
+                onChange={(e) => handleSearchChange(e.target.value)}
                 placeholder="Search members..."
                 className="w-full h-9 pl-9 pr-4 rounded-full bg-muted/30 border-transparent text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 transition-all"
               />
             </div>
             <select
               value={statusFilter}
-              onChange={(e) => setStatusFilter(e.target.value)}
+              onChange={(e) => handleStatusFilterChange(e.target.value)}
               className="h-9 px-3 rounded-full bg-muted/30 border-transparent text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 transition-all appearance-none"
             >
               <option value="all">All Status</option>
@@ -138,147 +294,213 @@ export function MembersTable({ members: initialMembers, isAdmin }: MembersTableP
               <option value="on_leave">On Leave</option>
               <option value="departed">Departed</option>
             </select>
+            {teamOptions.length > 0 && (
+              <select
+                value={teamFilter}
+                onChange={(e) => handleTeamFilterChange(e.target.value)}
+                className="h-9 px-3 rounded-full bg-muted/30 border-transparent text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 transition-all appearance-none"
+              >
+                <option value="all">All Teams</option>
+                {teamOptions.map((t) => (
+                  <option key={t} value={t}>{t}</option>
+                ))}
+              </select>
+            )}
           </div>
 
           {isAdmin && (
             <button
-              onClick={() => setShowAddPanel(true)}
-              className="flex items-center gap-2 px-4 h-9 rounded-full text-sm font-bold font-mono uppercase tracking-wider bg-primary text-primary-foreground hover:bg-primary/90 shadow-md transition-all"
+              onClick={handleSync}
+              disabled={syncing}
+              className="flex items-center gap-2 px-5 h-9 rounded-full text-sm font-bold font-mono uppercase tracking-wider text-white shadow-md transition-all disabled:opacity-50"
+              style={{ background: "linear-gradient(135deg, #944a00, #ff8400)" }}
             >
-              <UserPlus className="h-4 w-4" />
-              Add Member
+              {syncing ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+              {syncing ? "Syncing..." : "Sync from JIRA"}
             </button>
           )}
         </div>
 
         {/* Table */}
-        <div className="overflow-x-auto">
-          <table className="w-full">
-            <thead>
-              <tr className="bg-muted/30">
-                <th className="text-left px-5 py-3 text-xs font-bold font-mono uppercase tracking-wider text-muted-foreground">
-                  Member
-                </th>
-                <th className="text-left px-5 py-3 text-xs font-bold font-mono uppercase tracking-wider text-muted-foreground hidden md:table-cell">
-                  Role
-                </th>
-                <th className="text-left px-5 py-3 text-xs font-bold font-mono uppercase tracking-wider text-muted-foreground">
-                  Status
-                </th>
-                <th className="text-left px-5 py-3 text-xs font-bold font-mono uppercase tracking-wider text-muted-foreground hidden lg:table-cell">
-                  JIRA ID
-                </th>
-                <th className="text-left px-5 py-3 text-xs font-bold font-mono uppercase tracking-wider text-muted-foreground hidden lg:table-cell">
-                  Joined
-                </th>
-                {isAdmin && (
-                  <th className="text-right px-5 py-3 text-xs font-bold font-mono uppercase tracking-wider text-muted-foreground">
-                    Actions
-                  </th>
-                )}
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-border/50">
-              {filtered.map((member) => (
-                <tr
-                  key={member.id}
-                  className={`hover:bg-muted/20 transition-colors ${member.status === "departed" ? "opacity-50" : ""}`}
-                >
-                  <td className="px-5 py-4">
-                    <div className="flex items-center gap-3">
-                      <div
-                        className="h-9 w-9 rounded-full flex items-center justify-center text-white text-xs font-bold shrink-0"
-                        style={{ backgroundColor: member.color || "#6b7280" }}
-                      >
-                        {getInitials(member.displayName)}
-                      </div>
-                      <div className="min-w-0">
-                        <p className="text-sm font-semibold font-mono truncate">
-                          {member.displayName}
-                        </p>
-                        <p className="text-xs text-muted-foreground truncate">
-                          {member.email || "No email"}
-                        </p>
-                      </div>
-                    </div>
-                  </td>
-                  <td className="px-5 py-4 hidden md:table-cell">
-                    <span className="text-sm">{member.role || "—"}</span>
-                  </td>
-                  <td className="px-5 py-4">
-                    {editingId === member.id ? (
-                      <select
-                        value={editStatus}
-                        onChange={(e) => {
-                          handleStatusChange(member.id, e.target.value);
-                        }}
-                        className="h-8 px-2 rounded-lg bg-muted/30 border-transparent text-xs focus:outline-none"
-                        autoFocus
-                        onBlur={() => setEditingId(null)}
-                      >
-                        <option value="active">Active</option>
-                        <option value="on_leave">On Leave</option>
-                        <option value="departed">Departed</option>
-                      </select>
-                    ) : (
-                      <button
-                        onClick={() => {
-                          if (isAdmin) {
-                            setEditingId(member.id);
-                            setEditStatus(member.status);
-                          }
-                        }}
-                        className={isAdmin ? "cursor-pointer" : "cursor-default"}
-                      >
-                        <StatusBadge status={member.status} />
-                      </button>
-                    )}
-                  </td>
-                  <td className="px-5 py-4 hidden lg:table-cell">
-                    <span className="text-xs font-mono text-muted-foreground">
-                      {member.jiraAccountId}
-                    </span>
-                  </td>
-                  <td className="px-5 py-4 hidden lg:table-cell">
-                    <span className="text-xs font-mono text-muted-foreground">
-                      {member.joinedDate || "—"}
-                    </span>
-                  </td>
-                  {isAdmin && (
-                    <td className="px-5 py-4 text-right">
-                      <button
-                        onClick={() => handleDelete(member.id, member.displayName)}
-                        className="p-1.5 rounded-lg text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
-                        title="Remove member"
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </button>
-                    </td>
-                  )}
-                </tr>
-              ))}
-              {filtered.length === 0 && (
-                <tr>
-                  <td colSpan={isAdmin ? 6 : 5} className="px-5 py-12 text-center">
-                    <p className="text-muted-foreground text-sm">No members found</p>
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-      </div>
+        <div className="overflow-x-auto relative">
+          {/* Loading overlay */}
+          {loading && members.length > 0 && (
+            <div className="absolute inset-0 bg-card/60 z-10 flex items-center justify-center">
+              <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+            </div>
+          )}
 
-      {/* Add Member Panel */}
-      <SlideOver open={showAddPanel} onClose={() => setShowAddPanel(false)} title="Add New Member">
-        <AddMemberForm
-          onSuccess={() => {
-            setShowAddPanel(false);
-            refreshMembers();
-          }}
-          onCancel={() => setShowAddPanel(false)}
-        />
-      </SlideOver>
+          {/* Initial loading */}
+          {loading && members.length === 0 && (
+            <div className="flex items-center justify-center py-20">
+              <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+              <span className="ml-3 text-sm text-muted-foreground">Loading members...</span>
+            </div>
+          )}
+
+          {!loading && members.length === 0 && (
+            <div className="px-5 py-12 text-center">
+              <p className="text-muted-foreground text-sm">No members found</p>
+            </div>
+          )}
+
+          {members.length > 0 && (
+            <table className="w-full">
+              <thead>
+                <tr className="bg-muted/30">
+                  <th className="text-left px-5 py-3 text-xs font-bold font-mono uppercase tracking-wider text-muted-foreground">Member</th>
+                  <th className="text-left px-5 py-3 text-xs font-bold font-mono uppercase tracking-wider text-muted-foreground hidden md:table-cell">Role</th>
+                  <th className="text-left px-5 py-3 text-xs font-bold font-mono uppercase tracking-wider text-muted-foreground">Status</th>
+                  <th className="text-left px-5 py-3 text-xs font-bold font-mono uppercase tracking-wider text-muted-foreground hidden lg:table-cell">Capacity</th>
+                  <th className="text-left px-5 py-3 text-xs font-bold font-mono uppercase tracking-wider text-muted-foreground hidden lg:table-cell">Joined</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-border/50">
+                {members.map((member) => (
+                  <tr
+                    key={member.id}
+                    className={`hover:bg-muted/20 transition-colors ${member.status === "departed" ? "opacity-50" : ""}`}
+                  >
+                    <td className="px-5 py-4">
+                      <div className="flex items-center gap-3">
+                        <Link href={`/members/${member.id}`} className="shrink-0">
+                          {member.avatarUrl ? (
+                            <img src={member.avatarUrl} alt="" className="h-9 w-9 rounded-full object-cover" referrerPolicy="no-referrer" />
+                          ) : (
+                            <div
+                              className="h-9 w-9 rounded-full flex items-center justify-center text-white text-xs font-bold"
+                              style={{ backgroundColor: member.color || "#6b7280" }}
+                            >
+                              {getInitials(member.displayName)}
+                            </div>
+                          )}
+                        </Link>
+                        <div className="min-w-0 flex-1">
+                          <Link href={`/members/${member.id}`} className="group">
+                            <p className="text-sm font-semibold font-mono truncate group-hover:text-primary transition-colors">
+                              {member.displayName}
+                            </p>
+                          </Link>
+                          {editingEmailId === member.id ? (
+                            <div className="relative mt-0.5">
+                              <div className="flex items-center gap-1">
+                                <input
+                                  type="email"
+                                  value={editEmailValue}
+                                  onChange={(e) => handleEmailInputChange(e.target.value)}
+                                  onKeyDown={(e) => {
+                                    if (e.key === "Enter") {
+                                      if (selectedIndex >= 0 && suggestions[selectedIndex]) {
+                                        selectSuggestion(suggestions[selectedIndex]);
+                                      } else {
+                                        handleEmailSave(member.id);
+                                      }
+                                    }
+                                    if (e.key === "Escape") {
+                                      if (showSuggestions) setShowSuggestions(false);
+                                      else setEditingEmailId(null);
+                                    }
+                                    if (e.key === "ArrowDown") {
+                                      e.preventDefault();
+                                      setSelectedIndex((i) => Math.min(i + 1, suggestions.length - 1));
+                                    }
+                                    if (e.key === "ArrowUp") {
+                                      e.preventDefault();
+                                      setSelectedIndex((i) => Math.max(i - 1, -1));
+                                    }
+                                  }}
+                                  onBlur={() => setTimeout(() => setShowSuggestions(false), 200)}
+                                  className="h-6 w-56 px-2 rounded bg-muted/30 text-xs focus:outline-none focus:ring-2 focus:ring-primary/30"
+                                  placeholder="Search by name or type email..."
+                                  autoFocus
+                                />
+                                {loadingSuggestions && <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />}
+                                <button onClick={() => handleEmailSave(member.id)} className="p-0.5 rounded text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-950/30">
+                                  <Check className="h-3.5 w-3.5" />
+                                </button>
+                                <button onClick={() => { setEditingEmailId(null); setShowSuggestions(false); }} className="p-0.5 rounded text-muted-foreground hover:bg-muted/30">
+                                  <X className="h-3.5 w-3.5" />
+                                </button>
+                              </div>
+
+                              {showSuggestions && suggestions.length > 0 && (
+                                <div ref={suggestionsRef} className="absolute left-0 top-7 z-50 w-72 rounded-lg bg-popover shadow-lg ring-1 ring-foreground/10 overflow-hidden">
+                                  {suggestions.map((s, i) => (
+                                    <button
+                                      key={s.email}
+                                      onMouseDown={(e) => { e.preventDefault(); selectSuggestion(s); }}
+                                      className={`flex items-center gap-2.5 w-full px-3 py-2 text-left transition-colors ${
+                                        i === selectedIndex ? "bg-accent text-accent-foreground" : "hover:bg-muted/50"
+                                      }`}
+                                    >
+                                      {s.photo ? (
+                                        <img src={s.photo} alt="" className="h-6 w-6 rounded-full shrink-0" />
+                                      ) : (
+                                        <div className="h-6 w-6 rounded-full bg-muted/50 flex items-center justify-center text-[9px] font-bold font-mono text-muted-foreground shrink-0">
+                                          {s.name.split(" ").map((n) => n[0]).join("").substring(0, 2).toUpperCase()}
+                                        </div>
+                                      )}
+                                      <div className="min-w-0 flex-1">
+                                        <p className="text-xs font-medium truncate">{s.name}</p>
+                                        <p className="text-[10px] text-muted-foreground truncate">{s.email}</p>
+                                      </div>
+                                    </button>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          ) : (
+                            <div className="flex items-center gap-1 mt-0.5 group/email">
+                              <p className="text-xs text-muted-foreground truncate">
+                                {member.email || "No email"}
+                              </p>
+                              {isAdmin && (
+                                <button
+                                  onClick={() => startEditingEmail(member)}
+                                  className="p-0.5 rounded text-muted-foreground/0 group-hover/email:text-muted-foreground hover:bg-muted/30 transition-all"
+                                  title="Edit email"
+                                >
+                                  <Pencil className="h-3 w-3" />
+                                </button>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </td>
+                    <td className="px-5 py-4 hidden md:table-cell">
+                      <span className="text-sm">{member.role || "—"}</span>
+                    </td>
+                    <td className="px-5 py-4">
+                      <StatusBadge status={member.status} />
+                    </td>
+                    <td className="px-5 py-4 hidden lg:table-cell">
+                      <span className="text-xs font-mono text-muted-foreground">{member.capacity ?? 10} pts</span>
+                    </td>
+                    <td className="px-5 py-4 hidden lg:table-cell">
+                      <span className="text-xs font-mono text-muted-foreground">{member.joinedDate || "—"}</span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+
+        {/* Pagination */}
+        {totalCount > 0 && (
+          <MembersTablePagination
+            totalCount={totalCount}
+            page={page}
+            pageSize={pageSize}
+            onPageChange={setPage}
+            onPageSizeChange={(size) => {
+              setPageSize(size);
+              setPage(1);
+            }}
+          />
+        )}
+      </div>
     </div>
   );
 }

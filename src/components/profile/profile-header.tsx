@@ -1,6 +1,6 @@
 "use client";
 
-import { Mail, Calendar, UserX, ExternalLink } from "lucide-react";
+import { Mail, Calendar, UserX, ExternalLink, Users } from "lucide-react";
 import { StatusBadge } from "@/components/shared/status-badge";
 import type { MemberStatus } from "@/types";
 
@@ -14,6 +14,7 @@ interface ProfileHeaderProps {
     joinedDate: string | null;
     departedDate: string | null;
     jiraAccountId: string;
+    teamName: string | null;
   };
 }
 
@@ -79,6 +80,12 @@ export function ProfileHeader({ member }: ProfileHeaderProps) {
                 {member.displayName}
               </h2>
               <StatusBadge status={member.status} />
+              {member.teamName && (
+                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[10px] font-bold font-mono uppercase tracking-wider bg-blue-50 text-blue-700 dark:bg-blue-950/40 dark:text-blue-400">
+                  <Users className="h-3 w-3" />
+                  {member.teamName}
+                </span>
+              )}
               <a
                 href={`https://tilemountain.atlassian.net/people/${member.jiraAccountId}`}
                 target="_blank"

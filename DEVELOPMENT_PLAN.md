@@ -4,7 +4,7 @@
 **Product:** TeamFlow
 **Company:** Tile Mountain
 **Repository:** https://github.com/haidertm/team-flow
-**Last Updated:** April 2, 2026
+**Last Updated:** April 10, 2026
 
 ---
 
@@ -519,6 +519,45 @@ Build 12 chart/visualization components using Recharts:
 **Deliverable:** Live JIRA data flowing through the entire app
 **Verify:** Manual sync works, data appears on dashboard, incremental sync detects changes
 
+### Phase 10.5: Team Member Sync (Atlassian Teams API)
+**Duration:** 2-3 days | **Complexity:** Medium
+
+Team members are no longer manually managed. They are auto-synced from the Atlassian Teams API.
+
+**Environment config:**
+- `JIRA_ORG_ID` — Atlassian organization ID
+- `JIRA_TEAM_IDS` — Comma-separated team IDs to sync (supports multiple teams)
+
+**Sync algorithm:**
+- Fetch member accountIds from all configured Atlassian teams (POST to Teams API)
+- Resolve user details (displayName, email, avatar) from JIRA REST API
+- Filter out admin (Syed Haider Hassan, accountId `5ed6037a88deed0c1803d33d`)
+- Compare with existing DB members by `jiraAccountId`:
+  - **New** (in team, not in DB) → INSERT with status `active`
+  - **Gone** (in DB as active, not in team) → UPDATE status to `departed`, set departedDate
+  - **Still present** → Update displayName/email/avatar, keep admin-managed fields (capacity, role, color)
+- **NEVER delete member records** — departed members preserve all historical task data
+- Log sync to `sync_logs` table
+
+**Files to create:**
+- `src/lib/jira/atlassian-teams.ts` — Teams API client (pagination, auth)
+- `src/lib/sync/team-sync.ts` — Sync engine (diff algorithm, DB operations)
+- `src/app/api/cron/sync-teams/route.ts` — Vercel cron endpoint (daily 06:00 UTC)
+- `src/app/api/sync/team-members/route.ts` — Manual sync API (admin trigger + status)
+- `src/components/settings/team-sync-manager.tsx` — Settings UI for sync controls
+- `vercel.json` — Cron job configuration
+
+**UI changes:**
+- Remove Add Member form and delete button from Members page
+- Remove manual status toggle (status is sync-managed)
+- Add "Sync from JIRA" button (admin only) to Members page
+- Add Team Sync Manager section to Settings page
+
+**Deliverable:** Real team members auto-imported from Atlassian, daily cron keeps data fresh
+**Verify:** Sync imports 14 members, departed members preserved, cron endpoint secured, admin excluded
+
+---
+
 ### Phase 11: Polish + Deploy
 **Duration:** 3-4 days | **Complexity:** Large
 
@@ -561,6 +600,9 @@ Build 12 chart/visualization components using Recharts:
 10. **Sortable tables:** Arrow-up-down icons on all column headers. Active sort column highlighted.
 11. **"Expected Deployment Date":** Custom JIRA datepicker field (pending setup). Future feature.
 12. **Board naming convention:** Projects named after animals/birds (Butterfly, Eagle, Dolphin, Falcon, etc.).
+13. **NEVER delete team members or their data.** When a member is removed from the JIRA team, update status to `departed` — never delete the record. All historical task data, performance history, and assignments are preserved permanently for reporting and audit.
+14. **Team members are sync-managed.** No manual member creation/deletion. Members auto-imported from Atlassian Teams API. Admin (Syed Haider Hassan) excluded from sync — he's the dashboard admin, not a tracked team member.
+15. **Two member statuses only:** `active` (in JIRA team) and `departed` (removed from JIRA team). No manual status management.
 
 ---
 

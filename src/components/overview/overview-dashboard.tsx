@@ -7,7 +7,7 @@ import { FilterBar } from "./filter-bar";
 import { DevCard } from "./dev-card";
 
 interface OverviewData {
-  members: any[];
+  members: (Record<string, any> & { id: string; teamName: string | null; status: string })[];
   metrics: {
     teamMembers: number;
     activeIssues: number;
@@ -31,6 +31,7 @@ export function OverviewDashboard({ isAdmin }: { isAdmin: boolean }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [filters, setFilters] = useState(defaultFilters);
+  const [selectedTeam, setSelectedTeam] = useState<string>("");
 
   const fetchData = async () => {
     try {
@@ -39,6 +40,15 @@ export function OverviewDashboard({ isAdmin }: { isAdmin: boolean }) {
       if (!res.ok) throw new Error("Failed to load overview data");
       const json = await res.json();
       setData(json);
+      // Auto-select first team if not already selected
+      if (!selectedTeam && json.members) {
+        const teams = [...new Set(
+          json.members
+            .map((m: { teamName: string | null }) => m.teamName)
+            .filter(Boolean) as string[],
+        )].sort();
+        if (teams.length > 0) setSelectedTeam(teams[0]);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Something went wrong");
     } finally {
@@ -58,11 +68,24 @@ export function OverviewDashboard({ isAdmin }: { isAdmin: boolean }) {
     setFilters(defaultFilters);
   };
 
+  // Derive available teams from data
+  const availableTeams = useMemo(() => {
+    if (!data) return [];
+    return [...new Set(
+      data.members
+        .map((m) => m.teamName)
+        .filter((t): t is string => !!t),
+    )].sort();
+  }, [data]);
+
   // Apply filters to members
   const filteredMembers = useMemo(() => {
     if (!data) return [];
 
     return data.members.filter((member) => {
+      // Team filter (required -- show only selected team)
+      if (selectedTeam && member.teamName !== selectedTeam) return false;
+
       // Availability filter (default: hide departed)
       if (filters.availability) {
         if (member.status !== filters.availability) return false;
@@ -109,7 +132,7 @@ export function OverviewDashboard({ isAdmin }: { isAdmin: boolean }) {
 
       return true;
     });
-  }, [data, filters]);
+  }, [data, filters, selectedTeam]);
 
   if (loading) {
     return (
@@ -139,12 +162,34 @@ export function OverviewDashboard({ isAdmin }: { isAdmin: boolean }) {
       {/* Metrics Strip */}
       <MetricsStrip metrics={data.metrics} />
 
-      {/* Section Header + Filters */}
+      {/* Team Switcher + Section Header + Filters */}
       <div className="space-y-4">
         <div className="flex items-center justify-between">
-          <h2 className="text-lg font-bold font-mono">Team Members</h2>
+          <div className="flex items-center gap-3">
+            {availableTeams.length > 1 ? (
+              <div className="flex items-center gap-0 rounded-full bg-muted/30 p-0.5">
+                {availableTeams.map((team) => (
+                  <button
+                    key={team}
+                    onClick={() => setSelectedTeam(team)}
+                    className={`px-4 py-1.5 rounded-full text-xs font-bold font-mono uppercase tracking-wider transition-all ${
+                      selectedTeam === team
+                        ? "bg-card text-foreground shadow-sm"
+                        : "text-muted-foreground hover:text-foreground"
+                    }`}
+                  >
+                    {team}
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <h2 className="text-lg font-bold font-mono">
+                {selectedTeam || "Team Members"}
+              </h2>
+            )}
+          </div>
           <span className="text-xs text-muted-foreground font-mono">
-            {filteredMembers.length} of {data.members.length} members
+            {filteredMembers.length} members
           </span>
         </div>
 
@@ -173,7 +218,7 @@ export function OverviewDashboard({ isAdmin }: { isAdmin: boolean }) {
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">
           {filteredMembers.map((member) => (
-            <DevCard key={member.id} member={member} />
+            <DevCard key={member.id} member={member as any} />
           ))}
         </div>
       )}
