@@ -1,9 +1,9 @@
 import "dotenv/config";
+import bcrypt from "bcryptjs";
 
 async function main() {
   const { db } = await import("../src/lib/db");
   const { users, team_members, boards, issues, dashboardConfig, notifications } = await import("../src/lib/db/schema");
-  const { sql } = await import("drizzle-orm");
   console.log("Seeding database (MySQL)...");
 
   // Clear existing data (order matters for foreign keys)
@@ -15,12 +15,16 @@ async function main() {
   await db.delete(dashboardConfig);
   await db.delete(users);
 
-  // Insert Users
+  // Insert Users with hashed passwords
+  const adminPassword = await bcrypt.hash("admin123", 12);
+  const userPassword = await bcrypt.hash("user123", 12);
+
   await db.insert(users).values([
     {
       id: "usr_1",
       email: "admin@tilemountain.co.uk",
       name: "Admin User",
+      hashedPassword: adminPassword,
       role: "admin",
       avatarUrl: "https://api.dicebear.com/7.x/avataaars/svg?seed=Admin",
     },
@@ -28,6 +32,7 @@ async function main() {
       id: "usr_2",
       email: "user@tilemountain.co.uk",
       name: "Standard User",
+      hashedPassword: userPassword,
       role: "user",
       avatarUrl: "https://api.dicebear.com/7.x/avataaars/svg?seed=User",
     }
