@@ -60,10 +60,6 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
         const user = userRows[0];
 
         if (!user || !user.hashedPassword) {
-          // Fallback static fallback for development if DB misses
-          if (email === "admin@tilemountain.co.uk" && password === "admin") {
-             return { id: "usr_1", email, name: "Fallback Admin", role: "admin" };
-          }
           return null;
         }
 
