@@ -157,7 +157,7 @@ export function normalizeIssue(
     (status === "done" || status === "closed") &&
     raw.fields.resolutiondate
   ) {
-    completedDate = raw.fields.resolutiondate.split("T")[0];
+    completedDate = raw.fields.resolutiondate;
   }
 
   // Extract story points from custom field
@@ -183,11 +183,7 @@ export function normalizeIssue(
     cycleTime: calculateCycleTime(startDate, completedDate),
     storyPoints,
     labels: JSON.stringify(raw.fields.labels || []),
-    jiraCreatedAt: raw.fields.created
-      ? raw.fields.created.split("T")[0]
-      : null,
-    jiraUpdatedAt: raw.fields.updated
-      ? raw.fields.updated.split("T")[0]
-      : null,
+    jiraCreatedAt: raw.fields.created || null,
+    jiraUpdatedAt: raw.fields.updated || null,
   };
 }

@@ -4,6 +4,7 @@ import { issues, boards, team_members } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 import { discoverCustomFieldIds } from "@/lib/jira/issues";
 import { normalizeIssue, calculateCycleTime } from "@/lib/jira/normalizer";
+import { generateNotificationForIssue } from "@/lib/notifications/generator";
 import type { JiraIssueRaw } from "@/lib/jira/issues";
 
 // POST /api/webhooks/jira -- Receives JIRA webhook events
@@ -64,7 +65,7 @@ export async function POST(request: Request) {
       .where(eq(boards.jiraKey, normalized.projectKey))
       .limit(1);
 
-    if (!board) {
+    if (!board || !board.isTracked) {
       return NextResponse.json({ ok: true, skipped: true, reason: "board not tracked" });
     }
 
@@ -147,6 +148,20 @@ export async function POST(request: Request) {
           jiraUpdatedAt: normalized.jiraUpdatedAt,
         },
       });
+
+    // Generate notification for this issue change
+    try {
+      await generateNotificationForIssue(
+        id,
+        normalized.jiraKey,
+        normalized.title,
+        normalized.status,
+        assigneeId,
+        normalized.dueDate,
+      );
+    } catch {
+      // Non-fatal
+    }
 
     return NextResponse.json({
       ok: true,

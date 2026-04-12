@@ -18,10 +18,7 @@ export async function GET(
   { params }: { params: Promise<{ key: string }> },
 ) {
   try {
-    const session = await auth();
-    if (!session?.user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
+    // Public read-only endpoint — no auth required for GET
 
     const { key } = await params;
 

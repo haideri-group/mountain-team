@@ -1,58 +1,87 @@
-import { Bell, Search, LogOut } from "lucide-react";
-import { ThemeToggle } from "./theme-toggle";
-import { auth } from "@/auth";
-import { logout } from "@/app/actions/auth";
+"use client";
 
-export async function Topbar() {
-  const session = await auth();
-  const isLoggedIn = !!session?.user;
-  const initials = session?.user?.name?.substring(0, 2).toUpperCase() || "U";
+import Link from "next/link";
+import { usePathname } from "next/navigation";
+import { LogIn } from "lucide-react";
+import { ThemeToggle } from "./theme-toggle";
+import { NotificationsDropdown } from "./notifications-dropdown";
+import { ProfileDropdown } from "./profile-dropdown";
+import { GlobalSearch } from "./global-search";
+
+// ─── Types ────────────────────────────────────────────────────────────────────
+
+interface TopbarProps {
+  userName: string;
+  userEmail: string;
+  userRole: string;
+  userImage?: string | null;
+  isLoggedIn?: boolean;
+}
+
+// ─── Title mapping ────────────────────────────────────────────────────────────
+
+function getPageTitle(pathname: string): string {
+  if (pathname === "/overview") return "Team Overview";
+  if (pathname === "/calendar") return "Calendar";
+  if (pathname === "/workload") return "Workload";
+  if (pathname === "/reports") return "Reports";
+  if (pathname === "/settings") return "Settings";
+  if (pathname === "/members") return "Members";
+  if (pathname.startsWith("/members/")) return "Member Profile";
+  if (pathname.startsWith("/issue/")) return "Issue Detail";
+  return "TeamFlow";
+}
+
+// ─── Component ────────────────────────────────────────────────────────────────
+
+export function Topbar({
+  userName,
+  userEmail,
+  userRole,
+  userImage,
+  isLoggedIn = true,
+}: TopbarProps) {
+  const pathname = usePathname();
+  const title = getPageTitle(pathname);
 
   return (
-    <div className="h-16 flex items-center justify-between px-8 bg-card border-b border-border shrink-0">
-      <div className="flex items-center gap-6 flex-1">
-        <h1 className="text-xl font-bold font-mono">Team Overview</h1>
-
-        {isLoggedIn && (
-          <div className="relative w-64 hidden md:block">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted" />
-            <input
-              type="text"
-              placeholder="Search tasks, members..."
-              className="w-full h-9 pl-9 pr-4 rounded-full bg-input border-transparent text-sm focus:outline-none focus:ring-1 focus:ring-primary transition-all"
-            />
-          </div>
-        )}
+    <div className="h-16 flex items-center justify-between px-6 bg-card shrink-0">
+      {/* Left: Title + Search */}
+      <div className="flex items-center gap-5 flex-1 min-w-0">
+        <h1 className="text-xl font-bold font-mono uppercase tracking-wider text-foreground shrink-0 select-none">
+          {title}
+        </h1>
+        {isLoggedIn && <GlobalSearch />}
       </div>
 
-      <div className="flex items-center gap-4">
+      {/* Right: Actions */}
+      <div className="flex items-center gap-1 shrink-0 ml-4">
         <ThemeToggle />
-
-        {isLoggedIn && (
+        {isLoggedIn ? (
           <>
-            <button className="relative p-2 rounded-full hover:bg-accent transition-colors hidden sm:block">
-              <Bell className="h-5 w-5 text-foreground" />
-              <span className="absolute top-1.5 right-1.5 flex h-2 w-2">
-                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-destructive opacity-75"></span>
-                <span className="relative inline-flex rounded-full h-2 w-2 bg-destructive"></span>
-              </span>
-            </button>
-
-            <div className="flex items-center ml-2 border-l border-border pl-4 gap-4">
-              <div className="h-8 w-8 rounded-full bg-primary flex items-center justify-center text-primary-foreground font-medium text-xs shadow-sm">
-                {initials}
-              </div>
-              <form action={logout}>
-                <button
-                  type="submit"
-                  className="text-muted hover:text-foreground transition-colors mt-1"
-                  title="Sign out"
-                >
-                  <LogOut className="h-5 w-5" />
-                </button>
-              </form>
-            </div>
+            <NotificationsDropdown />
+            <div
+              className="w-px h-5 bg-foreground/10 mx-1"
+              aria-hidden="true"
+            />
+            <ProfileDropdown
+              userName={userName}
+              userEmail={userEmail}
+              userRole={userRole}
+              userImage={userImage}
+            />
           </>
+        ) : (
+          <Link
+            href="/login"
+            className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold font-mono uppercase tracking-wider text-white ml-2"
+            style={{
+              background: "linear-gradient(135deg, #944a00, #ff8400)",
+            }}
+          >
+            <LogIn className="h-4 w-4" />
+            Sign In
+          </Link>
         )}
       </div>
     </div>
