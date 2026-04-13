@@ -29,7 +29,7 @@ async function isDuplicate(
   relatedMemberId: string | null,
 ): Promise<boolean> {
   const conditions = [
-    eq(notifications.type, type as "aging" | "overdue" | "capacity" | "completed" | "unblocked"),
+    eq(notifications.type, type as "aging" | "overdue" | "capacity" | "completed" | "unblocked" | "deployed"),
     eq(notifications.isRead, false),
   ];
 
@@ -50,7 +50,7 @@ async function isDuplicate(
 }
 
 async function createNotification(data: {
-  type: "aging" | "overdue" | "capacity" | "completed" | "unblocked";
+  type: "aging" | "overdue" | "capacity" | "completed" | "unblocked" | "deployed";
   title: string;
   message: string;
   relatedIssueId?: string | null;
@@ -253,4 +253,42 @@ export async function generateNotificationForIssue(
       });
     }
   }
+}
+
+// --- Deployment Notification ---
+
+export async function generateDeploymentNotification(
+  jiraKey: string,
+  environment: string,
+  siteName: string | null,
+  siteLabel: string | null,
+  deployedBy: string | null,
+): Promise<void> {
+  // Check config
+  const [config] = await db.select().from(dashboardConfig).limit(1);
+  if (config && config.deploymentNotifications === false) return;
+
+  // Look up issue
+  const [issue] = await db
+    .select({ id: issues.id, title: issues.title, assigneeId: issues.assigneeId })
+    .from(issues)
+    .where(eq(issues.jiraKey, jiraKey))
+    .limit(1);
+
+  if (!issue) return; // Issue not synced yet
+
+  // Dedup
+  if (await isDuplicate("deployed", issue.id, null)) return;
+
+  const envLabel = environment === "production" ? "Production" : environment === "canonical" ? "Main" : "Staging";
+  const siteInfo = siteLabel || siteName || "";
+  const byInfo = deployedBy ? ` by ${deployedBy}` : "";
+
+  await createNotification({
+    type: "deployed",
+    title: `Deployed to ${envLabel}${siteInfo ? `: ${siteInfo}` : ""}`,
+    message: `${jiraKey} · ${issue.title}${byInfo}`,
+    relatedIssueId: issue.id,
+    relatedMemberId: issue.assigneeId,
+  });
 }

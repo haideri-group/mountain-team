@@ -14,6 +14,7 @@ import { TurnaroundChart } from "./turnaround-chart";
 import { CmsVsDev } from "./cms-vs-dev";
 import { DeveloperHeatmap } from "./developer-heatmap";
 import { BoardHealth } from "./board-health";
+import { PendingReleases } from "./pending-releases";
 
 // ---- Types ----
 
@@ -364,6 +365,9 @@ export function ReportsDashboard() {
           <DeveloperHeatmap data={data.heatmap} />
         </div>
       </div>
+
+      {/* ── Pending Releases (self-fetching, only renders if data exists) ── */}
+      <PendingReleases />
     </div>
   );
 }

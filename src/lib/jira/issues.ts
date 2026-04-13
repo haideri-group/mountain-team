@@ -200,6 +200,8 @@ export async function fetchIssuesByJql(
   if (customFields.storyPoints) fields.push(customFields.storyPoints);
   if (customFields.startDate) fields.push(customFields.startDate);
   fields.push("customfield_10795"); // Request Priority (P1-P4)
+  fields.push("customfield_10734"); // Website
+  fields.push("customfield_10805"); // Brands
 
   const allIssues: JiraIssueRaw[] = [];
   const seenKeys = new Set<string>();

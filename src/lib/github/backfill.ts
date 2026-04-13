@@ -12,6 +12,31 @@ interface BackfillResult {
   errors: string[];
 }
 
+// --- In-memory progress tracking ---
+
+export interface BackfillProgress {
+  phase: "idle" | "fetching" | "processing" | "done" | "failed";
+  message: string;
+  prsScanned: number;
+  prsTotal: number;
+  deploymentsCreated: number;
+  repoName: string;
+}
+
+const defaultProgress: BackfillProgress = {
+  phase: "idle", message: "", prsScanned: 0, prsTotal: 0, deploymentsCreated: 0, repoName: "",
+};
+
+let currentProgress: BackfillProgress = { ...defaultProgress };
+
+export function getBackfillProgress(): BackfillProgress {
+  return { ...currentProgress };
+}
+
+function updateProgress(update: Partial<BackfillProgress>) {
+  currentProgress = { ...currentProgress, ...update };
+}
+
 interface GitHubPR {
   number: number;
   title: string;
@@ -48,8 +73,19 @@ export async function backfillDeployments(
 
   if (!repo) {
     result.errors.push("Repo not found");
+    updateProgress({ phase: "failed", message: "Repository not found" });
     return result;
   }
+
+  // Reset progress
+  updateProgress({
+    phase: "fetching",
+    message: `Scanning merged PRs from ${repo.fullName}...`,
+    prsScanned: 0,
+    prsTotal: 0,
+    deploymentsCreated: 0,
+    repoName: repo.fullName,
+  });
 
   const mappings = await db
     .select()
@@ -74,6 +110,12 @@ export async function backfillDeployments(
 
       if (prs.length === 0) break;
 
+      updateProgress({
+        phase: "processing",
+        message: `Processing page ${page}...`,
+        prsTotal: currentProgress.prsTotal || prs.length * maxPages, // estimate
+      });
+
       for (const pr of prs) {
         // Only merged PRs
         if (!pr.merged_at) continue;
@@ -85,6 +127,11 @@ export async function backfillDeployments(
         if (!deployBranches.has(pr.base.ref)) continue;
 
         result.prsProcessed++;
+        updateProgress({
+          prsScanned: result.prsProcessed,
+          deploymentsCreated: result.deploymentsCreated,
+          message: `Processing PR #${pr.number}: ${pr.title.substring(0, 50)}...`,
+        });
 
         // Extract JIRA keys
         const jiraKeys = extractJiraKeys([
@@ -134,6 +181,7 @@ export async function backfillDeployments(
       result.errors.push(
         `Page ${page}: ${err instanceof Error ? err.message : "Unknown error"}`,
       );
+      updateProgress({ phase: "failed", message: err instanceof Error ? err.message : "Unknown error" });
       break;
     }
   }
@@ -143,6 +191,13 @@ export async function backfillDeployments(
     .update(githubRepos)
     .set({ lastBackfillAt: new Date() })
     .where(eq(githubRepos.id, repoId));
+
+  updateProgress({
+    phase: "done",
+    message: `Complete: ${result.deploymentsCreated} deployments from ${result.prsProcessed} PRs`,
+    prsScanned: result.prsProcessed,
+    deploymentsCreated: result.deploymentsCreated,
+  });
 
   return result;
 }

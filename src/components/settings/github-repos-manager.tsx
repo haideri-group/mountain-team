@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import {
   GitBranch,
   Plus,
@@ -13,7 +13,9 @@ import {
   Globe,
   Server,
 } from "lucide-react";
+// envColors used, Globe/Server used for branch mapping icons
 import { SlideOver } from "@/components/shared/slide-over";
+import { AddRepoPanel } from "./add-repo-panel";
 
 interface BranchMapping {
   id: string;
@@ -34,44 +36,6 @@ interface GitHubRepo {
   branchMappings: BranchMapping[];
 }
 
-// Preset templates for known repos
-const FRONTEND_TEMPLATE = {
-  owner: "tilemountainuk",
-  name: "tile-mountain-sdk",
-  mappings: [
-    { branchPattern: "main-tilemtn", environment: "production" as const, siteName: "tilemtn", siteLabel: "Tile Mountain" },
-    { branchPattern: "main-bathmtn", environment: "production" as const, siteName: "bathmtn", siteLabel: "Bath Mountain" },
-    { branchPattern: "main-wallsandfloors", environment: "production" as const, siteName: "wallsandfloors", siteLabel: "Walls and Floors" },
-    { branchPattern: "main-tilemtnae", environment: "production" as const, siteName: "tilemtnae", siteLabel: "TM Dubai" },
-    { branchPattern: "main-waftrd", environment: "production" as const, siteName: "waftrd", siteLabel: "WAF Trade" },
-    { branchPattern: "main-splendourtiles", environment: "production" as const, siteName: "splendourtiles", siteLabel: "Splendour Tiles" },
-    { branchPattern: "stage-tilemtn", environment: "staging" as const, siteName: "tilemtn", siteLabel: "Tile Mountain" },
-    { branchPattern: "stage-bathmtn", environment: "staging" as const, siteName: "bathmtn", siteLabel: "Bath Mountain" },
-    { branchPattern: "stage-wallsandfloors", environment: "staging" as const, siteName: "wallsandfloors", siteLabel: "Walls and Floors" },
-    { branchPattern: "stage-tilemtnae", environment: "staging" as const, siteName: "tilemtnae", siteLabel: "TM Dubai" },
-    { branchPattern: "stage-waftrd", environment: "staging" as const, siteName: "waftrd", siteLabel: "WAF Trade" },
-    { branchPattern: "stage-splendourtiles", environment: "staging" as const, siteName: "splendourtiles", siteLabel: "Splendour Tiles" },
-    { branchPattern: "stage", environment: "staging" as const, siteName: null, siteLabel: "All Sites", isAllSites: true },
-    { branchPattern: "main", environment: "canonical" as const, siteName: null, siteLabel: "Canonical" },
-  ],
-};
-
-const BACKEND_TEMPLATE = {
-  owner: "tilemountainuk",
-  name: "tilemountain2",
-  mappings: [
-    { branchPattern: "master-tm", environment: "production" as const, siteName: "tm", siteLabel: "Tile Mountain" },
-    { branchPattern: "master-bm", environment: "production" as const, siteName: "bm", siteLabel: "Bath Mountain" },
-    { branchPattern: "master-waf", environment: "production" as const, siteName: "waf", siteLabel: "Walls and Floors" },
-    { branchPattern: "master-tmdubai", environment: "production" as const, siteName: "tmdubai", siteLabel: "TM Dubai" },
-    { branchPattern: "stage-tm", environment: "staging" as const, siteName: "tm", siteLabel: "Tile Mountain" },
-    { branchPattern: "stage-bm", environment: "staging" as const, siteName: "bm", siteLabel: "Bath Mountain" },
-    { branchPattern: "stage-waf", environment: "staging" as const, siteName: "waf", siteLabel: "Walls and Floors" },
-    { branchPattern: "stage-tmdubai", environment: "staging" as const, siteName: "tmdubai", siteLabel: "TM Dubai" },
-    { branchPattern: "master", environment: "canonical" as const, siteName: null, siteLabel: "Canonical" },
-  ],
-};
-
 const envColors = {
   staging: "bg-amber-50 text-amber-700 dark:bg-amber-950 dark:text-amber-400",
   production: "bg-emerald-50 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-400",
@@ -84,6 +48,61 @@ export function GitHubReposManager() {
   const [showAddPanel, setShowAddPanel] = useState(false);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [backfillResult, setBackfillResult] = useState<string | null>(null);
+  const [backfillRepoId, setBackfillRepoId] = useState<string | null>(null);
+  const [backfillProgress, setBackfillProgress] = useState<{
+    phase: string; message: string; prsScanned: number; prsTotal: number; deploymentsCreated: number;
+  } | null>(null);
+  const pollRef = useRef<NodeJS.Timeout | null>(null);
+
+  // On mount: check if a backfill is already running
+  useEffect(() => {
+    let cancelled = false;
+    const check = async () => {
+      // We don't know which repo, but we can check the global progress
+      for (const repo of repos) {
+        try {
+          const res = await fetch(`/api/github/repos/${repo.id}/backfill`);
+          if (!res.ok || cancelled) continue;
+          const data = await res.json();
+          if (data.progress && (data.progress.phase === "fetching" || data.progress.phase === "processing")) {
+            setBackfillRepoId(repo.id);
+            setBackfillProgress(data.progress);
+            break;
+          }
+        } catch { /* ignore */ }
+      }
+    };
+    if (repos.length > 0) check();
+    return () => { cancelled = true; };
+  }, [repos.length > 0]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Poll progress while backfilling
+  useEffect(() => {
+    if (backfillRepoId) {
+      const poll = async () => {
+        try {
+          const res = await fetch(`/api/github/repos/${backfillRepoId}/backfill`);
+          if (res.ok) {
+            const data = await res.json();
+            setBackfillProgress(data.progress);
+            if (data.progress && (data.progress.phase === "done" || data.progress.phase === "failed" || data.progress.phase === "idle")) {
+              setBackfillRepoId(null);
+              setBackfillProgress(null);
+              if (data.progress.phase === "done") {
+                setBackfillResult(`Backfill complete: ${data.progress.deploymentsCreated} deployments from ${data.progress.prsScanned} PRs`);
+              }
+            }
+          }
+        } catch { /* ignore */ }
+      };
+      poll();
+      pollRef.current = setInterval(poll, 1000);
+      return () => { if (pollRef.current) clearInterval(pollRef.current); };
+    } else {
+      if (pollRef.current) clearInterval(pollRef.current);
+      return;
+    }
+  }, [backfillRepoId]);
 
   const fetchRepos = async () => {
     try {
@@ -115,46 +134,18 @@ export function GitHubReposManager() {
   const handleBackfill = async (repo: GitHubRepo) => {
     setActionLoading(`backfill_${repo.id}`);
     setBackfillResult(null);
+    setBackfillRepoId(repo.id);
+
     try {
       const res = await fetch(`/api/github/repos/${repo.id}/backfill`, { method: "POST" });
       const data = await res.json();
-      if (res.ok) {
-        setBackfillResult(`Backfill complete: ${data.deploymentsCreated || 0} deployments recorded`);
-      } else {
+      if (!res.ok) {
         setBackfillResult(`Error: ${data.error || "Backfill failed"}`);
       }
+      // Result is handled by polling (progress phase → done)
     } catch {
       setBackfillResult("Error: Failed to connect");
-    } finally {
-      setActionLoading(null);
-    }
-  };
-
-  const handleAddRepo = async (template: typeof FRONTEND_TEMPLATE) => {
-    setActionLoading("adding");
-    try {
-      const res = await fetch("/api/github/repos", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          owner: template.owner,
-          name: template.name,
-          branchMappings: template.mappings.map((m) => ({
-            branchPattern: m.branchPattern,
-            environment: m.environment,
-            siteName: m.siteName,
-            siteLabel: m.siteLabel,
-            isAllSites: (m as any).isAllSites || false,
-          })),
-        }),
-      });
-      if (res.ok) {
-        setShowAddPanel(false);
-        fetchRepos();
-      } else {
-        const data = await res.json();
-        alert(data.error || "Failed to add repo");
-      }
+      setBackfillRepoId(null);
     } finally {
       setActionLoading(null);
     }
@@ -281,6 +272,46 @@ export function GitHubReposManager() {
                 })}
               </div>
 
+              {/* Backfill progress bar */}
+              {backfillRepoId === repo.id && backfillProgress && (backfillProgress.phase === "fetching" || backfillProgress.phase === "processing") && (
+                <div className="rounded-xl bg-blue-50 dark:bg-blue-950/20 p-4 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <Loader2 className="h-4 w-4 text-blue-500 animate-spin" />
+                      <span className="text-xs font-bold font-mono uppercase tracking-wider text-blue-700 dark:text-blue-400">
+                        {backfillProgress.phase === "fetching" ? "Scanning PRs" : "Processing"}
+                      </span>
+                    </div>
+                    {backfillProgress.prsScanned > 0 && (
+                      <span className="text-xs font-bold font-mono text-blue-700 dark:text-blue-400">
+                        {backfillProgress.prsScanned} PRs · {backfillProgress.deploymentsCreated} deployments
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-xs text-blue-600 dark:text-blue-400/80">
+                    {backfillProgress.message}
+                  </p>
+                  {backfillProgress.phase === "processing" ? (
+                    <div className="h-2 rounded-full bg-blue-100 dark:bg-blue-900/40 overflow-hidden">
+                      <div
+                        className="h-full rounded-full transition-all duration-300"
+                        style={{
+                          width: backfillProgress.prsTotal > 0 ? `${Math.min(100, (backfillProgress.prsScanned / backfillProgress.prsTotal) * 100)}%` : "50%",
+                          background: "linear-gradient(135deg, #944a00, #ff8400)",
+                        }}
+                      />
+                    </div>
+                  ) : (
+                    <div className="h-2 rounded-full bg-blue-100 dark:bg-blue-900/40 overflow-hidden">
+                      <div
+                        className="h-full w-1/3 rounded-full animate-pulse"
+                        style={{ background: "linear-gradient(135deg, #944a00, #ff8400)" }}
+                      />
+                    </div>
+                  )}
+                </div>
+              )}
+
               {/* Backfill result */}
               {backfillResult && (
                 <div className={`flex items-center gap-2 text-xs px-3 py-2 rounded-lg ${backfillResult.startsWith("Error") ? "bg-destructive/10 text-destructive" : "bg-emerald-50 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-400"}`}>
@@ -303,54 +334,13 @@ export function GitHubReposManager() {
         onClose={() => setShowAddPanel(false)}
         title="Add GitHub Repository"
       >
-        <div className="px-6 py-5 space-y-5">
-          <p className="text-sm text-muted-foreground">
-            Select a preset template to add a repository with pre-configured branch mappings.
-          </p>
-
-          {/* Frontend template */}
-          <button
-            onClick={() => handleAddRepo(FRONTEND_TEMPLATE)}
-            disabled={actionLoading === "adding" || repos.some((r) => r.fullName === "tilemountainuk/tile-mountain-sdk")}
-            className="w-full text-left rounded-xl border border-border/50 p-5 hover:bg-muted/10 transition-all disabled:opacity-50 space-y-2"
-          >
-            <div className="flex items-center gap-3">
-              <Globe className="h-5 w-5 text-primary" />
-              <div>
-                <p className="text-sm font-bold font-mono">tile-mountain-sdk</p>
-                <p className="text-xs text-muted-foreground">Frontend — Nuxt 3 / Vue Storefront 2</p>
-              </div>
-            </div>
-            <p className="text-xs text-muted-foreground">
-              6 live sites + 6 staging + shared stage + canonical main. {FRONTEND_TEMPLATE.mappings.length} branch mappings.
-            </p>
-          </button>
-
-          {/* Backend template */}
-          <button
-            onClick={() => handleAddRepo(BACKEND_TEMPLATE)}
-            disabled={actionLoading === "adding" || repos.some((r) => r.fullName === "tilemountainuk/tilemountain2")}
-            className="w-full text-left rounded-xl border border-border/50 p-5 hover:bg-muted/10 transition-all disabled:opacity-50 space-y-2"
-          >
-            <div className="flex items-center gap-3">
-              <Server className="h-5 w-5 text-primary" />
-              <div>
-                <p className="text-sm font-bold font-mono">tilemountain2</p>
-                <p className="text-xs text-muted-foreground">Backend — Magento 2</p>
-              </div>
-            </div>
-            <p className="text-xs text-muted-foreground">
-              4 live sites + 4 staging + canonical master. {BACKEND_TEMPLATE.mappings.length} branch mappings.
-            </p>
-          </button>
-
-          {actionLoading === "adding" && (
-            <div className="flex items-center gap-2 text-sm text-muted-foreground">
-              <Loader2 className="h-4 w-4 animate-spin" />
-              Adding repository...
-            </div>
-          )}
-        </div>
+        <AddRepoPanel
+          existingRepos={repos.map((r) => r.fullName)}
+          onRepoAdded={() => {
+            setShowAddPanel(false);
+            fetchRepos();
+          }}
+        />
       </SlideOver>
     </div>
   );

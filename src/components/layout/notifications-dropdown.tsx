@@ -8,14 +8,15 @@ import {
   AlarmClock,
   AlertTriangle,
   CheckCircle2,
+  Rocket,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
-type NotificationType = "aging" | "overdue" | "capacity" | "completed" | "unblocked";
+type NotificationType = "aging" | "overdue" | "capacity" | "completed" | "unblocked" | "deployed";
 
-type TabKey = "all" | "aging" | "overdue" | "capacity";
+type TabKey = "all" | "aging" | "overdue" | "capacity" | "deployed";
 
 interface RelatedIssue {
   jiraKey: string;
@@ -81,6 +82,8 @@ function NotificationIcon({ type, isRead }: { type: NotificationType; isRead: bo
     case "completed":
     case "unblocked":
       return <CheckCircle2 className={cn(base, dimmed, "text-success")} />;
+    case "deployed":
+      return <Rocket className={cn(base, dimmed, "text-emerald-500")} />;
     default:
       return <Bell className={cn(base, dimmed, "text-muted-foreground")} />;
   }
@@ -93,6 +96,7 @@ const ALL_TABS: { key: TabKey; label: string; adminOnly?: boolean }[] = [
   { key: "aging", label: "Aging" },
   { key: "overdue", label: "Overdue" },
   { key: "capacity", label: "Capacity", adminOnly: true },
+  { key: "deployed", label: "Deployed" },
 ];
 
 // ─── Main Component ───────────────────────────────────────────────────────────

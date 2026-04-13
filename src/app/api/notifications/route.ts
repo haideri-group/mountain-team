@@ -43,7 +43,7 @@ export async function GET(request: NextRequest) {
 
     if (typeFilter) {
       conditions.push(
-        eq(notifications.type, typeFilter as "aging" | "overdue" | "capacity" | "completed" | "unblocked"),
+        eq(notifications.type, typeFilter as "aging" | "overdue" | "capacity" | "completed" | "unblocked" | "deployed"),
       );
     }
 
