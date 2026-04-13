@@ -71,16 +71,16 @@ All request-time APIs are **async** and must be awaited:
 **Route structure:**
 - `(auth)/login` — Public login page (no sidebar)
 - `(dashboard)/overview` — Team overview with developer cards + team switcher
-- `(dashboard)/calendar` — Monthly task calendar (placeholder)
-- `(dashboard)/workload` — Capacity distribution (placeholder)
+- `(dashboard)/calendar` — Monthly task calendar
+- `(dashboard)/workload` — Capacity distribution dashboard with burnout detection
 - `(dashboard)/members` — Team roster with server-side pagination
-- `(dashboard)/members/[id]` — Developer profile (active or departed)
-- `(dashboard)/reports` — Analytics with 12 chart sections (placeholder)
-- `(dashboard)/settings` — Admin-only: team sync, issue sync, board management
+- `(dashboard)/members/[id]` — Developer profile with task history + date range filter
+- `(dashboard)/reports` — Analytics with 12 chart sections (Recharts, interactive donut, drill-downs)
+- `(dashboard)/settings` — Admin-only: team sync, issue sync, board management, per-board sync
 
 Route groups `(auth)` and `(dashboard)` use separate layouts. Dashboard layout includes sidebar (280px dark navy) + topbar (64px).
 
-**Database:** MySQL (Railway) with Drizzle ORM. 7 tables: users, team_members, boards, issues, sync_logs, dashboard_config, notifications.
+**Database:** MySQL (Railway) with Drizzle ORM. 8 tables: users, team_members, boards, issues, sync_logs, dashboard_config, notifications, workload_snapshots.
 
 **Auth:** Auth.js v5 (NextAuth beta) with Google OAuth + Credentials providers. JWT session strategy. Two roles: `admin` (full access) and `user` (read-only, no Settings/Sync). Google OAuth stores access token in JWT for Google Directory API access.
 
@@ -88,7 +88,7 @@ Route groups `(auth)` and `(dashboard)` use separate layouts. Dashboard layout i
 
 ## Security
 
-- **All API routes require authentication.** GET endpoints check `session?.user`, mutation endpoints (POST/PATCH/DELETE) check `session?.user?.role === "admin"`.
+- **Public read-only endpoints** (overview, issues, workload, calendar, reports) require no auth. Mutation endpoints (POST/PATCH/DELETE) check `session?.user?.role === "admin"`.
 - **Error sanitization:** `sanitizeErrorText()` in `src/lib/jira/client.ts` redacts tokens from error messages before logging/throwing.
 - **No hardcoded credentials.** The seed script uses bcrypt-hashed passwords. No fallback logins in code.
 - **Cron endpoints** use `SYNC_SECRET` / `CRON_SECRET` bearer token auth.
@@ -132,6 +132,9 @@ When building new components:
 - **NEVER delete team members or their data.** When a member leaves, update status to `departed` — never remove the record. All historical task data, performance history, and assignments must be preserved for reporting and audit.
 - **NEVER delete issues.** If a JIRA issue is deleted, the webhook marks it as `closed` (not removed from DB).
 - **Clickable JIRA keys.** All issue keys (e.g., PROD-1143) must link to `{NEXT_PUBLIC_JIRA_BASE_URL}/browse/{key}` and open in a new tab. Use `e.stopPropagation()` on dev cards to prevent parent click.
+- **Board colors** are auto-assigned server-side using golden angle hue distribution (guarantees distinct colors for unlimited boards). `POST /api/boards` assigns unique colors; `scripts/recolor-boards.ts` for bulk reassignment.
+- **CMS tasks** are identified by `WebContent` label (not issue type). No "CMS Change" issue type exists in JIRA.
+- **Default team selection:** Overview, Workload, and Reports pages default to the first team on load, not "All". Users can switch to "All" manually.
 
 ## Team Member Sync (Atlassian Teams API)
 
@@ -173,7 +176,10 @@ Issues are synced from JIRA into the `issues` table using JQL queries.
 - Issues from untracked boards are skipped (admin must add board in Settings first)
 - Unassigned issues synced with `assigneeId = null`
 - Stores `jiraCreatedAt` and `jiraUpdatedAt` from JIRA for accurate sorting
+- `completedDate` fallback chain: `resolutiondate` → `statuscategorychangedate` → `updated` (fixes kanban boards like GOLC/PROD where resolutiondate is null)
+- Fetches `statuscategorychangedate` and `customfield_10795` (Request Priority P1-P4) from JIRA
 - Live progress tracking polled by UI every 1 second during sync
+- Sync progress persists across page navigation (components check for active sync on mount)
 
 **JQL filtering:** Issues are synced if they match EITHER condition:
 - Assigned to any active team member (by JIRA accountId), OR
@@ -219,7 +225,8 @@ GET    /api/issues/:key/github           → GitHub branches, PRs, commits via J
 GET    /api/issues/:key/comments         → Paginated comments (page, pageSize, sort=desc|asc) (public read)
 
 GET    /api/calendar                     → Calendar events by month with filters
-GET    /api/reports                      → All report metrics computed from live DB
+GET    /api/reports                      → All report metrics computed from live DB (public read)
+GET    /api/workload                     → Workload metrics per member (public read, ?team= filter)
 GET    /api/search?q=                    → Global search: members + issues (max 5 each)
 
 GET    /api/notifications                → List notifications (last 30 days, type filter)
@@ -232,6 +239,8 @@ GET    /api/sync/team-members            → Last team sync status
 POST   /api/sync/issues                  → Manual issue sync (admin only)
 GET    /api/sync/issues                  → Last issue sync status + live progress
 GET    /api/sync/issues?progress=1       → Live progress only (polled during sync)
+POST   /api/sync/board?key=GOLC          → Sync single board (admin only)
+GET    /api/sync/board?progress=1        → Board sync progress
 
 GET    /api/cron/sync-teams              → Daily team sync (SYNC_SECRET auth)
 GET    /api/cron/sync-issues             → Daily issue sync (SYNC_SECRET auth)
@@ -264,7 +273,8 @@ Copy `.env.example` to `.env.local`. Required for full functionality:
 **Public (read-only, no login required):**
 - `/overview` — team overview with developer cards
 - `/issue/[key]` — full issue detail with description, comments, GitHub data
-- APIs: `GET /api/overview`, `GET /api/issues/*`, `GET /api/calendar`
+- `/workload` — capacity distribution dashboard
+- APIs: `GET /api/overview`, `GET /api/issues/*`, `GET /api/calendar`, `GET /api/workload`, `GET /api/reports`
 
 **Protected (login required):**
 - All other pages (Calendar, Members, Reports, Settings)
@@ -273,12 +283,42 @@ Copy `.env.example` to `.env.local`. Required for full functionality:
 
 Guest users see no sidebar, no search/notifications/profile — just a "Sign In" button.
 
+## Workload Dashboard (`/workload`)
+
+Public read-only page showing team capacity distribution.
+
+**Weighted workload formula** (when no story points set):
+- Bug + P1 (Critical): 3.0 | Bug + P2 (Highest): 2.0 | Bug + P3 (High): 1.5
+- WebContent label: 0.5 | All other tasks: 1.0 | Story points set: use story points
+- **Capacity:** Default 15 per member (admin-adjustable via `team_members.capacity`)
+- **Counted statuses:** `todo`, `in_progress`, `in_review`
+- **Excluded:** `done`, `closed`, `ready_for_live`, `ready_for_testing`
+
+**Custom priority field:** `customfield_10795` (Request Priority) stores P1-P4. Synced into `issues.requestPriority`.
+
+**Workload levels:** over (>100%, red), high (80-100%, orange), optimal (50-80%, amber), under (1-49%, emerald), idle (0%, muted)
+
+**Components:** `workload-dashboard.tsx` (orchestrator + team switcher), `workload-summary.tsx` (5 KPI cards), `workload-alerts.tsx` (over-capacity/idle/burnout alerts), `capacity-chart.tsx` (horizontal bars with tooltips + trend sparklines)
+
+**Weekly snapshots:** `workload_snapshots` table records each member's workload % weekly. Recorded after each issue sync. Used for trend sparklines (8 weeks) and burnout risk detection (100%+ for 1+ consecutive week).
+
+**Performance:** API uses `Promise.all` for parallel DB queries, filters by member IDs at DB level, defaults to first team to avoid all-teams fetch.
+
 ## Issue Detail Page (`/issue/[key]`)
 
-Two-phase + GitHub loading:
+**Component architecture** — Split into 5 focused files:
+- `issue-detail.tsx` (~500 lines) — Orchestrator: data fetching, layout, header, left column (title, description, linked issues, subtasks)
+- `issue-sidebar.tsx` (~600 lines) — Right column: status, assignee, details, time tracking, GitHub, attachments
+- `issue-activity.tsx` (~460 lines) — Activity tabs: threaded comments, history, pagination
+- `issue-types.ts` (~190 lines) — All shared TypeScript interfaces
+- `issue-helpers.ts` (~90 lines) — Constants + date formatting utilities
+
+**Three-phase loading:**
 1. **Phase 1 (instant):** DB data — issue fields, board/assignee context, cycle time percentile
 2. **Phase 2 (background):** JIRA live — description (HTML), subtasks, attachments, linked issues, time tracking, worklogs
 3. **Phase 3 (background):** GitHub — branches, PRs (via JIRA dev-status API), commits
+
+**Left column order:** Title → Description → Linked Issues → Sub-tasks → Activity Tabs
 
 **Comments:** Server-side paginated via `/api/issues/{key}/comments` (10 per page, sort asc/desc). Threaded display — replies detected by `@mention` at comment start, indented under parent. Comment deep links to JIRA via `focusedCommentId`.
 
@@ -296,9 +336,11 @@ Two-phase + GitHub loading:
 4. ~~Auth System~~ (complete — Google OAuth + Credentials with bcrypt)
 5. ~~Mock Data Layer~~ (complete — superseded by live JIRA sync)
 6. ~~Dashboard Screens~~ — Overview + Profile + Calendar (complete)
-7. ~~Management Screens~~ — Members + Settings (complete), **Workload (placeholder)**
-8. ~~Reports Page~~ (complete — 11 chart components with Recharts, interactive donut, drill-downs)
+7. ~~Management Screens~~ — Members + Settings + Workload (complete)
+8. ~~Reports Page~~ (complete — 12 chart components with Recharts, interactive donut, heatmap slide-over, drill-downs)
 9. ~~Interactive Features~~ (complete — Notifications, Profile dropdown, Global search Cmd+K, dynamic topbar)
-10. ~~JIRA Issue Sync~~ (complete — full/incremental + webhooks + progress)
+10. ~~JIRA Issue Sync~~ (complete — assignee+label JQL, full/incremental + per-board + webhooks + progress)
 10.5. ~~Team Member Sync~~ (complete — Atlassian Teams API + Google Directory)
+- ~~Issue Detail Page~~ (`/issue/[key]`) — refactored into 5 components, two-phase + GitHub loading, threaded comments, time tracking
+- ~~Workload Dashboard~~ (`/workload`) — capacity bars, weighted formula, burnout detection, trend sparklines, workload_snapshots table
 11. **Polish + Deploy** — Error boundaries, loading skeletons, empty states, performance, Railway deployment
