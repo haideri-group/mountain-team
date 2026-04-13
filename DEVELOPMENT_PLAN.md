@@ -796,6 +796,26 @@ CLOUDFLARE_R2_PUBLIC_URL=https://cdn.haider-team.appz.cc
 
 ---
 
+### Phase 10.8: Team Sync Progress Tracking
+**Duration:** 0.5-1 day | **Complexity:** Small
+
+Add live progress bar to the Team Sync (Sync Now) button in Settings, matching the same pattern used by Issue Sync.
+
+**Current problem:** Team sync has no progress feedback — user clicks "Sync Now" and waits with no visibility into what's happening (fetching members, matching Google Directory, caching avatars to R2, etc.).
+
+**Implementation:**
+- Add in-memory progress state to team sync engine (`src/lib/sync/team-sync.ts`) with phases: `fetching_members`, `resolving_details`, `matching_google`, `caching_avatars`, `done`, `failed`
+- Track: current phase message, members processed / total, avatars cached / total
+- Add `GET /api/sync/team-members?progress=1` endpoint to poll progress
+- Update `src/components/settings/team-sync-manager.tsx` to poll every 1s during sync and display progress bar
+- On mount, check if sync is already running (same pattern as issue sync — persist progress across navigation)
+- Show per-phase messages: "Fetching team members from Atlassian...", "Resolving user details (5/14)...", "Matching Google Directory emails...", "Caching avatars to R2 (8/14)...", "Done — 14 members synced, 12 avatars cached"
+
+**Deliverable:** Live progress bar during team sync with phase messages and member count
+**Verify:** Click Sync Now → progress bar appears → navigate away and back → progress bar still visible → sync completes with summary
+
+---
+
 ### Phase 11: Polish + Deploy
 **Duration:** 3-4 days | **Complexity:** Large
 
@@ -803,12 +823,12 @@ CLOUDFLARE_R2_PUBLIC_URL=https://cdn.haider-team.appz.cc
 - Loading skeletons matching exact page layouts
 - Empty states for no-data scenarios
 - Performance: dynamic imports for Recharts, proper TanStack Query tuning, React.memo on heavy components
-- Vercel deployment (env vars, MySQL access, Auth.js redirect URIs)
+- Railway deployment finalization (env vars, MySQL access, Auth.js redirect URIs)
 - Final visual polish (transitions, hover effects, animations)
 - Favicon, meta tags, Open Graph
 
-**Deliverable:** Production-ready deployment on Vercel
-**Verify:** Lighthouse > 90, all error/loading states work, Vercel deployment live
+**Deliverable:** Production-ready deployment on Railway
+**Verify:** Lighthouse > 90, all error/loading states work, deployment live
 
 ---
 

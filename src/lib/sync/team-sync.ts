@@ -257,13 +257,10 @@ export async function runTeamSync(googleAccessToken?: string): Promise<{
           for (const [memberId, match] of matchMap) {
             const updates: Record<string, string | null> = {};
             if (match.email) updates.email = match.email;
-            // Don't overwrite JIRA/Gravatar avatars with Google photos (Google rate-limits lh3.googleusercontent.com)
-            // Only set avatar from Google if member has no avatar at all
+            // Prefer Google photos — they are real profile pictures from Google Workspace
+            // R2 caching eliminates the rate-limit concern (Google only hit during sync, not page loads)
             if (match.photoUrl) {
-              const [existing] = await db.select({ avatarUrl: team_members.avatarUrl }).from(team_members).where(eq(team_members.id, memberId)).limit(1);
-              if (!existing?.avatarUrl) {
-                updates.avatarUrl = match.photoUrl;
-              }
+              updates.avatarUrl = match.photoUrl;
             }
 
             if (Object.keys(updates).length > 0) {
