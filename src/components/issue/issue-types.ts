@@ -14,6 +14,7 @@ export interface Phase1Data {
     cycleTime: number | null;
     storyPoints: number | null;
     labels: string[];
+    description: string | null;
     jiraCreatedAt: string | null;
     jiraUpdatedAt: string | null;
     boardKey: string;

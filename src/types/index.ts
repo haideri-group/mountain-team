@@ -66,6 +66,7 @@ export interface Issue {
   cycleTime: number | null;
   storyPoints: number | null;
   labels: string | null; // JSON array
+  description?: string | null;
   createdAt: Date | null;
   updatedAt: Date | null;
 }

@@ -40,6 +40,7 @@ export async function GET(request: NextRequest) {
         jiraKey: issues.jiraKey,
         title: issues.title,
         status: issues.status,
+        type: issues.type,
         assigneeId: issues.assigneeId,
         boardId: issues.boardId,
       })
@@ -70,6 +71,7 @@ export async function GET(request: NextRequest) {
         jiraKey: issue.jiraKey,
         title: issue.title,
         status: issue.status,
+        type: issue.type,
         boardKey: board?.jiraKey || "",
         boardColor: board?.color || "#6b7280",
         assigneeName: assignee?.displayName || null,

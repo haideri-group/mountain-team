@@ -372,24 +372,38 @@ export function IssueDetail({ issueKey }: IssueDetailProps) {
               </h2>
             </div>
 
-            {phase2Loading ? (
-              <div className="space-y-2">
-                <Skeleton className="h-4 w-full" />
-                <Skeleton className="h-4 w-11/12" />
-                <Skeleton className="h-4 w-4/5" />
-                <Skeleton className="h-4 w-9/12" />
-                <Skeleton className="h-4 w-3/4" />
-              </div>
-            ) : phase2?.description ? (
-              <div
-                className="prose prose-sm dark:prose-invert max-w-none text-sm leading-relaxed [&_pre]:font-mono [&_pre]:text-xs [&_pre]:p-4 [&_pre]:bg-muted/30 [&_pre]:rounded-lg [&_pre]:border-l-4 [&_pre]:border-primary [&_code]:font-mono [&_code]:text-xs [&_code]:bg-muted/30 [&_code]:px-1.5 [&_code]:py-0.5 [&_code]:rounded"
-                dangerouslySetInnerHTML={{ __html: phase2.description }}
-              />
-            ) : (
-              <p className="text-sm text-muted-foreground italic">
-                No description available.
-              </p>
-            )}
+            {(() => {
+              // Prefer Phase 2 (live JIRA) if available, otherwise Phase 1 (DB cache)
+              const desc = phase2?.description ?? phase1.issue.description;
+
+              if (!desc && phase2Loading) {
+                // No cached description and still fetching from JIRA
+                return (
+                  <div className="space-y-2">
+                    <Skeleton className="h-4 w-full" />
+                    <Skeleton className="h-4 w-11/12" />
+                    <Skeleton className="h-4 w-4/5" />
+                    <Skeleton className="h-4 w-9/12" />
+                    <Skeleton className="h-4 w-3/4" />
+                  </div>
+                );
+              }
+
+              if (desc) {
+                return (
+                  <div
+                    className="jira-description prose prose-sm dark:prose-invert max-w-none text-sm leading-relaxed"
+                    dangerouslySetInnerHTML={{ __html: desc }}
+                  />
+                );
+              }
+
+              return (
+                <p className="text-sm text-muted-foreground italic">
+                  No description available.
+                </p>
+              );
+            })()}
           </div>
 
           {/* Linked Issues */}

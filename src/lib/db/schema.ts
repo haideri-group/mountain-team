@@ -55,6 +55,7 @@ export const issues = mysqlTable("issues", {
   cycleTime: float("cycleTime"),
   storyPoints: float("storyPoints"),
   labels: text("labels"),
+  description: text("description"),
   requestPriority: varchar("requestPriority", { length: 10 }),
   website: varchar("website", { length: 255 }),
   brands: text("brands"),

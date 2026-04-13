@@ -1,6 +1,9 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/auth";
 import { getAuthHeader, getBaseUrl, sanitizeErrorText } from "@/lib/jira/client";
+import { db } from "@/lib/db";
+import { issues } from "@/lib/db/schema";
+import { eq } from "drizzle-orm";
 
 interface JiraComment {
   id: string;
@@ -55,6 +58,14 @@ export async function GET(
     // Description — use renderedFields for pre-rendered HTML
     const description: string | null =
       data.renderedFields?.description || null;
+
+    // Write-through: update DB description if we got a fresh one
+    if (description) {
+      db.update(issues)
+        .set({ description })
+        .where(eq(issues.jiraKey, key.toUpperCase()))
+        .catch(() => {}); // non-fatal, fire-and-forget
+    }
 
     // Comments
     const rawComments: JiraComment[] =
