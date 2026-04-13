@@ -8,11 +8,13 @@ import {
   UserCircle,
   PieChart,
   Settings,
+  BarChart3,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const iconMap: Record<string, React.ElementType> = {
   LayoutDashboard,
+  BarChart3,
   Calendar,
   UserCircle,
   PieChart,

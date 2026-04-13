@@ -10,6 +10,8 @@ import {
   ChevronLeft,
   ChevronRight,
   Circle,
+  X,
+  CalendarRange,
 } from "lucide-react";
 import Link from "next/link";
 import { IssueStatusBadge } from "@/components/overview/issue-status-badge";
@@ -64,6 +66,17 @@ type SortField =
   | "completedDate"
   | "cycleTime";
 type SortDir = "asc" | "desc";
+type DateField = "jiraCreatedAt" | "dueDate" | "completedDate";
+
+const dateFieldLabels: Record<DateField, string> = {
+  jiraCreatedAt: "Created",
+  dueDate: "Due Date",
+  completedDate: "Completed",
+};
+
+function toDateOnly(dateStr: string): string {
+  return dateStr.substring(0, 10);
+}
 
 function formatDate(dateStr: string | null): string {
   if (!dateStr) return "—";
@@ -79,10 +92,15 @@ export function TaskHistoryTable({ issues, boards }: TaskHistoryTableProps) {
   const [statusFilter, setStatusFilter] = useState("");
   const [boardFilter, setBoardFilter] = useState("");
   const [priorityFilter, setPriorityFilter] = useState("");
+  const [dateField, setDateField] = useState<DateField>("completedDate");
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
   const [sortField, setSortField] = useState<SortField>("jiraCreatedAt");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState(7);
+
+  const hasDateFilter = dateFrom || dateTo;
 
   const handleSort = (field: SortField) => {
     if (sortField === field) {
@@ -116,6 +134,17 @@ export function TaskHistoryTable({ issues, boards }: TaskHistoryTableProps) {
 
     if (priorityFilter) {
       result = result.filter((i) => i.priority === priorityFilter);
+    }
+
+    if (dateFrom || dateTo) {
+      result = result.filter((i) => {
+        const raw = i[dateField];
+        if (!raw) return false;
+        const val = toDateOnly(raw);
+        if (dateFrom && val < dateFrom) return false;
+        if (dateTo && val > dateTo) return false;
+        return true;
+      });
     }
 
     // Sort
@@ -154,7 +183,7 @@ export function TaskHistoryTable({ issues, boards }: TaskHistoryTableProps) {
     });
 
     return result;
-  }, [issues, searchQuery, statusFilter, boardFilter, priorityFilter, sortField, sortDir]);
+  }, [issues, searchQuery, statusFilter, boardFilter, priorityFilter, dateField, dateFrom, dateTo, sortField, sortDir]);
 
   const totalPages = Math.ceil(filtered.length / pageSize);
   const pageItems = filtered.slice(page * pageSize, (page + 1) * pageSize);
@@ -270,6 +299,55 @@ export function TaskHistoryTable({ issues, boards }: TaskHistoryTableProps) {
             <option value="low">Low</option>
             <option value="lowest">Lowest</option>
           </select>
+
+          {/* Date range separator */}
+          <div className="h-4 w-px bg-border/50 mx-1" />
+
+          {/* Date range filter */}
+          <div className="flex items-center gap-2">
+            <CalendarRange className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+            <select
+              value={dateField}
+              onChange={(e) => {
+                setDateField(e.target.value as DateField);
+                setPage(0);
+              }}
+              className="h-8 px-3 rounded-lg bg-muted/30 text-xs font-mono appearance-none cursor-pointer focus:outline-none pr-7"
+              style={{
+                backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 24 24' fill='none' stroke='%236b7280' stroke-width='2'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E")`,
+                backgroundRepeat: "no-repeat",
+                backgroundPosition: "right 6px center",
+              }}
+            >
+              {Object.entries(dateFieldLabels).map(([key, label]) => (
+                <option key={key} value={key}>{label}</option>
+              ))}
+            </select>
+            <input
+              type="date"
+              value={dateFrom}
+              onChange={(e) => { setDateFrom(e.target.value); setPage(0); }}
+              className="h-8 px-2.5 rounded-lg bg-muted/30 text-xs font-mono focus:outline-none focus:ring-2 focus:ring-primary/30 transition-all [color-scheme:light] dark:[color-scheme:dark]"
+              placeholder="From"
+            />
+            <span className="text-xs text-muted-foreground">to</span>
+            <input
+              type="date"
+              value={dateTo}
+              onChange={(e) => { setDateTo(e.target.value); setPage(0); }}
+              className="h-8 px-2.5 rounded-lg bg-muted/30 text-xs font-mono focus:outline-none focus:ring-2 focus:ring-primary/30 transition-all [color-scheme:light] dark:[color-scheme:dark]"
+              placeholder="To"
+            />
+            {hasDateFilter && (
+              <button
+                onClick={() => { setDateFrom(""); setDateTo(""); setPage(0); }}
+                className="h-8 w-8 flex items-center justify-center rounded-lg hover:bg-muted/30 text-muted-foreground hover:text-foreground transition-colors"
+                title="Clear date filter"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            )}
+          </div>
         </div>
       </div>
 

@@ -203,13 +203,33 @@ export async function GET(request: NextRequest) {
 
     // === BOARD DISTRIBUTION ===
 
+    const usedColors = new Set<string>();
+    const goldenAngle = 137.508;
     const boardDistribution = trackedBoards
-      .map((b) => ({
-        name: b.name,
-        key: b.jiraKey,
-        count: filteredIssues.filter((i) => i.boardId === b.id && i.status !== "closed").length,
-        color: b.color || "#6b7280",
-      }))
+      .map((b, idx) => {
+        let color = b.color || "";
+        // Ensure each board gets a distinct color
+        if (!color || usedColors.has(color.toLowerCase())) {
+          // Generate via golden angle hue distribution
+          const hue = (idx * goldenAngle) % 360;
+          const h = hue / 360;
+          const s = 0.65, l = 0.55;
+          const a = s * Math.min(l, 1 - l);
+          const f = (n: number) => {
+            const k = (n + h * 12) % 12;
+            const c = l - a * Math.max(Math.min(k - 3, 9 - k, 1), -1);
+            return Math.round(255 * c).toString(16).padStart(2, "0");
+          };
+          color = `#${f(0)}${f(8)}${f(4)}`;
+        }
+        usedColors.add(color.toLowerCase());
+        return {
+          name: b.name,
+          key: b.jiraKey,
+          count: filteredIssues.filter((i) => i.boardId === b.id && i.status !== "closed").length,
+          color,
+        };
+      })
       .filter((b) => b.count > 0);
 
     // === TASK TYPE BREAKDOWN ===
@@ -360,6 +380,17 @@ export async function GET(request: NextRequest) {
     ];
 
     // === CMS VS DEV (monthly) ===
+    // CMS tasks identified by "WebContent" label (not issue type)
+
+    const isWebContent = (issue: { labels: string | null }) => {
+      if (!issue.labels) return false;
+      try {
+        const parsed: string[] = JSON.parse(issue.labels);
+        return parsed.some((l) => l.toLowerCase() === "webcontent");
+      } catch {
+        return false;
+      }
+    };
 
     const cmsVsDev: { period: string; cms: number; dev: number }[] = [];
     for (let i = months - 1; i >= 0; i--) {
@@ -376,16 +407,43 @@ export async function GET(request: NextRequest) {
 
       cmsVsDev.push({
         period: monthLabel(d),
-        cms: monthDone.filter((i) => i.type === "cms_change").length,
-        dev: monthDone.filter((i) => i.type !== "cms_change").length,
+        cms: monthDone.filter((i) => isWebContent(i)).length,
+        dev: monthDone.filter((i) => !isWebContent(i)).length,
       });
     }
 
     // === DEVELOPER HEATMAP ===
+    // Fetch ALL done issues with completedDate in the period (not filtered by jiraCreatedAt)
+    // This ensures tasks created before the period but completed within it are counted
 
+    const allDoneInPeriod = await db
+      .select()
+      .from(issues)
+      .where(
+        and(
+          inArray(issues.boardId, trackedBoardIds),
+          eq(issues.status, "done"),
+          gte(issues.completedDate, from),
+        ),
+      );
+
+    // Apply team filter if needed
+    const teamMemberIds = teamFilter
+      ? new Set(allMembers.filter((m) => m.teamName === teamFilter).map((m) => m.id))
+      : null;
+    const heatmapDoneIssues = teamMemberIds
+      ? allDoneInPeriod.filter((i) => i.assigneeId && teamMemberIds.has(i.assigneeId))
+      : allDoneInPeriod;
+
+    // Sort members by completion count (most active first), include all
     const heatmapMembers = filteredMembers
-      .map((m) => m.displayName.split(" ")[0] + " " + (m.displayName.split(" ").pop()?.[0] || "") + ".")
-      .slice(0, 15);
+      .map((m) => ({
+        id: m.id,
+        name: m.displayName.split(" ")[0] + " " + (m.displayName.split(" ").pop()?.[0] || "") + ".",
+        doneCount: heatmapDoneIssues.filter((i) => i.assigneeId === m.id).length,
+      }))
+      .sort((a, b) => b.doneCount - a.doneCount);
+
     const heatmapMonths: string[] = [];
     for (let i = months - 1; i >= 0; i--) {
       const d = new Date();
@@ -393,11 +451,18 @@ export async function GET(request: NextRequest) {
       heatmapMonths.push(monthLabel(d));
     }
 
-    const heatmapCells: { member: string; month: string; count: number; level: string }[] = [];
-    for (let mi = 0; mi < Math.min(filteredMembers.length, 15); mi++) {
-      const member = filteredMembers[mi];
-      const shortName = heatmapMembers[mi];
-
+    interface HeatmapTask {
+      jiraKey: string;
+      title: string;
+      type: string | null;
+      storyPoints: number | null;
+      completedDate: string | null;
+      cycleTime: number | null;
+      boardKey: string;
+      boardColor: string;
+    }
+    const heatmapCells: { member: string; memberId: string; month: string; count: number; level: string; tasks: HeatmapTask[] }[] = [];
+    for (const hm of heatmapMembers) {
       for (let i = months - 1; i >= 0; i--) {
         const d = new Date();
         d.setMonth(d.getMonth() - i);
@@ -405,14 +470,29 @@ export async function GET(request: NextRequest) {
         const month = d.getMonth();
         const label = monthLabel(d);
 
-        const count = doneIssues.filter((issue) => {
-          if (issue.assigneeId !== member.id || !issue.completedDate) return false;
+        const monthIssues = heatmapDoneIssues.filter((issue) => {
+          if (issue.assigneeId !== hm.id || !issue.completedDate) return false;
           const cd = new Date(issue.completedDate);
           return cd.getFullYear() === year && cd.getMonth() === month;
-        }).length;
+        });
 
+        const tasks: HeatmapTask[] = monthIssues.map((issue) => {
+          const board = boardMap.get(issue.boardId);
+          return {
+            jiraKey: issue.jiraKey,
+            title: issue.title,
+            type: issue.type,
+            storyPoints: issue.storyPoints,
+            completedDate: issue.completedDate,
+            cycleTime: issue.cycleTime,
+            boardKey: board?.jiraKey || "?",
+            boardColor: board?.color || "#6b7280",
+          };
+        });
+
+        const count = monthIssues.length;
         const level = count >= 8 ? "high" : count >= 4 ? "medium" : count >= 1 ? "low" : "minimal";
-        heatmapCells.push({ member: shortName, month: label, count, level });
+        heatmapCells.push({ member: hm.name, memberId: hm.id, month: label, count, level, tasks });
       }
     }
 
@@ -515,7 +595,7 @@ export async function GET(request: NextRequest) {
       weeklyPulse,
       turnaround,
       cmsVsDev,
-      heatmap: { members: heatmapMembers, months: heatmapMonths, cells: heatmapCells },
+      heatmap: { members: heatmapMembers.map((m) => ({ id: m.id, name: m.name })), months: heatmapMonths, cells: heatmapCells },
       boardHealth,
       missedDeadlineTasks: allMissedTasks,
       teams,

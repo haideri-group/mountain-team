@@ -126,6 +126,7 @@ export interface NormalizedIssue {
   cycleTime: number | null;
   storyPoints: number | null;
   labels: string;
+  requestPriority: string | null;
   jiraCreatedAt: string | null;
   jiraUpdatedAt: string | null;
 }
@@ -152,13 +153,20 @@ export function normalizeIssue(
     ? raw.fields.duedate.split("T")[0]
     : null;
 
-  // Extract completed date from resolutiondate (only if done/closed)
+  // Extract completed date for done/closed issues
+  // Priority: resolutiondate → statuscategorychangedate → updated
+  // statuscategorychangedate is the exact moment the status category changed to "Done"
+  // (kanban boards often skip resolutiondate but always have statuscategorychangedate)
   let completedDate: string | null = null;
-  if (
-    (status === "done" || status === "closed") &&
-    raw.fields.resolutiondate
-  ) {
-    completedDate = raw.fields.resolutiondate;
+  if (status === "done" || status === "closed") {
+    const statusCategoryChangeDate = raw.fields.statuscategorychangedate as string | undefined;
+    if (raw.fields.resolutiondate) {
+      completedDate = raw.fields.resolutiondate;
+    } else if (statusCategoryChangeDate) {
+      completedDate = statusCategoryChangeDate;
+    } else if (raw.fields.updated) {
+      completedDate = raw.fields.updated;
+    }
   }
 
   // Extract story points from custom field
@@ -184,6 +192,7 @@ export function normalizeIssue(
     cycleTime: calculateCycleTime(startDate, completedDate),
     storyPoints,
     labels: JSON.stringify(raw.fields.labels || []),
+    requestPriority: (raw.fields.customfield_10795 as { value?: string } | null)?.value || null,
     jiraCreatedAt: raw.fields.created || null,
     jiraUpdatedAt: raw.fields.updated || null,
   };

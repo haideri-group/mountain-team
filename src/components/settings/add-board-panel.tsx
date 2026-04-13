@@ -18,12 +18,6 @@ interface AddBoardPanelProps {
 
 const PAGE_SIZE = 10;
 
-const boardColors = [
-  "#ef4444", "#f97316", "#f59e0b", "#84cc16", "#22c55e",
-  "#14b8a6", "#06b6d4", "#3b82f6", "#6366f1", "#8b5cf6",
-  "#a855f7", "#d946ef", "#ec4899", "#f43f5e",
-];
-
 export function AddBoardPanel({ onBoardAdded }: AddBoardPanelProps) {
   const [projects, setProjects] = useState<JiraProject[]>([]);
   const [initialLoading, setInitialLoading] = useState(true);
@@ -114,14 +108,13 @@ export function AddBoardPanel({ onBoardAdded }: AddBoardPanelProps) {
   const handleTrack = async (project: JiraProject) => {
     setAdding(project.key);
     try {
-      const color = boardColors[Math.floor(Math.random() * boardColors.length)];
+      // Color is auto-assigned server-side to avoid duplicates
       const res = await fetch("/api/boards", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           jiraKey: project.key,
           name: project.name,
-          color,
           description: `${project.type} project from JIRA`,
           isTracked: true,
         }),

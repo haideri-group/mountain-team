@@ -190,10 +190,12 @@ export async function fetchIssuesByJql(
     "created",
     "updated",
     "resolutiondate",
+    "statuscategorychangedate",
   ];
 
   if (customFields.storyPoints) fields.push(customFields.storyPoints);
   if (customFields.startDate) fields.push(customFields.startDate);
+  fields.push("customfield_10795"); // Request Priority (P1-P4)
 
   const allIssues: JiraIssueRaw[] = [];
   const seenKeys = new Set<string>();
@@ -233,17 +235,52 @@ export async function fetchIssuesByJql(
 
 export function buildFullSyncJql(
   boardKeys: string[],
-  frontendLabel: string,
+  memberAccountIds: string[],
+  frontendLabel?: string,
 ): string {
   const projects = boardKeys.join(", ");
-  return `project IN (${projects}) AND labels = "${frontendLabel}" ORDER BY updated DESC`;
+  const conditions: string[] = [`project IN (${projects})`];
+
+  // Build OR condition: assigned to team members OR has Frontend label
+  const orParts: string[] = [];
+  if (memberAccountIds.length > 0) {
+    const accounts = memberAccountIds.map((id) => `"${id}"`).join(", ");
+    orParts.push(`assignee IN (${accounts})`);
+  }
+  if (frontendLabel) {
+    orParts.push(`labels = "${frontendLabel}"`);
+  }
+
+  if (orParts.length > 0) {
+    conditions.push(`(${orParts.join(" OR ")})`);
+  }
+
+  return `${conditions.join(" AND ")} ORDER BY updated DESC`;
 }
 
 export function buildIncrementalSyncJql(
   boardKeys: string[],
-  frontendLabel: string,
+  memberAccountIds: string[],
   since: string,
+  frontendLabel?: string,
 ): string {
   const projects = boardKeys.join(", ");
-  return `project IN (${projects}) AND labels = "${frontendLabel}" AND updated >= "${since}" ORDER BY updated DESC`;
+  const conditions: string[] = [`project IN (${projects})`];
+
+  const orParts: string[] = [];
+  if (memberAccountIds.length > 0) {
+    const accounts = memberAccountIds.map((id) => `"${id}"`).join(", ");
+    orParts.push(`assignee IN (${accounts})`);
+  }
+  if (frontendLabel) {
+    orParts.push(`labels = "${frontendLabel}"`);
+  }
+
+  if (orParts.length > 0) {
+    conditions.push(`(${orParts.join(" OR ")})`);
+  }
+
+  conditions.push(`updated >= "${since}"`);
+
+  return `${conditions.join(" AND ")} ORDER BY updated DESC`;
 }

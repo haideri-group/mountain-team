@@ -28,11 +28,24 @@ export async function POST(request: Request) {
       return NextResponse.json({ ok: true, skipped: true });
     }
 
-    // Check if issue has the Frontend label
+    // Accept issues assigned to tracked team members OR with Frontend label
     const frontendLabel = process.env.JIRA_FRONTEND_LABEL || "Frontend";
     const labels: string[] = issue.fields?.labels || [];
-    if (!labels.includes(frontendLabel)) {
-      return NextResponse.json({ ok: true, skipped: true, reason: "no frontend label" });
+    const hasLabel = labels.includes(frontendLabel);
+
+    const assigneeAccountId = issue.fields?.assignee?.accountId || null;
+    let isTeamMember = false;
+    if (assigneeAccountId) {
+      const [member] = await db
+        .select()
+        .from(team_members)
+        .where(eq(team_members.jiraAccountId, assigneeAccountId))
+        .limit(1);
+      isTeamMember = !!member;
+    }
+
+    if (!hasLabel && !isTeamMember) {
+      return NextResponse.json({ ok: true, skipped: true, reason: "not team member and no frontend label" });
     }
 
     // Handle deletion
