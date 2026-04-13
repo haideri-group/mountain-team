@@ -298,15 +298,13 @@ export async function runTeamSync(googleAccessToken?: string): Promise<{
           })
           .from(team_members);
 
-        const r2PublicUrl = (process.env.CLOUDFLARE_R2_PUBLIC_URL || "").replace(/\/$/, "");
-
-        // Find members that have an avatar URL that isn't already from R2
+        // Find members that have an external avatar URL (not already an R2 path)
         const toCache = activeMembers
           .filter(
             (m) =>
               m.status !== "departed" &&
               m.avatarUrl &&
-              !m.avatarUrl.startsWith(r2PublicUrl),
+              m.avatarUrl.startsWith("http"),
           )
           .map((m) => ({
             id: m.id,

@@ -9,6 +9,7 @@ import {
 } from "@/lib/db/schema";
 import { eq, and, ne, gte, inArray, desc } from "drizzle-orm";
 import { calculateTaskWeight } from "@/lib/workload/snapshots";
+import { withResolvedAvatars } from "@/lib/db/helpers";
 
 // --- Helpers ---
 
@@ -54,10 +55,11 @@ export async function GET(request: NextRequest) {
     const teamParam = request.nextUrl.searchParams.get("team") || "";
 
     // Step 1: Fetch members + boards in parallel (lightweight queries)
-    const [allMembersUnfiltered, trackedBoards] = await Promise.all([
+    const [allMembersUnfilteredRaw, trackedBoards] = await Promise.all([
       db.select().from(team_members).where(ne(team_members.status, "departed")),
       db.select().from(boards).where(eq(boards.isTracked, true)),
     ]);
+    const allMembersUnfiltered = withResolvedAvatars(allMembersUnfilteredRaw);
 
     // Derive teams from ALL members before filtering
     const teams = [

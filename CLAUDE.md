@@ -80,7 +80,7 @@ All request-time APIs are **async** and must be awaited:
 
 Route groups `(auth)` and `(dashboard)` use separate layouts. Dashboard layout includes sidebar (280px dark navy) + topbar (64px).
 
-**Database:** MySQL (Railway) with Drizzle ORM. 7 tables: users, team_members, boards, issues, sync_logs, dashboard_config, notifications.
+**Database:** MySQL (Railway) with Drizzle ORM. 11+ tables: users, team_members, boards, issues, sync_logs, dashboard_config, notifications, workload_snapshots, github_repos, github_branch_mappings, deployments.
 
 **Auth:** Auth.js v5 (NextAuth beta) with Google OAuth + Credentials providers. JWT session strategy. Two roles: `admin` (full access) and `user` (read-only, no Settings/Sync). Google OAuth stores access token in JWT for Google Directory API access.
 
@@ -167,7 +167,7 @@ Issues are synced from JIRA into the `issues` table using JQL queries.
 - Uses `POST /rest/api/3/search/jql` (the old `/search` endpoint is deprecated)
 - Token-based pagination with `nextPageToken` (not `startAt`), deduplication by key, max 50 pages safety
 - Custom field IDs (story points, start date) discovered dynamically via `GET /rest/api/3/field`, cached 24h
-- Status mapping: 21 JIRA status names → 7 app statuses, with `statusCategory.key` fallback
+- Status mapping: 25+ JIRA status names → 8 app statuses (`todo`, `in_progress`, `in_review`, `ready_for_testing`, `ready_for_live`, `on_hold`, `done`, `closed`), with `statusCategory.key` fallback. `on_hold` maps "On Hold", "Triage", "Awaiting Triage", "Pending", "Blocked".
 - Upsert via MySQL `onDuplicateKeyUpdate` on `jiraKey` unique index
 - Cycle time calculated on status transitions to `done`, cleared on reopening
 - Issues from untracked boards are skipped (admin must add board in Settings first)
@@ -196,25 +196,45 @@ This ensures all team member work is captured regardless of labels, plus any Fro
 - Normalizes and upserts single issue per event
 - Setup guide: `docs/JIRA_WEBHOOK_SETUP.md`
 
-## GitHub Deployment Tracking (Phase 10.6 — planned)
+## GitHub Deployment Tracking (Phase 10.6 — in progress)
 
-Track which JIRA tasks are deployed to staging and production environments across multiple sites.
+Tracks which JIRA tasks are deployed to staging/production across multiple sites.
 
-**Primary repo:** `tilemountainuk/tile-mountain-sdk` (frontend monorepo powering all live sites)
+**Architecture:** 3 DB tables (`github_repos`, `github_branch_mappings`, `deployments`) + GitHub webhook + backfill service.
 
-**Branch → environment mapping:**
-- Live: `main-tilemtn`, `main-bathmtn`, `main-wallsandfloors`, `main-tilemtnae`, `main-waftrd`, `main-splendourtiles`
-- Staging: `stage-tilemtn`, `stage-bathmtn`, `stage-wallsandfloors`, `stage-tilemtnae`, `stage-waftrd`, `stage-splendourtiles`
-- Shared staging: `stage` (deploys to all staging unless excluded)
-- Canonical: `main` (final sync ~24h after live with no issues)
+**Tracked repos:**
+- Frontend: `tilemountainuk/tile-mountain-sdk` — 6 live sites, 6 staging, shared `stage`, canonical `main`
+- Backend: `tilemountainuk/tilemountain2` — 4 live sites, 4 staging, canonical `master`
+
+**Branch → environment mapping:** Database-driven via `github_branch_mappings`. Configured per-repo in Settings.
+- `isAllSites = true` expands single deployment into per-site records (e.g., `stage` → all staging sites)
+- `skip:{siteName}` PR labels exclude specific sites from shared-branch deployments
+- Hotfix branches (`hotfix/*`, `hotfix_*`) bypass staging, deploy directly to production
 
 **Data sources:**
-- JIRA dev-status API (already connected, returns PR merge targets per issue)
-- GitHub webhooks (real-time — fires when PR merged to deployment branch)
+- GitHub webhook (`/api/webhooks/github`) — real-time on PR merge + deployment_status events
+- Backfill service — scans last 90 days of merged PRs for historical deployments
+- JIRA dev-status API (existing) — branches, PRs, commits per issue
 
-**JIRA key detection:** Regex `/[A-Z]{2,}-\d+/gi` on branch names, PR titles, commit messages. Developers use varied formats: `fix/PROD-5123`, `PROD-5123_v1`, `prod-5123`, etc.
+**JIRA key detection:** Regex `/[A-Z]{2,}-\d+/gi` on branch names, PR titles, commit messages. Fallback: fetches commit messages from GitHub API.
 
-**Pipeline visualization:** Feature Branch → Staging → Production → Main
+**Pipeline visualization:** `deployment-pipeline.tsx` on issue detail page — Staging → Production → Main with per-site status.
+
+**Remaining:** Proper Add Repo form UI, deployment notifications, pending releases report
+
+## Cloudflare R2 Avatar Caching (Phase 10.7)
+
+Caches team member avatars to R2 to avoid Google/Gravatar rate limits (429 errors with ~14 concurrent avatar loads).
+
+**How it works:**
+- Downloads avatars from source (Gravatar, Google, Atlassian) in 2 sizes: 96x96 (small) and 256x256 (large)
+- Uploads to R2 bucket at `avatars/{memberId}/sm.{ext}` and `lg.{ext}`
+- MD5 hash comparison (`team_members.avatarHash`) to skip re-uploads when unchanged
+- Serves via CDN: `cdn-teamflow.appz.cc`
+- Runs after team sync if R2 is configured; falls back to external URLs if not
+- `scripts/cache-avatars.ts` for manual bulk caching
+
+**Env vars:** `CLOUDFLARE_R2_ACCOUNT_ID`, `CLOUDFLARE_R2_ACCESS_KEY_ID`, `CLOUDFLARE_R2_SECRET_ACCESS_KEY`, `CLOUDFLARE_R2_BUCKET_NAME`, `CLOUDFLARE_R2_PUBLIC_URL`
 
 ## API Routes
 
@@ -237,9 +257,11 @@ GET    /api/issues/:key                  → Issue detail with context (public r
 GET    /api/issues/:key/jira             → Live JIRA data: description, comments, changelog, attachments, worklogs (public read)
 GET    /api/issues/:key/github           → GitHub branches, PRs, commits via JIRA dev-status API (public read)
 GET    /api/issues/:key/comments         → Paginated comments (page, pageSize, sort=desc|asc) (public read)
+GET    /api/issues/:key/deployments      → Deployment pipeline for issue (public read)
 
 GET    /api/calendar                     → Calendar events by month with filters
-GET    /api/reports                      → All report metrics computed from live DB
+GET    /api/reports                      → All report metrics computed from live DB (public read)
+GET    /api/workload                     → Workload metrics per member (public read, ?team= filter)
 GET    /api/search?q=                    → Global search: members + issues (max 5 each)
 
 GET    /api/notifications                → List notifications (last 30 days, type filter)
@@ -263,7 +285,8 @@ GET    /api/github/repos                → List tracked GitHub repos (admin onl
 POST   /api/github/repos                → Add tracked repo (admin only)
 PATCH  /api/github/repos/:id            → Update repo config (admin only)
 DELETE /api/github/repos/:id            → Remove tracked repo (admin only)
-GET    /api/issues/:key/deployments     → Deployment status per issue
+POST   /api/github/repos/:id/backfill   → Backfill deployments from merged PRs (admin only)
+GET    /api/webhooks/logs                → Recent webhook events (admin only)
 
 GET    /api/jira/projects                → Browse JIRA projects (admin only)
 GET    /api/google/directory-search      → Google Workspace people search (admin only)
@@ -284,7 +307,10 @@ Copy `.env.example` to `.env.local`. Required for full functionality:
 - `JIRA_TEAM_IDS` — Comma-separated Atlassian team IDs to sync
 - `JIRA_CLOUD_ID` — Atlassian Cloud site ID
 - `GITHUB_TOKEN` — GitHub PAT with repo read access (for deployment tracking)
-- `GITHUB_WEBHOOK_SECRET` — Shared secret for GitHub webhook verification
+- `GITHUB_WEBHOOK_SECRET` — Shared secret for GitHub webhook HMAC verification
+- `CLOUDFLARE_R2_ACCOUNT_ID` + `CLOUDFLARE_R2_ACCESS_KEY_ID` + `CLOUDFLARE_R2_SECRET_ACCESS_KEY` — R2 storage auth
+- `CLOUDFLARE_R2_BUCKET_NAME` — R2 bucket name (e.g., `teamflow-avatars`)
+- `CLOUDFLARE_R2_PUBLIC_URL` — CDN URL for serving cached avatars (e.g., `https://cdn-teamflow.appz.cc`)
 - `SYNC_SECRET` — Secret for cron and webhook endpoint auth
 
 ## Public vs Protected Pages
@@ -324,9 +350,13 @@ Two-phase + GitHub loading:
 4. ~~Auth System~~ (complete — Google OAuth + Credentials with bcrypt)
 5. ~~Mock Data Layer~~ (complete — superseded by live JIRA sync)
 6. ~~Dashboard Screens~~ — Overview + Profile + Calendar (complete)
-7. ~~Management Screens~~ — Members + Settings (complete), **Workload (placeholder)**
-8. ~~Reports Page~~ (complete — 11 chart components with Recharts, interactive donut, drill-downs)
+7. ~~Management Screens~~ — Members + Settings + Workload (complete)
+8. ~~Reports Page~~ (complete — 12 chart components with Recharts, interactive donut, heatmap slide-over, drill-downs)
 9. ~~Interactive Features~~ (complete — Notifications, Profile dropdown, Global search Cmd+K, dynamic topbar)
-10. ~~JIRA Issue Sync~~ (complete — full/incremental + webhooks + progress)
+10. ~~JIRA Issue Sync~~ (complete — assignee+label JQL, full/incremental + per-board + webhooks + progress)
 10.5. ~~Team Member Sync~~ (complete — Atlassian Teams API + Google Directory)
+- ~~Issue Detail Page~~ (`/issue/[key]`) — refactored into 5 components, three-phase + GitHub + deployment loading
+- ~~Workload Dashboard~~ (`/workload`) — capacity bars, weighted formula, burnout detection, trend sparklines
+10.6. **GitHub Deployment Tracking** (in progress — core infrastructure + Settings UI + pipeline built, notifications + pending releases remaining)
+10.7. ~~Cloudflare R2 Avatar Caching~~ (complete — cache to cdn-teamflow.appz.cc, hash-based change detection)
 11. **Polish + Deploy** — Error boundaries, loading skeletons, empty states, performance, Railway deployment

@@ -3,6 +3,7 @@ import { team_members } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { auth } from "@/auth";
+import { withResolvedAvatar } from "@/lib/db/helpers";
 
 // GET /api/team/:id — Get single member
 export async function GET(_request: Request, { params }: { params: Promise<{ id: string }> }) {
@@ -19,7 +20,7 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
       return NextResponse.json({ error: "Member not found" }, { status: 404 });
     }
 
-    return NextResponse.json(member);
+    return NextResponse.json(withResolvedAvatar(member));
   } catch (error) {
     console.error("Failed to fetch member:", error);
     return NextResponse.json({ error: "Failed to fetch member" }, { status: 500 });
@@ -53,7 +54,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
       .where(eq(team_members.id, id))
       .limit(1);
 
-    return NextResponse.json(updated);
+    return NextResponse.json(withResolvedAvatar(updated));
   } catch (error) {
     console.error("Failed to update member:", error);
     return NextResponse.json({ error: "Failed to update member" }, { status: 500 });

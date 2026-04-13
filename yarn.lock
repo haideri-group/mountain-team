@@ -1631,6 +1631,14 @@ __metadata:
   languageName: node
   linkType: hard
 
+"@esbuild/win32-x64@npm:^0.28.0":
+  version: 0.28.0
+  resolution: "@esbuild/win32-x64@npm:0.28.0"
+  checksum: 10c0/f2d53b57cb338ddf0bbfb5eb64dc95bd0b686817eee8ab2307085c04f18e1d9d5b27e1b74f327cd46a8f246e3df9fc6ee9158ab9977255b7d4a511d438e411de
+  conditions: os=win32 & cpu=x64
+  languageName: node
+  linkType: hard
+
 "@eslint-community/eslint-utils@npm:^4.8.0, @eslint-community/eslint-utils@npm:^4.9.1":
   version: 4.9.1
   resolution: "@eslint-community/eslint-utils@npm:4.9.1"
@@ -7444,6 +7452,7 @@ __metadata:
   dependencies:
     "@aws-sdk/client-s3": "npm:^3.1029.0"
     "@base-ui/react": "npm:^1.3.0"
+    "@esbuild/win32-x64": "npm:^0.28.0"
     "@tailwindcss/postcss": "npm:^4"
     "@tanstack/react-query": "npm:^5.96.1"
     "@types/bcryptjs": "npm:^3.0.0"

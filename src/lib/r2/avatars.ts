@@ -132,24 +132,24 @@ export async function cacheAvatar(
   const largeUrl = getSourceUrlAtSize(sourceUrl, 256);
   const large = await downloadImage(largeUrl);
 
-  // Upload small to R2
+  // Upload small to R2 (returns path only, e.g. "avatars/{id}/sm.png")
   const keySmall = `avatars/${memberId}/sm.${small.ext}`;
-  const r2UrlSmall = await uploadToR2(keySmall, small.buffer, small.contentType);
+  const pathSmall = await uploadToR2(keySmall, small.buffer, small.contentType);
 
   // Upload large to R2 (fallback to small if large download failed)
   const keyLarge = `avatars/${memberId}/lg.${(large || small).ext}`;
-  const r2UrlLarge = await uploadToR2(
+  const pathLarge = await uploadToR2(
     keyLarge,
     (large || small).buffer,
     (large || small).contentType,
   );
 
-  // Add cache-bust param
+  // Add cache-bust param to path
   const v = Date.now();
 
   return {
-    r2UrlSmall: `${r2UrlSmall}?v=${v}`,
-    r2UrlLarge: `${r2UrlLarge}?v=${v}`,
+    r2UrlSmall: `${pathSmall}?v=${v}`,
+    r2UrlLarge: `${pathLarge}?v=${v}`,
     sourceUrl,
     hash,
   };

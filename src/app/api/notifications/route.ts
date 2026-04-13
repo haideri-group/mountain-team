@@ -4,6 +4,7 @@ import { db } from "@/lib/db";
 import { notifications, issues, team_members } from "@/lib/db/schema";
 import { desc, eq, and, gte } from "drizzle-orm";
 import { auth } from "@/auth";
+import { withResolvedAvatar } from "@/lib/db/helpers";
 
 // GET /api/notifications — List notifications (last 30 days)
 export async function GET(request: NextRequest) {
@@ -56,7 +57,7 @@ export async function GET(request: NextRequest) {
             .from(team_members)
             .where(eq(team_members.id, notif.relatedMemberId))
             .limit(1);
-          relatedMember = member || null;
+          relatedMember = member ? withResolvedAvatar(member) : null;
         }
 
         return { ...notif, relatedIssue, relatedMember };

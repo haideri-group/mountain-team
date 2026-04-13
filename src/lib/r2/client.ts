@@ -53,7 +53,7 @@ export async function uploadToR2(
   body: Buffer,
   contentType: string,
 ): Promise<string> {
-  const { bucketName, publicUrl } = getR2Config();
+  const { bucketName } = getR2Config();
 
   await getR2Client().send(
     new PutObjectCommand({
@@ -65,7 +65,22 @@ export async function uploadToR2(
     }),
   );
 
-  return `${publicUrl}/${key}`;
+  // Return path only — full URL constructed at runtime via resolveAvatarUrl()
+  return key;
+}
+
+/**
+ * Resolve an avatar URL. If the value is an R2 path (not a full URL),
+ * prepend the R2 public base URL from env. External URLs pass through unchanged.
+ */
+export function resolveAvatarUrl(avatarUrl: string | null): string | null {
+  if (!avatarUrl) return null;
+  // Already a full URL (external source or legacy full R2 URL)
+  if (avatarUrl.startsWith("http://") || avatarUrl.startsWith("https://")) return avatarUrl;
+  // R2 path — prepend base URL
+  const base = getR2Config().publicUrl;
+  if (!base) return avatarUrl;
+  return `${base}/${avatarUrl}`;
 }
 
 // --- Delete ---

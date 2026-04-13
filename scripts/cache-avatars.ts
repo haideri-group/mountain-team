@@ -16,12 +16,12 @@ async function main() {
   console.log(`R2 public URL: ${r2PublicUrl}`);
   console.log("");
 
-  // Find members with external avatar URLs (not already R2)
+  // Find members with avatars to cache — use sourceAvatarUrl if available (original source),
+  // fall back to avatarUrl for members not yet cached
   const members = await db.select().from(team_members);
   const toMigrate = members.filter(
     (m) =>
-      m.avatarUrl &&
-      !m.avatarUrl.startsWith(r2PublicUrl) &&
+      (m.sourceAvatarUrl || (m.avatarUrl && m.avatarUrl.startsWith("http"))) &&
       m.status !== "departed",
   );
 
@@ -36,11 +36,13 @@ async function main() {
     process.stdout.write(`  ${member.displayName}... `);
 
     try {
+      // Prefer sourceAvatarUrl (original Gravatar/JIRA URL) over avatarUrl (may be stale R2 URL)
+      const sourceUrl = member.sourceAvatarUrl || member.avatarUrl!;
       const result = await cacheAvatar(
         member.id,
-        member.avatarUrl!,
-        member.sourceAvatarUrl,
-        member.avatarHash,
+        sourceUrl,
+        null,  // Force re-cache by passing null for existing source
+        null,  // Force re-cache by passing null for existing hash
       );
 
       if (result) {

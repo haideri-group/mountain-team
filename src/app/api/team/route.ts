@@ -4,6 +4,7 @@ import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 import { desc, like, or, and, eq, count } from "drizzle-orm";
 import { auth } from "@/auth";
+import { withResolvedAvatars } from "@/lib/db/helpers";
 
 // GET /api/team — List team members with server-side pagination & filtering
 export async function GET(request: NextRequest) {
@@ -55,13 +56,13 @@ export async function GET(request: NextRequest) {
     const total = countResult.total;
 
     // Get paginated members
-    const members = await db
+    const members = withResolvedAvatars(await db
       .select()
       .from(team_members)
       .where(where)
       .orderBy(desc(team_members.createdAt))
       .limit(pageSize)
-      .offset((page - 1) * pageSize);
+      .offset((page - 1) * pageSize));
 
     // Get metrics (across ALL members, unfiltered)
     const allStatuses = await db
