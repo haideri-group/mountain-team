@@ -252,6 +252,7 @@ export function TaskHistoryTable({ issues, boards }: TaskHistoryTableProps) {
           >
             <option value="">All Statuses</option>
             <option value="todo">To Do</option>
+            <option value="on_hold">On Hold</option>
             <option value="in_progress">In Progress</option>
             <option value="in_review">In Review</option>
             <option value="ready_for_testing">Ready for Testing</option>

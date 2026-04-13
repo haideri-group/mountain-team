@@ -1,7 +1,7 @@
 // Core enums
 export type UserRole = "admin" | "user";
 export type MemberStatus = "active" | "on_leave" | "departed";
-export type IssueStatus = "todo" | "in_progress" | "in_review" | "ready_for_testing" | "ready_for_live" | "done" | "closed";
+export type IssueStatus = "todo" | "on_hold" | "in_progress" | "in_review" | "ready_for_testing" | "ready_for_live" | "done" | "closed";
 export type IssuePriority = "highest" | "high" | "medium" | "low" | "lowest";
 export type IssueType = "bug" | "story" | "cms_change" | "enhancement" | "task" | "subtask";
 export type SyncType = "full" | "incremental" | "manual" | "team_sync";

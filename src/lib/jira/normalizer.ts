@@ -2,7 +2,7 @@ import type { JiraIssueRaw, CustomFieldIds } from "./issues";
 
 // --- App Enum Values ---
 
-type IssueStatus = "todo" | "in_progress" | "in_review" | "ready_for_testing" | "ready_for_live" | "done" | "closed";
+type IssueStatus = "todo" | "on_hold" | "in_progress" | "in_review" | "ready_for_testing" | "ready_for_live" | "done" | "closed";
 type IssuePriority = "highest" | "high" | "medium" | "low" | "lowest";
 type IssueType = "bug" | "story" | "cms_change" | "enhancement" | "task" | "subtask";
 
@@ -14,6 +14,11 @@ const STATUS_MAP: Record<string, IssueStatus> = {
   "open": "todo",
   "new": "todo",
   "selected for development": "todo",
+  "on hold": "on_hold",
+  "triage": "on_hold",
+  "awaiting triage": "on_hold",
+  "pending": "on_hold",
+  "blocked": "on_hold",
   "in progress": "in_progress",
   "in development": "in_progress",
   "in review": "in_review",

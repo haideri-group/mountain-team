@@ -4,6 +4,7 @@ import { cn } from "@/lib/utils";
 
 const statusStyles: Record<string, string> = {
   todo: "bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400",
+  on_hold: "bg-orange-50 text-orange-700 dark:bg-orange-950 dark:text-orange-400",
   in_progress: "bg-blue-50 text-blue-700 dark:bg-blue-950 dark:text-blue-400",
   in_review: "bg-indigo-50 text-indigo-700 dark:bg-indigo-950 dark:text-indigo-400",
   ready_for_testing: "bg-amber-50 text-amber-700 dark:bg-amber-950 dark:text-amber-400",
@@ -14,6 +15,7 @@ const statusStyles: Record<string, string> = {
 
 const statusLabels: Record<string, string> = {
   todo: "To Do",
+  on_hold: "On Hold",
   in_progress: "In Progress",
   in_review: "In Review",
   ready_for_testing: "Ready for Testing",
