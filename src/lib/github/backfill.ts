@@ -58,9 +58,9 @@ export async function backfillDeployments(
 
   const deployBranches = new Set(mappings.map((m) => m.branchPattern));
 
-  // Fetch recently merged PRs (last 30 days, paginated)
+  // Fetch recently merged PRs (last 90 days, paginated)
   const since = new Date();
-  since.setDate(since.getDate() - 30);
+  since.setDate(since.getDate() - 90);
 
   let page = 1;
   const maxPages = 10;

@@ -537,8 +537,8 @@ export function IssueSidebar({
         </div>
       )}
 
-      {/* Deployment Pipeline Section */}
-      {(deploymentLoading || deploymentData) && (
+      {/* Deployment Pipeline Section — only show if loading or has actual deployments */}
+      {(deploymentLoading || (deploymentData?.deployments?.length > 0)) && (
         <div className="bg-card rounded-xl p-6 shadow-sm">
           <DeploymentPipeline
             pipeline={deploymentData?.pipeline ?? []}
