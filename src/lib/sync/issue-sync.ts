@@ -2,6 +2,7 @@ import { db } from "@/lib/db";
 import { issues, boards, team_members, syncLogs } from "@/lib/db/schema";
 import { eq, desc, inArray } from "drizzle-orm";
 import { generateNotificationsFromSync } from "@/lib/notifications/generator";
+import { recordWorkloadSnapshots } from "@/lib/workload/snapshots";
 import {
   discoverCustomFieldIds,
   fetchIssuesByJql,
@@ -60,7 +61,7 @@ function updateProgress(update: Partial<SyncProgress>) {
 
 // --- Core Sync ---
 
-async function syncIssues(type: IssueSyncType): Promise<IssueSyncResult> {
+async function syncIssues(type: IssueSyncType, filterBoardKey?: string): Promise<IssueSyncResult> {
   const result: IssueSyncResult = {
     inserted: 0,
     updated: 0,
@@ -69,14 +70,18 @@ async function syncIssues(type: IssueSyncType): Promise<IssueSyncResult> {
     errors: [],
   };
 
-  // 1. Load tracked boards
-  const trackedBoards = await db
+  // 1. Load tracked boards (optionally filtered to a single board)
+  let trackedBoards = await db
     .select()
     .from(boards)
     .where(eq(boards.isTracked, true));
 
+  if (filterBoardKey) {
+    trackedBoards = trackedBoards.filter((b) => b.jiraKey === filterBoardKey);
+  }
+
   if (trackedBoards.length === 0) {
-    updateProgress({ phase: "done", message: "No tracked boards" });
+    updateProgress({ phase: "done", message: filterBoardKey ? `Board ${filterBoardKey} not found or not tracked` : "No tracked boards" });
     return result;
   }
 
@@ -85,7 +90,7 @@ async function syncIssues(type: IssueSyncType): Promise<IssueSyncResult> {
 
   updateProgress({
     phase: "fetching",
-    message: `Preparing sync for ${boardKeys.length} board(s)...`,
+    message: filterBoardKey ? `Syncing ${filterBoardKey}...` : `Preparing sync for ${boardKeys.length} board(s)...`,
   });
 
   // 2. Load team members for assignee matching
@@ -98,8 +103,12 @@ async function syncIssues(type: IssueSyncType): Promise<IssueSyncResult> {
   updateProgress({ message: "Discovering JIRA custom fields..." });
   const customFields = await discoverCustomFieldIds();
 
-  // 4. Build JQL
+  // 4. Build JQL — sync issues assigned to team members OR with Frontend label
   const frontendLabel = process.env.JIRA_FRONTEND_LABEL || "Frontend";
+  const memberAccountIds = allMembers
+    .filter((m) => m.jiraAccountId && m.status === "active")
+    .map((m) => m.jiraAccountId!);
+
   let jql: string;
 
   if (type === "incremental") {
@@ -118,13 +127,13 @@ async function syncIssues(type: IssueSyncType): Promise<IssueSyncResult> {
         .toISOString()
         .replace("T", " ")
         .substring(0, 16); // "YYYY-MM-DD HH:mm"
-      jql = buildIncrementalSyncJql(boardKeys, frontendLabel, since);
+      jql = buildIncrementalSyncJql(boardKeys, memberAccountIds, since, frontendLabel);
     } else {
       // No previous sync -- fall back to full
-      jql = buildFullSyncJql(boardKeys, frontendLabel);
+      jql = buildFullSyncJql(boardKeys, memberAccountIds, frontendLabel);
     }
   } else {
-    jql = buildFullSyncJql(boardKeys, frontendLabel);
+    jql = buildFullSyncJql(boardKeys, memberAccountIds, frontendLabel);
   }
 
   // 5. Fetch issues from JIRA
@@ -210,6 +219,7 @@ async function syncIssues(type: IssueSyncType): Promise<IssueSyncResult> {
           cycleTime,
           storyPoints: normalized.storyPoints,
           labels: normalized.labels,
+          requestPriority: normalized.requestPriority,
           jiraCreatedAt: normalized.jiraCreatedAt,
           jiraUpdatedAt: normalized.jiraUpdatedAt,
         })
@@ -227,6 +237,7 @@ async function syncIssues(type: IssueSyncType): Promise<IssueSyncResult> {
             cycleTime,
             storyPoints: normalized.storyPoints,
             labels: normalized.labels,
+            requestPriority: normalized.requestPriority,
             jiraCreatedAt: normalized.jiraCreatedAt,
             jiraUpdatedAt: normalized.jiraUpdatedAt,
           },
@@ -256,13 +267,13 @@ async function syncIssues(type: IssueSyncType): Promise<IssueSyncResult> {
 
 // --- Public Wrapper ---
 
-export async function runIssueSync(type: IssueSyncType): Promise<{
+export async function runIssueSync(type: IssueSyncType, boardKey?: string): Promise<{
   logId: string;
   result: IssueSyncResult;
 }> {
   const logId = `sync_${Date.now()}`;
   resetProgress();
-  updateProgress({ phase: "fetching", message: "Starting sync..." });
+  updateProgress({ phase: "fetching", message: boardKey ? `Syncing ${boardKey}...` : "Starting sync..." });
 
   await db.insert(syncLogs).values({
     id: logId,
@@ -273,7 +284,7 @@ export async function runIssueSync(type: IssueSyncType): Promise<{
   });
 
   try {
-    const result = await syncIssues(type);
+    const result = await syncIssues(type, boardKey);
 
     updateProgress({
       phase: "done",
@@ -295,6 +306,13 @@ export async function runIssueSync(type: IssueSyncType): Promise<{
       await generateNotificationsFromSync();
     } catch (notifError) {
       console.error("Notification generation failed:", notifError);
+    }
+
+    // Record workload snapshots for trend tracking
+    try {
+      await recordWorkloadSnapshots();
+    } catch (snapError) {
+      console.error("Workload snapshot recording failed:", snapError);
     }
 
     return { logId, result };

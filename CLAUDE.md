@@ -175,17 +175,24 @@ Issues are synced from JIRA into the `issues` table using JQL queries.
 - Stores `jiraCreatedAt` and `jiraUpdatedAt` from JIRA for accurate sorting
 - Live progress tracking polled by UI every 1 second during sync
 
+**JQL filtering:** Issues are synced if they match EITHER condition:
+- Assigned to any active team member (by JIRA accountId), OR
+- Have the "Frontend" label (configurable via `JIRA_FRONTEND_LABEL` env var)
+This ensures all team member work is captured regardless of labels, plus any Frontend-labelled issues from other assignees.
+
 **Sync types:**
-- **Full:** All issues from tracked boards with "Frontend" label
-- **Incremental:** Issues updated since last successful sync
-- **Manual:** Triggered by admin via Settings UI
+- **Full:** All matching issues from tracked boards
+- **Incremental:** Matching issues updated since last successful sync
+- **Manual:** Triggered by admin via Settings UI (full sync or per-board)
 
 **Sync triggers:**
 - Daily cron at 06:05 UTC (`/api/cron/sync-issues`) — auto-detects full vs incremental
 - Manual "Sync Issues" button in Settings (admin only)
+- Per-board sync button on each tracked board card
 
 **JIRA Webhook** (`/api/webhooks/jira`):
 - Receives real-time issue created/updated/deleted events
+- Accepts issues assigned to tracked team members OR with Frontend label
 - Normalizes and upserts single issue per event
 - Setup guide: `docs/JIRA_WEBHOOK_SETUP.md`
 
@@ -204,7 +211,21 @@ POST   /api/boards                       → Add board (admin only)
 PATCH  /api/boards/:id                   → Update board (admin only)
 DELETE /api/boards/:id                   → Remove board (admin only)
 
-GET    /api/overview                     → Members + issues + metrics for dashboard
+GET    /api/overview                     → Members + issues + metrics (public read)
+
+GET    /api/issues/:key                  → Issue detail with context (public read)
+GET    /api/issues/:key/jira             → Live JIRA data: description, comments, changelog, attachments, worklogs (public read)
+GET    /api/issues/:key/github           → GitHub branches, PRs, commits via JIRA dev-status API (public read)
+GET    /api/issues/:key/comments         → Paginated comments (page, pageSize, sort=desc|asc) (public read)
+
+GET    /api/calendar                     → Calendar events by month with filters
+GET    /api/reports                      → All report metrics computed from live DB
+GET    /api/search?q=                    → Global search: members + issues (max 5 each)
+
+GET    /api/notifications                → List notifications (last 30 days, type filter)
+PATCH  /api/notifications                → Mark all as read
+PATCH  /api/notifications/:id            → Mark single notification as read
+GET    /api/notifications/count          → Unread count for badge (polled every 30s)
 
 POST   /api/sync/team-members            → Manual team sync (admin only)
 GET    /api/sync/team-members            → Last team sync status
@@ -235,7 +256,37 @@ Copy `.env.example` to `.env.local`. Required for full functionality:
 - `JIRA_ORG_ID` — Atlassian organization ID
 - `JIRA_TEAM_IDS` — Comma-separated Atlassian team IDs to sync
 - `JIRA_CLOUD_ID` — Atlassian Cloud site ID
+- `GITHUB_TOKEN` — GitHub PAT (for future direct GitHub features)
 - `SYNC_SECRET` — Secret for cron and webhook endpoint auth
+
+## Public vs Protected Pages
+
+**Public (read-only, no login required):**
+- `/overview` — team overview with developer cards
+- `/issue/[key]` — full issue detail with description, comments, GitHub data
+- APIs: `GET /api/overview`, `GET /api/issues/*`, `GET /api/calendar`
+
+**Protected (login required):**
+- All other pages (Calendar, Members, Reports, Settings)
+- All mutation endpoints (POST/PATCH/DELETE)
+- Sync, notifications, search APIs
+
+Guest users see no sidebar, no search/notifications/profile — just a "Sign In" button.
+
+## Issue Detail Page (`/issue/[key]`)
+
+Two-phase + GitHub loading:
+1. **Phase 1 (instant):** DB data — issue fields, board/assignee context, cycle time percentile
+2. **Phase 2 (background):** JIRA live — description (HTML), subtasks, attachments, linked issues, time tracking, worklogs
+3. **Phase 3 (background):** GitHub — branches, PRs (via JIRA dev-status API), commits
+
+**Comments:** Server-side paginated via `/api/issues/{key}/comments` (10 per page, sort asc/desc). Threaded display — replies detected by `@mention` at comment start, indented under parent. Comment deep links to JIRA via `focusedCommentId`.
+
+**Issue Type Icons:** Exact JIRA SVGs (Bug=red insect, Story=green bookmark, Task=blue checkbox, Sub-task=blue puzzle, Epic=purple lightning). Shown next to issue keys across all pages.
+
+**Time Tracking:** Progress bar when original estimate exists, text-only "Logged" when not. Per-person worklog breakdown from JIRA `/worklog` API.
+
+**Date/Time:** Pakistan timezone (Asia/Karachi), 12h AM/PM. "Today at 4:38 PM" / "Yesterday at 11:00 AM" / "25 Mar 2026 at 4:38 PM".
 
 ## Implementation Status
 
@@ -244,10 +295,10 @@ Copy `.env.example` to `.env.local`. Required for full functionality:
 3. ~~Database Schema + MySQL~~ (complete)
 4. ~~Auth System~~ (complete — Google OAuth + Credentials with bcrypt)
 5. ~~Mock Data Layer~~ (complete — superseded by live JIRA sync)
-6. ~~Dashboard Screens~~ — Overview + Profile (complete), **Calendar (placeholder)**
+6. ~~Dashboard Screens~~ — Overview + Profile + Calendar (complete)
 7. ~~Management Screens~~ — Members + Settings (complete), **Workload (placeholder)**
-8. **Reports Page** — 12 chart components (placeholder)
-9. **Interactive Features** — Profile dropdown, Notifications dropdown, URL-synced filters, global search
+8. ~~Reports Page~~ (complete — 11 chart components with Recharts, interactive donut, drill-downs)
+9. ~~Interactive Features~~ (complete — Notifications, Profile dropdown, Global search Cmd+K, dynamic topbar)
 10. ~~JIRA Issue Sync~~ (complete — full/incremental + webhooks + progress)
 10.5. ~~Team Member Sync~~ (complete — Atlassian Teams API + Google Directory)
 11. **Polish + Deploy** — Error boundaries, loading skeletons, empty states, performance, Railway deployment

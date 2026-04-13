@@ -19,7 +19,7 @@ export const team_members = mysqlTable("team_members", {
   status: mysqlEnum("status", ["active", "on_leave", "departed"]).default("active").notNull(),
   joinedDate: varchar("joinedDate", { length: 50 }),
   departedDate: varchar("departedDate", { length: 50 }),
-  capacity: int("capacity").default(10),
+  capacity: int("capacity").default(15),
   avatarUrl: text("avatarUrl"),
   color: varchar("color", { length: 50 }),
   teamId: varchar("teamId", { length: 191 }),
@@ -53,6 +53,7 @@ export const issues = mysqlTable("issues", {
   cycleTime: float("cycleTime"),
   storyPoints: float("storyPoints"),
   labels: text("labels"),
+  requestPriority: varchar("requestPriority", { length: 10 }),
   jiraCreatedAt: varchar("jiraCreatedAt", { length: 50 }),
   jiraUpdatedAt: varchar("jiraUpdatedAt", { length: 50 }),
   createdAt: timestamp("createdAt").defaultNow(),
@@ -93,5 +94,16 @@ export const notifications = mysqlTable("notifications", {
   relatedIssueId: varchar("relatedIssueId", { length: 191 }).references(() => issues.id),
   relatedMemberId: varchar("relatedMemberId", { length: 191 }).references(() => team_members.id),
   isRead: boolean("isRead").default(false),
+  createdAt: timestamp("createdAt").defaultNow(),
+});
+
+export const workloadSnapshots = mysqlTable("workload_snapshots", {
+  id: varchar("id", { length: 191 }).primaryKey(),
+  memberId: varchar("memberId", { length: 191 }).references(() => team_members.id).notNull(),
+  weekStart: varchar("weekStart", { length: 50 }).notNull(),
+  percentage: int("percentage").default(0),
+  activePoints: float("activePoints").default(0),
+  capacity: int("capacity").default(15),
+  assignedCount: int("assignedCount").default(0),
   createdAt: timestamp("createdAt").defaultNow(),
 });

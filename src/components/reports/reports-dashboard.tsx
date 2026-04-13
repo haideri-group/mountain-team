@@ -72,9 +72,9 @@ interface ReportsData {
   }[];
   cmsVsDev: { period: string; cms: number; dev: number }[];
   heatmap: {
-    members: string[];
+    members: { id: string; name: string }[];
     months: string[];
-    cells: { member: string; month: string; count: number; level: "high" | "medium" | "low" | "minimal" }[];
+    cells: { member: string; memberId: string; month: string; count: number; level: "high" | "medium" | "low" | "minimal"; tasks: { jiraKey: string; title: string; type: string | null; storyPoints: number | null; completedDate: string | null; cycleTime: number | null; boardKey: string; boardColor: string }[] }[];
   };
   boardHealth: {
     boardKey: string;
@@ -193,7 +193,7 @@ export function ReportsDashboard() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const [selectedTeam, setSelectedTeam] = useState<string>("All");
+  const [selectedTeam, setSelectedTeam] = useState<string>("");
   const [selectedPeriod, setSelectedPeriod] = useState<Period>("last-6-months");
   const [selectedBoard, setSelectedBoard] = useState<string>("");
 
@@ -204,6 +204,7 @@ export function ReportsDashboard() {
 
       const params = new URLSearchParams();
       if (selectedTeam && selectedTeam !== "All") params.set("team", selectedTeam);
+
       if (selectedBoard) params.set("board", selectedBoard);
       params.set("period", selectedPeriod);
 
@@ -216,8 +217,8 @@ export function ReportsDashboard() {
       setData(json);
 
       // Auto-select first team on first load
-      if (selectedTeam === "All" && json.teams?.length > 0) {
-        // keep "All" selected by default
+      if (!selectedTeam && json.teams?.length > 0) {
+        setSelectedTeam(json.teams[0]);
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Something went wrong");

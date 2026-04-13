@@ -4,6 +4,36 @@ import { NextResponse } from "next/server";
 import { desc } from "drizzle-orm";
 import { auth } from "@/auth";
 
+// Generate a visually distinct board color based on index
+// Uses golden angle (137.5°) to distribute hues evenly around the color wheel
+// Saturation 65% + Lightness 55% = vibrant but easy on the eyes, works on light & dark
+function hslToHex(h: number, s: number, l: number): string {
+  const hNorm = h / 360;
+  const a = s * Math.min(l, 1 - l);
+  const f = (n: number) => {
+    const k = (n + hNorm * 12) % 12;
+    const color = l - a * Math.max(Math.min(k - 3, 9 - k, 1), -1);
+    return Math.round(255 * color).toString(16).padStart(2, "0");
+  };
+  return `#${f(0)}${f(8)}${f(4)}`;
+}
+
+function generateBoardColor(index: number): string {
+  // Golden angle ensures maximum visual separation between consecutive colors
+  const goldenAngle = 137.508;
+  const hue = (index * goldenAngle) % 360;
+  return hslToHex(hue, 0.65, 0.55);
+}
+
+function pickNextColor(usedColors: Set<string>): string {
+  // Try indices until we find an unused color
+  for (let i = 0; i < 1000; i++) {
+    const color = generateBoardColor(i);
+    if (!usedColors.has(color.toLowerCase())) return color;
+  }
+  return generateBoardColor(usedColors.size);
+}
+
 // GET /api/boards — List all boards
 export async function GET() {
   try {
@@ -35,13 +65,22 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "jiraKey and name are required" }, { status: 400 });
     }
 
+    // Get existing board colors to avoid duplicates
+    const existingBoards = await db.select({ color: boards.color }).from(boards);
+    const usedColors = new Set(
+      existingBoards.map((b) => (b.color || "").toLowerCase()).filter(Boolean),
+    );
+
     const id = `brd_${Date.now()}`;
+    const assignedColor = (color && !usedColors.has(color.toLowerCase()))
+      ? color
+      : pickNextColor(usedColors);
 
     await db.insert(boards).values({
       id,
       jiraKey: jiraKey.toUpperCase(),
       name,
-      color: color || `#${Math.floor(Math.random() * 16777215).toString(16).padStart(6, "0")}`,
+      color: assignedColor,
       description: description || null,
       isTracked: isTracked ?? true,
     });

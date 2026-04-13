@@ -73,6 +73,25 @@ export function IssueSyncManager({ lastSync }: IssueSyncManagerProps) {
   const [progress, setProgress] = useState<SyncProgress | null>(null);
   const pollRef = useRef<NodeJS.Timeout | null>(null);
 
+  // On mount: check if a sync is already running (e.g. navigated away and back)
+  useEffect(() => {
+    let cancelled = false;
+    const check = async () => {
+      try {
+        const res = await fetch("/api/sync/issues?progress=1");
+        if (!res.ok || cancelled) return;
+        const data = await res.json();
+        const p = data.progress as SyncProgress | null;
+        if (p && (p.phase === "fetching" || p.phase === "processing")) {
+          setSyncing(true);
+          setProgress(p);
+        }
+      } catch { /* ignore */ }
+    };
+    check();
+    return () => { cancelled = true; };
+  }, []);
+
   // Poll progress while syncing
   useEffect(() => {
     if (syncing) {
@@ -81,7 +100,20 @@ export function IssueSyncManager({ lastSync }: IssueSyncManagerProps) {
           const res = await fetch("/api/sync/issues?progress=1");
           if (res.ok) {
             const data = await res.json();
-            setProgress(data.progress);
+            const p = data.progress as SyncProgress | null;
+            setProgress(p);
+
+            // Sync finished while we were away — stop polling
+            if (p && (p.phase === "done" || p.phase === "failed" || p.phase === "idle")) {
+              setSyncing(false);
+              setProgress(null);
+              // Refresh last sync status
+              const statusRes = await fetch("/api/sync/issues");
+              if (statusRes.ok) {
+                const statusData = await statusRes.json();
+                setLastSyncData(statusData.lastSync);
+              }
+            }
           }
         } catch {
           // ignore poll errors
@@ -164,7 +196,7 @@ export function IssueSyncManager({ lastSync }: IssueSyncManagerProps) {
         <div>
           <h3 className="text-base font-bold font-mono">Issue Sync</h3>
           <p className="text-xs text-muted-foreground mt-0.5">
-            Sync JIRA issues from tracked boards with Frontend label
+            Sync issues assigned to team members or with Frontend label
           </p>
         </div>
         <button
@@ -365,7 +397,7 @@ export function IssueSyncManager({ lastSync }: IssueSyncManagerProps) {
         <div className="flex items-center gap-4 text-xs text-muted-foreground pt-2">
           <span className="flex items-center gap-1.5">
             <Layers className="h-3.5 w-3.5" />
-            Synced from JIRA boards with &quot;Frontend&quot; label
+            Syncs team member issues + Frontend-labelled issues from tracked boards
           </span>
         </div>
       </div>

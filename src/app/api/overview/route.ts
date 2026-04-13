@@ -69,12 +69,28 @@ export async function GET() {
       const totalDone = memberIssues.filter((i) => i.status === "done").length;
       const totalClosed = memberIssues.filter((i) => i.status === "closed").length;
 
-      // Workload: sum story points of active tasks / capacity
+      // Workload: weighted formula (same as /api/workload)
+      const countedStatuses = ["todo", "in_progress", "in_review"];
       const activePoints = memberIssues
-        .filter((i) => ["todo", "in_progress", "in_review", "ready_for_testing", "ready_for_live"].includes(i.status))
-        .reduce((sum, i) => sum + (i.storyPoints || 1), 0);
+        .filter((i) => countedStatuses.includes(i.status))
+        .reduce((sum, i) => {
+          // Story points override if set
+          if (i.storyPoints && i.storyPoints > 0) return sum + i.storyPoints;
+          // WebContent label = 0.5
+          let labels: string[] = [];
+          try { labels = i.labels ? JSON.parse(i.labels) : []; } catch { labels = []; }
+          if (labels.some((l) => l.toLowerCase() === "webcontent")) return sum + 0.5;
+          // Bug weight by Request Priority
+          if (i.type === "bug") {
+            const rp = (i as { requestPriority?: string | null }).requestPriority;
+            if (rp === "P1") return sum + 3.0;
+            if (rp === "P2") return sum + 2.0;
+            if (rp === "P3") return sum + 1.5;
+          }
+          return sum + 1.0;
+        }, 0);
 
-      const capacity = member.capacity || 10;
+      const capacity = member.capacity || 15;
       const workloadPercentage = Math.round((activePoints / capacity) * 100);
 
       // Avg cycle time for done tasks
