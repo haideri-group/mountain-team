@@ -3,6 +3,7 @@ import { db } from "@/lib/db";
 import { issues, boards, team_members } from "@/lib/db/schema";
 import { eq, and } from "drizzle-orm";
 import { auth } from "@/auth";
+import { withResolvedAvatar } from "@/lib/db/helpers";
 
 function getInitials(name: string): string {
   return name
@@ -48,7 +49,7 @@ export async function GET(
         .from(team_members)
         .where(eq(team_members.id, issue.assigneeId))
         .limit(1);
-      assignee = member || null;
+      assignee = member ? withResolvedAvatar(member) : null;
     }
 
     const today = new Date().toISOString().split("T")[0];

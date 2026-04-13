@@ -3,13 +3,14 @@ import { db } from "@/lib/db";
 import { team_members, issues, boards } from "@/lib/db/schema";
 import { eq, inArray } from "drizzle-orm";
 import { auth } from "@/auth";
+import { withResolvedAvatars } from "@/lib/db/helpers";
 
 export async function GET() {
   try {
     // Public read-only endpoint — no auth required for GET
 
     // Fetch all members (exclude departed by default — client can filter)
-    const allMembers = await db.select().from(team_members);
+    const allMembers = withResolvedAvatars(await db.select().from(team_members));
 
     // Fetch tracked boards
     const trackedBoards = await db

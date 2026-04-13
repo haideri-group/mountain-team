@@ -4,6 +4,7 @@ import { db } from "@/lib/db";
 import { issues, boards, team_members } from "@/lib/db/schema";
 import { eq, and, gte, lte, inArray } from "drizzle-orm";
 import { auth } from "@/auth";
+import { withResolvedAvatars } from "@/lib/db/helpers";
 
 // --- Helpers ---
 
@@ -88,7 +89,7 @@ export async function GET(request: NextRequest) {
     }
 
     // Fetch all members
-    const allMembers = await db.select().from(team_members);
+    const allMembers = withResolvedAvatars(await db.select().from(team_members));
     const memberMap = new Map(allMembers.map((m) => [m.id, m]));
 
     // Fetch issues in period

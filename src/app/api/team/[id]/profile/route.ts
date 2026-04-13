@@ -3,6 +3,7 @@ import { db } from "@/lib/db";
 import { team_members, issues, boards } from "@/lib/db/schema";
 import { eq, and, inArray } from "drizzle-orm";
 import { auth } from "@/auth";
+import { withResolvedAvatar } from "@/lib/db/helpers";
 
 export async function GET(
   _request: Request,
@@ -17,15 +18,17 @@ export async function GET(
     const { id } = await params;
 
     // Fetch member
-    const [member] = await db
+    const [memberRaw] = await db
       .select()
       .from(team_members)
       .where(eq(team_members.id, id))
       .limit(1);
 
-    if (!member) {
+    if (!memberRaw) {
       return NextResponse.json({ error: "Member not found" }, { status: 404 });
     }
+
+    const member = withResolvedAvatar(memberRaw);
 
     // Fetch tracked boards
     const trackedBoards = await db

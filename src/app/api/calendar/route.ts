@@ -4,6 +4,7 @@ import { db } from "@/lib/db";
 import { issues, boards, team_members } from "@/lib/db/schema";
 import { eq, and, or, gte, lte, inArray } from "drizzle-orm";
 import { auth } from "@/auth";
+import { withResolvedAvatars } from "@/lib/db/helpers";
 
 export async function GET(request: NextRequest) {
   try {
@@ -48,7 +49,7 @@ export async function GET(request: NextRequest) {
     const trackedBoardIds = trackedBoards.map((b) => b.id);
 
     // Fetch all team members
-    const allMembers = await db.select().from(team_members);
+    const allMembers = withResolvedAvatars(await db.select().from(team_members));
     const memberMap = new Map(allMembers.map((m) => [m.id, m]));
 
     // Build issue query conditions

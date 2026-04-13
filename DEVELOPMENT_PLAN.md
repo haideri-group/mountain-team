@@ -752,10 +752,10 @@ Cache team member avatars in Cloudflare R2 object storage instead of loading fro
 
 **Problem:** Google `lh3.googleusercontent.com` returns 429 when ~14+ avatars load simultaneously on Overview. Even Gravatar adds external latency.
 
-**Solution:** During team sync, download avatars from source (JIRA/Google), upload to R2, serve from `cdn.haider-team.appz.cc`. Two sizes per member for thumbnail + full-size viewing.
+**Solution:** During team sync, download avatars from source (JIRA/Google), upload to R2, serve from `cdn-teamflow.appz.cc`. Two sizes per member for thumbnail + full-size viewing.
 
 **R2 Bucket:** `teamflow-avatars`
-**Custom domain:** `cdn.haider-team.appz.cc` (appz.cc already on Cloudflare)
+**Custom domain:** `cdn-teamflow.appz.cc` (appz.cc already on Cloudflare)
 
 **Storage architecture:**
 ```
@@ -784,15 +784,15 @@ CLOUDFLARE_R2_ACCOUNT_ID=...
 CLOUDFLARE_R2_ACCESS_KEY_ID=...
 CLOUDFLARE_R2_SECRET_ACCESS_KEY=...
 CLOUDFLARE_R2_BUCKET_NAME=teamflow-avatars
-CLOUDFLARE_R2_PUBLIC_URL=https://cdn.haider-team.appz.cc
+CLOUDFLARE_R2_PUBLIC_URL=https://cdn-teamflow.appz.cc
 ```
 
 **Fallback:** If R2 not configured, existing behavior preserved (external URLs). If upload fails, keep current avatarUrl. Departed members skipped.
 
 **No UI changes needed** — all components use `<img src={avatarUrl}>`, URL just changes from Gravatar to R2.
 
-**Deliverable:** All team member avatars served from `cdn.haider-team.appz.cc` with zero external image requests
-**Verify:** Run `yarn cache-avatars` → avatars visible at `cdn.haider-team.appz.cc/avatars/{id}/sm.jpg`. Refresh app → avatars load from CDN. Change avatar in JIRA → run sync → R2 updates.
+**Deliverable:** All team member avatars served from `cdn-teamflow.appz.cc` with zero external image requests
+**Verify:** Run `yarn cache-avatars` → avatars visible at `cdn-teamflow.appz.cc/avatars/{id}/sm.jpg`. Refresh app → avatars load from CDN. Change avatar in JIRA → run sync → R2 updates.
 
 ---
 

@@ -4,6 +4,7 @@ import { db } from "@/lib/db";
 import { team_members, issues, boards } from "@/lib/db/schema";
 import { like, or, eq, ne } from "drizzle-orm";
 import { auth } from "@/auth";
+import { withResolvedAvatars } from "@/lib/db/helpers";
 
 // GET /api/search?q=alex — Search members + issues
 export async function GET(request: NextRequest) {
@@ -21,7 +22,7 @@ export async function GET(request: NextRequest) {
     const pattern = `%${query}%`;
 
     // Search members
-    const memberResults = await db
+    const memberResults = withResolvedAvatars(await db
       .select()
       .from(team_members)
       .where(
@@ -30,7 +31,7 @@ export async function GET(request: NextRequest) {
           like(team_members.email, pattern),
         ),
       )
-      .limit(5);
+      .limit(5));
 
     // Search issues
     const issueResults = await db
@@ -56,7 +57,7 @@ export async function GET(request: NextRequest) {
       (await db.select().from(boards)).map((b) => [b.id, b]),
     );
     const memberMap = new Map(
-      (await db.select().from(team_members)).map((m) => [m.id, m]),
+      withResolvedAvatars(await db.select().from(team_members)).map((m) => [m.id, m]),
     );
 
     const enrichedIssues = issueResults.map((issue) => {
