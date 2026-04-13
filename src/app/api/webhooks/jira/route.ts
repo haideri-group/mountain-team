@@ -1,11 +1,21 @@
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { issues, boards, team_members } from "@/lib/db/schema";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { discoverCustomFieldIds } from "@/lib/jira/issues";
 import { normalizeIssue, calculateCycleTime } from "@/lib/jira/normalizer";
 import { generateNotificationForIssue } from "@/lib/notifications/generator";
 import type { JiraIssueRaw } from "@/lib/jira/issues";
+
+// Helper: log webhook event for diagnostics
+async function logWebhook(event: string | null, summary: string, payload?: string) {
+  try {
+    const id = `wh_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+    await db.execute(
+      sql`INSERT INTO webhook_logs (id, source, event, result, payload) VALUES (${id}, 'jira', ${event || 'unknown'}, ${summary}, ${(payload || '').substring(0, 2000)})`,
+    );
+  } catch { /* non-fatal */ }
+}
 
 // POST /api/webhooks/jira -- Receives JIRA webhook events
 export async function POST(request: Request) {
@@ -14,10 +24,16 @@ export async function POST(request: Request) {
     const secret = request.headers.get("x-webhook-secret");
     const expectedSecret = process.env.SYNC_SECRET;
     if (expectedSecret && secret && secret !== expectedSecret) {
+      await logWebhook(null, `AUTH FAILED: secret mismatch (got: ${secret?.substring(0, 8)}...)`);
       return NextResponse.json({ error: "Invalid secret" }, { status: 401 });
     }
 
     const payload = await request.json();
+
+    // Log every incoming webhook for diagnostics
+    const issueKey = payload.issue?.key || "no-issue";
+    const event = payload.webhookEvent || "unknown";
+    await logWebhook(event, `Received: ${issueKey}`, JSON.stringify({ event, key: issueKey, timestamp: payload.timestamp }));
 
     // JIRA sends different event types
     const webhookEvent = payload.webhookEvent as string;
