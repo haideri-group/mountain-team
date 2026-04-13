@@ -578,20 +578,54 @@ Track which JIRA tasks are deployed to staging and production environments by mo
 **JIRA key detection pattern:**
 Developers use varied branch naming: `fix/PROD-5123`, `PROD-5123`, `PROD-5123_v1`, `fix_PROD-5123_v2`, `prod-5123`. Regex: `/[A-Z]{2,}-\d+/gi` applied to branch names, PR titles, and commit messages.
 
-**Repository: `tilemountainuk/tile-mountain-sdk`**
+**Tracked Repositories:**
 
-| Site | Live Branch | Staging Branch |
-|------|-------------|----------------|
-| tilemountain.co.uk | `main-tilemtn` | `stage-tilemtn` |
-| bathroommountain.co.uk | `main-bathmtn` | `stage-bathmtn` |
-| wallsandfloors.co.uk | `main-wallsandfloors` | `stage-wallsandfloors` |
-| tilemountain.ae | `main-tilemtnae` | `stage-tilemtnae` |
-| trade.wallsandfloors.co.uk | `main-waftrd` | `stage-waftrd` |
-| splendourtiles.co.uk | `main-splendourtiles` | `stage-splendourtiles` |
-| All staging (shared) | — | `stage` |
-| Sync/canonical | `main` | — |
+**1. Frontend — `tilemountainuk/tile-mountain-sdk`** (Nuxt 3 / Vue Storefront 2)
 
-**Note:** Merging to `stage` deploys to all staging sites (unless excluded via config). Merging to `main` is the final sync after ~24h on live with no issues.
+| Site | Live Branch | Staging Branch | Client Key |
+|------|-------------|----------------|------------|
+| tilemountain.co.uk | `main-tilemtn` | `stage-tilemtn` | `tilemtn` |
+| bathroommountain.co.uk | `main-bathmtn` | `stage-bathmtn` | `bathmtn` |
+| wallsandfloors.co.uk | `main-wallsandfloors` | `stage-wallsandfloors` | `wallsandfloors` |
+| tilemountain.ae | `main-tilemtnae` | `stage-tilemtnae` | `tilemtnae` |
+| trade.wallsandfloors.co.uk | `main-waftrd` | `stage-waftrd` | `waftrd` |
+| splendourtiles.co.uk | `main-splendourtiles` | `stage-splendourtiles` | `splendourtiles` |
+| All staging (shared) | — | `stage` | all |
+| Sync/canonical | `main` | — | — |
+
+- `stage` branch deploys to all staging sites unless PR has `skip:{client}` label
+- CI/CD: Vue Storefront Cloud (Docker → GCP europe-west1) via `build-and-deploy.yml`
+- CI already creates GitHub Deployment objects with `chrnorm/deployment-action@v2`
+- Branch flow: `{JIRA-KEY}` → `stage`/`stage-*` → `main-*` → `main`
+
+**2. Backend — `tilemountainuk/tilemountain2`** (Magento 2)
+
+| Site | Live Branch | Staging Branch | Client Key |
+|------|-------------|----------------|------------|
+| tilemountain.co.uk | `master-tm` | `stage-tm` | `tm` |
+| bathroommountain.co.uk | `master-bm` | `stage-bm` | `bm` |
+| wallsandfloors.co.uk + trade | `master-waf` | `stage-waf` | `waf` |
+| tilemountain.ae | `master-tmdubai` | `stage-tmdubai` | `tmdubai` |
+| Sync/canonical | `master` | — | — |
+
+- Uses `master-*` (not `main-*`) for production branches
+- Release branches: `release/release_*` created from `master` via workflow dispatch
+- Branch flow: `feature/*` → `release/release_*` → `stage-*` → `master-*` → `master`
+- Hotfix flow: `hotfix/*` → directly to `master-*` (bypasses staging)
+- Branch policy enforced via `branch-flow-policy.yml`
+
+**JIRA Custom Fields for Deployment Scope:**
+- `customfield_10734` = **"Website"** (single select): `All Websites`, `www.tilemountain.co.uk`, `bathroommountain.co.uk`, `www.wallsandfloors.co.uk`, `trade.wallsandfloors.co.uk`, `www.tilemountain.ae`, `splendourtiles.co.uk`
+- `customfield_10805` = **"Brands"** (multi-select): `All Brands`, `Tile Mountain`, `Bathroom Mountain`, `Walls and Floors`
+- Used for notification logic: "All Websites" → notify per site deploy, specific site → notify once
+
+**JIRA key matching (comprehensive):**
+- Extract from: PR title + source branch name + all commit messages in the PR
+- Regex: `/[A-Z]{2,}-\d+/gi`
+- Developers use varied formats: `fix/PROD-5123`, `PROD-5123`, `PROD-5123_v1`, `prod-5123`
+- Keys not always in PR title — must scan commits as fallback
+
+**Note:** `main`/`master` is the final sync branch merged ~24h after live with no issues.
 
 **Database tables to create:**
 
