@@ -162,9 +162,11 @@ async function syncTeamMembers(): Promise<TeamSyncResult> {
       const nameChanged = existing.displayName !== user.displayName;
       const emailChanged =
         user.emailAddress && existing.email !== user.emailAddress;
+      // Only update avatar from JIRA if member has no avatar at all
+      // (don't overwrite R2 paths or Google photos with JIRA's Gravatar defaults)
       const avatarChanged =
-        user.avatarUrls?.["48x48"] &&
-        existing.avatarUrl !== user.avatarUrls["48x48"];
+        !existing.avatarUrl &&
+        user.avatarUrls?.["48x48"];
       const teamChanged =
         memberTeam && existing.teamId !== memberTeam.teamId;
 
@@ -175,7 +177,7 @@ async function syncTeamMembers(): Promise<TeamSyncResult> {
             displayName: user.displayName,
             ...(emailChanged ? { email: user.emailAddress } : {}),
             ...(avatarChanged
-              ? { avatarUrl: user.avatarUrls["48x48"] }
+              ? { avatarUrl: user.avatarUrls!["48x48"] }
               : {}),
             ...(teamChanged
               ? { teamId: memberTeam.teamId, teamName: memberTeam.teamName }

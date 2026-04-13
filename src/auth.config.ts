@@ -49,6 +49,36 @@ export const authConfig = {
           ? account.expires_at * 1000
           : 0;
       }
+
+      // Refresh Google access token if expired
+      if (
+        token.googleRefreshToken &&
+        token.googleTokenExpiry &&
+        Date.now() > (token.googleTokenExpiry as number) - 60000 // refresh 1 min before expiry
+      ) {
+        try {
+          const res = await fetch("https://oauth2.googleapis.com/token", {
+            method: "POST",
+            headers: { "Content-Type": "application/x-www-form-urlencoded" },
+            body: new URLSearchParams({
+              client_id: process.env.GOOGLE_CLIENT_ID || "",
+              client_secret: process.env.GOOGLE_CLIENT_SECRET || "",
+              grant_type: "refresh_token",
+              refresh_token: token.googleRefreshToken as string,
+            }),
+          });
+          if (res.ok) {
+            const data = await res.json();
+            token.googleAccessToken = data.access_token;
+            if (data.expires_in) {
+              token.googleTokenExpiry = Date.now() + data.expires_in * 1000;
+            }
+          }
+        } catch {
+          // Refresh failed — token may be revoked. Keep existing (expired) token.
+        }
+      }
+
       return token;
     },
     async session({ session, token }) {
