@@ -176,6 +176,7 @@ export async function GET(
         cycleTime: issue.cycleTime,
         storyPoints: issue.storyPoints,
         labels,
+        description: issue.description || null,
         jiraCreatedAt: issue.jiraCreatedAt,
         jiraUpdatedAt: issue.jiraUpdatedAt,
         boardKey: board?.jiraKey || "",

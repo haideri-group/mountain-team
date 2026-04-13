@@ -95,6 +95,9 @@ export function IssueSyncManager({ lastSync }: IssueSyncManagerProps) {
   // Poll progress while syncing
   useEffect(() => {
     if (syncing) {
+      const startedAt = Date.now();
+      let seenActive = false; // Track if we've seen fetching/processing at least once
+
       const poll = async () => {
         try {
           const res = await fetch("/api/sync/issues?progress=1");
@@ -103,16 +106,28 @@ export function IssueSyncManager({ lastSync }: IssueSyncManagerProps) {
             const p = data.progress as SyncProgress | null;
             setProgress(p);
 
-            // Sync finished while we were away — stop polling
-            if (p && (p.phase === "done" || p.phase === "failed" || p.phase === "idle")) {
+            if (p && (p.phase === "fetching" || p.phase === "processing")) {
+              seenActive = true;
+            }
+
+            // Only stop polling on done/failed, or idle AFTER we've seen activity
+            // (ignore idle in the first 5s — server hasn't started yet)
+            if (p && (p.phase === "done" || p.phase === "failed")) {
               setSyncing(false);
               setProgress(null);
-              // Refresh last sync status
               const statusRes = await fetch("/api/sync/issues");
               if (statusRes.ok) {
                 const statusData = await statusRes.json();
                 setLastSyncData(statusData.lastSync);
               }
+            } else if (p && p.phase === "idle" && seenActive) {
+              // Was active before, now idle — sync completed between polls
+              setSyncing(false);
+              setProgress(null);
+            } else if (p && p.phase === "idle" && Date.now() - startedAt > 10000) {
+              // Idle for 10s+ without ever going active — something went wrong
+              setSyncing(false);
+              setProgress(null);
             }
           }
         } catch {
@@ -120,10 +135,14 @@ export function IssueSyncManager({ lastSync }: IssueSyncManagerProps) {
         }
       };
 
-      poll(); // immediate first poll
-      pollRef.current = setInterval(poll, 1000);
+      // Delay first poll slightly to let the POST reach the server
+      const initialDelay = setTimeout(() => {
+        poll();
+        pollRef.current = setInterval(poll, 1000);
+      }, 500);
 
       return () => {
+        clearTimeout(initialDelay);
         if (pollRef.current) clearInterval(pollRef.current);
       };
     } else {
@@ -132,30 +151,34 @@ export function IssueSyncManager({ lastSync }: IssueSyncManagerProps) {
     }
   }, [syncing]);
 
-  const handleSync = async () => {
+  const handleSync = () => {
     setSyncing(true);
     setError(null);
     setSyncResult(null);
     setProgress(null);
 
-    try {
-      const res = await fetch("/api/sync/issues", { method: "POST" });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Sync failed");
-
-      setSyncResult(data);
-
-      const statusRes = await fetch("/api/sync/issues");
-      if (statusRes.ok) {
-        const statusData = await statusRes.json();
-        setLastSyncData(statusData.lastSync);
-      }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Sync failed");
-    } finally {
-      setSyncing(false);
-      setProgress(null);
-    }
+    // Fire-and-forget — polling handles the lifecycle
+    fetch("/api/sync/issues", { method: "POST" })
+      .then(async (res) => {
+        const data = await res.json();
+        if (!res.ok) {
+          setError(data.error || "Sync failed");
+          setSyncing(false);
+          return;
+        }
+        // Sync completed — polling will detect "done" phase and stop
+        setSyncResult(data);
+        // Refresh last sync status
+        const statusRes = await fetch("/api/sync/issues");
+        if (statusRes.ok) {
+          const statusData = await statusRes.json();
+          setLastSyncData(statusData.lastSync);
+        }
+      })
+      .catch(() => {
+        setError("Failed to connect");
+        setSyncing(false);
+      });
   };
 
   const progressPct =

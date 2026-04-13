@@ -87,6 +87,34 @@ export async function POST(request: Request) {
     const customFields = await discoverCustomFieldIds();
     const normalized = normalizeIssue(issue, customFields);
 
+    // Fetch rendered description (webhooks don't include renderedFields)
+    let renderedDescription: string | null = normalized.description;
+    if (!renderedDescription) {
+      try {
+        const jiraBase = process.env.NEXT_PUBLIC_JIRA_BASE_URL;
+        const jiraEmail = process.env.JIRA_USER_EMAIL;
+        const jiraToken = process.env.JIRA_API_TOKEN;
+        if (jiraBase && jiraEmail && jiraToken) {
+          const descRes = await fetch(
+            `${jiraBase}/rest/api/3/issue/${issue.key}?expand=renderedFields&fields=description`,
+            {
+              headers: {
+                Authorization: `Basic ${Buffer.from(`${jiraEmail}:${jiraToken}`).toString("base64")}`,
+                Accept: "application/json",
+              },
+              cache: "no-store",
+            },
+          );
+          if (descRes.ok) {
+            const descData = await descRes.json();
+            renderedDescription = descData.renderedFields?.description || null;
+          }
+        }
+      } catch {
+        // Non-fatal — description will update on next sync
+      }
+    }
+
     // Resolve board
     const [board] = await db
       .select()
@@ -156,6 +184,9 @@ export async function POST(request: Request) {
         cycleTime,
         storyPoints: normalized.storyPoints,
         labels: normalized.labels,
+        description: renderedDescription,
+        website: normalized.website,
+        brands: normalized.brands,
         jiraCreatedAt: normalized.jiraCreatedAt,
         jiraUpdatedAt: normalized.jiraUpdatedAt,
       })
@@ -173,6 +204,9 @@ export async function POST(request: Request) {
           cycleTime,
           storyPoints: normalized.storyPoints,
           labels: normalized.labels,
+          description: renderedDescription,
+          website: normalized.website,
+          brands: normalized.brands,
           jiraCreatedAt: normalized.jiraCreatedAt,
           jiraUpdatedAt: normalized.jiraUpdatedAt,
         },

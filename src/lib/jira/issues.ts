@@ -19,6 +19,9 @@ export interface JiraIssueRaw {
     resolutiondate?: string | null;
     [key: string]: unknown;
   };
+  renderedFields?: {
+    description?: string | null;
+  };
 }
 
 interface JiraSearchResponse {
@@ -191,6 +194,7 @@ export async function fetchIssuesByJql(
     "updated",
     "resolutiondate",
     "statuscategorychangedate",
+    "description",
   ];
 
   if (customFields.storyPoints) fields.push(customFields.storyPoints);
@@ -207,6 +211,7 @@ export async function fetchIssuesByJql(
     const body: Record<string, unknown> = {
       jql,
       fields,
+      expand: "renderedFields",
       maxResults: 50,
     };
     if (nextPageToken) body.nextPageToken = nextPageToken;

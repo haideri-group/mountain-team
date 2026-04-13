@@ -8,8 +8,9 @@ import {
   KeyboardEvent,
 } from "react";
 import { useRouter } from "next/navigation";
-import { Search } from "lucide-react";
+import { Search, Clock, X } from "lucide-react";
 import { IssueStatusBadge } from "@/components/overview/issue-status-badge";
+import { IssueTypeIcon } from "@/components/shared/issue-type-icon";
 import { cn } from "@/lib/utils";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -29,6 +30,7 @@ interface IssueResult {
   jiraKey: string;
   title: string;
   status: string;
+  type: string | null;
   boardKey: string;
   boardColor: string;
   assigneeName: string | null;
@@ -37,6 +39,56 @@ interface IssueResult {
 interface SearchResults {
   members: MemberResult[];
   issues: IssueResult[];
+}
+
+// ─── JIRA URL detection ──────────────────────────────────────────────────────
+
+const JIRA_KEY_REGEX = /[A-Z]{2,}-\d+/i;
+
+function extractJiraKeyFromInput(input: string): string | null {
+  const trimmed = input.trim();
+
+  // Full JIRA URL: https://tilemountain.atlassian.net/browse/PROD-5849
+  if (trimmed.includes("/browse/")) {
+    const match = trimmed.match(/\/browse\/([A-Z]{2,}-\d+)/i);
+    return match ? match[1].toUpperCase() : null;
+  }
+
+  // Bare JIRA key: PROD-5849
+  if (JIRA_KEY_REGEX.test(trimmed) && !trimmed.includes(" ")) {
+    const match = trimmed.match(JIRA_KEY_REGEX);
+    return match ? match[0].toUpperCase() : null;
+  }
+
+  return null;
+}
+
+// ─── Recent Searches (localStorage) ──────────────────────────────────────────
+
+const RECENT_KEY = "teamflow_recent_searches";
+const MAX_RECENT = 5;
+
+function getRecentSearches(): string[] {
+  try {
+    const raw = localStorage.getItem(RECENT_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+}
+
+function addRecentSearch(q: string) {
+  const trimmed = q.trim();
+  if (trimmed.length < 2) return;
+  const recent = getRecentSearches().filter((s) => s !== trimmed);
+  recent.unshift(trimmed);
+  try {
+    localStorage.setItem(RECENT_KEY, JSON.stringify(recent.slice(0, MAX_RECENT)));
+  } catch { /* ignore */ }
+}
+
+function clearRecentSearches() {
+  try { localStorage.removeItem(RECENT_KEY); } catch { /* ignore */ }
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -90,7 +142,13 @@ export function GlobalSearch() {
   const [isOpen, setIsOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [focusedIndex, setFocusedIndex] = useState(-1);
+  const [recentSearches, setRecentSearches] = useState<string[]>([]);
   const debounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Load recent searches on mount
+  useEffect(() => {
+    setRecentSearches(getRecentSearches());
+  }, []);
 
   // Flat list of all navigable items for keyboard traversal
   const allItems = [
@@ -164,6 +222,28 @@ export function GlobalSearch() {
       return;
     }
 
+    if (e.key === "Enter") {
+      // Check for JIRA URL or bare key — navigate directly
+      const jiraKey = extractJiraKeyFromInput(query);
+      if (jiraKey) {
+        e.preventDefault();
+        addRecentSearch(jiraKey);
+        setRecentSearches(getRecentSearches());
+        setIsOpen(false);
+        setQuery("");
+        setResults(null);
+        router.push(`/issue/${jiraKey}`);
+        return;
+      }
+
+      // Navigate to focused search result
+      if (focusedIndex >= 0 && allItems[focusedIndex]) {
+        e.preventDefault();
+        navigateTo(allItems[focusedIndex]);
+        return;
+      }
+    }
+
     if (!isOpen || allItems.length === 0) return;
 
     if (e.key === "ArrowDown") {
@@ -172,15 +252,14 @@ export function GlobalSearch() {
     } else if (e.key === "ArrowUp") {
       e.preventDefault();
       setFocusedIndex((i) => Math.max(i - 1, 0));
-    } else if (e.key === "Enter" && focusedIndex >= 0) {
-      e.preventDefault();
-      const focused = allItems[focusedIndex];
-      if (!focused) return;
-      navigateTo(focused);
     }
   }
 
   function navigateTo(entry: { type: "member" | "issue"; item: MemberResult | IssueResult }) {
+    if (query.trim()) {
+      addRecentSearch(query.trim());
+      setRecentSearches(getRecentSearches());
+    }
     setIsOpen(false);
     setQuery("");
     setResults(null);
@@ -193,7 +272,8 @@ export function GlobalSearch() {
   }
 
   const hasResults = results && (results.members.length > 0 || results.issues.length > 0);
-  const showEmpty = results && !hasResults && query.length >= 2 && !isLoading;
+  const detectedKey = query.length >= 2 ? extractJiraKeyFromInput(query) : null;
+  const showEmpty = results && !hasResults && query.length >= 2 && !isLoading && !detectedKey;
 
   return (
     <div ref={containerRef} className="relative hidden md:block">
@@ -250,14 +330,77 @@ export function GlobalSearch() {
             "overflow-hidden",
           )}
         >
-          {/* Prompt state — no query or too short */}
-          {query.length < 2 && !isLoading && (
+          {/* Recent searches — shown when no query */}
+          {query.length < 2 && !isLoading && recentSearches.length > 0 && (
+            <div>
+              <div className="flex items-center justify-between px-4 pt-3 pb-1.5">
+                <p className="text-[10px] font-bold font-mono uppercase tracking-widest text-muted-foreground">
+                  Recent
+                </p>
+                <button
+                  onClick={() => { clearRecentSearches(); setRecentSearches([]); }}
+                  className="text-[10px] font-mono text-muted-foreground/50 hover:text-muted-foreground transition-colors"
+                >
+                  Clear
+                </button>
+              </div>
+              <ul>
+                {recentSearches.map((term) => (
+                  <li key={term}>
+                    <button
+                      onClick={() => {
+                        setQuery(term);
+                        search(term);
+                      }}
+                      className="w-full flex items-center gap-3 px-4 py-2 text-left hover:bg-accent/50 transition-colors"
+                    >
+                      <Clock className="h-3.5 w-3.5 text-muted-foreground/40 shrink-0" />
+                      <span className="text-sm text-foreground truncate">{term}</span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {/* Prompt state — no query and no recent searches */}
+          {query.length < 2 && !isLoading && recentSearches.length === 0 && (
             <div className="px-4 py-8 text-center">
               <Search className="h-6 w-6 text-muted-foreground/40 mx-auto mb-2" />
               <p className="text-sm text-muted-foreground">
                 Type to search members and issues
               </p>
             </div>
+          )}
+
+          {/* JIRA key detected — direct navigation hint */}
+          {detectedKey && (
+            <button
+              onClick={() => {
+                addRecentSearch(detectedKey);
+                setRecentSearches(getRecentSearches());
+                setIsOpen(false);
+                setQuery("");
+                setResults(null);
+                router.push(`/issue/${detectedKey}`);
+              }}
+              className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-accent/50 transition-colors"
+            >
+              <span className="h-7 w-7 rounded-full bg-primary/10 flex items-center justify-center shrink-0">
+                <Search className="h-3.5 w-3.5 text-primary" />
+              </span>
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-medium text-foreground">
+                  Open <span className="font-bold font-mono text-primary">{detectedKey}</span>
+                </p>
+                <p className="text-[10px] text-muted-foreground font-mono">
+                  Press Enter or click to navigate
+                </p>
+              </div>
+              <kbd className="text-[10px] font-mono text-muted-foreground bg-muted px-1.5 py-0.5 rounded">
+                Enter
+              </kbd>
+            </button>
           )}
 
           {/* Loading skeleton */}
@@ -366,14 +509,15 @@ export function GlobalSearch() {
                             : "hover:bg-accent/50",
                         )}
                       >
-                        {/* Board-colored key */}
+                        {/* Issue type icon + board-colored key */}
                         <span
-                          className="text-[11px] font-bold font-mono uppercase tracking-wide shrink-0 px-1.5 py-0.5 rounded"
+                          className="inline-flex items-center gap-1 text-[11px] font-bold font-mono uppercase tracking-wide shrink-0 px-1.5 py-0.5 rounded"
                           style={{
                             color: issue.boardColor,
                             backgroundColor: `${issue.boardColor}18`,
                           }}
                         >
+                          <IssueTypeIcon type={issue.type} size={12} />
                           {issue.jiraKey}
                         </span>
 
