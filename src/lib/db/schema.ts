@@ -54,6 +54,8 @@ export const issues = mysqlTable("issues", {
   storyPoints: float("storyPoints"),
   labels: text("labels"),
   requestPriority: varchar("requestPriority", { length: 10 }),
+  website: varchar("website", { length: 255 }),
+  brands: text("brands"),
   jiraCreatedAt: varchar("jiraCreatedAt", { length: 50 }),
   jiraUpdatedAt: varchar("jiraUpdatedAt", { length: 50 }),
   createdAt: timestamp("createdAt").defaultNow(),
@@ -81,6 +83,7 @@ export const dashboardConfig = mysqlTable("dashboard_config", {
   overdueNotifications: boolean("overdueNotifications").default(true),
   taskAgingAlerts: boolean("taskAgingAlerts").default(true),
   taskAgingDays: int("taskAgingDays").default(3),
+  deploymentNotifications: boolean("deploymentNotifications").default(true),
   theme: mysqlEnum("theme", ["light", "dark", "system"]).default("system"),
   createdAt: timestamp("createdAt").defaultNow(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow(),
@@ -88,7 +91,7 @@ export const dashboardConfig = mysqlTable("dashboard_config", {
 
 export const notifications = mysqlTable("notifications", {
   id: varchar("id", { length: 191 }).primaryKey(),
-  type: mysqlEnum("type", ["aging", "overdue", "capacity", "completed", "unblocked"]).notNull(),
+  type: mysqlEnum("type", ["aging", "overdue", "capacity", "completed", "unblocked", "deployed"]).notNull(),
   title: varchar("title", { length: 255 }).notNull(),
   message: text("message").notNull(),
   relatedIssueId: varchar("relatedIssueId", { length: 191 }).references(() => issues.id),
@@ -96,6 +99,52 @@ export const notifications = mysqlTable("notifications", {
   isRead: boolean("isRead").default(false),
   createdAt: timestamp("createdAt").defaultNow(),
 });
+
+// --- GitHub Deployment Tracking ---
+
+export const githubRepos = mysqlTable("github_repos", {
+  id: varchar("id", { length: 191 }).primaryKey(),
+  owner: varchar("owner", { length: 191 }).notNull(),
+  name: varchar("name", { length: 191 }).notNull(),
+  fullName: varchar("fullName", { length: 255 }).unique().notNull(),
+  webhookActive: boolean("webhookActive").default(false),
+  lastBackfillAt: timestamp("lastBackfillAt"),
+  createdAt: timestamp("createdAt").defaultNow(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow(),
+});
+
+export const githubBranchMappings = mysqlTable("github_branch_mappings", {
+  id: varchar("id", { length: 191 }).primaryKey(),
+  repoId: varchar("repoId", { length: 191 }).references(() => githubRepos.id).notNull(),
+  branchPattern: varchar("branchPattern", { length: 255 }).notNull(),
+  environment: mysqlEnum("environment", ["staging", "production", "canonical"]).notNull(),
+  siteName: varchar("siteName", { length: 191 }),
+  siteLabel: varchar("siteLabel", { length: 255 }),
+  isAllSites: boolean("isAllSites").default(false),
+  createdAt: timestamp("createdAt").defaultNow(),
+});
+
+export const deployments = mysqlTable("deployments", {
+  id: varchar("id", { length: 191 }).primaryKey(),
+  issueId: varchar("issueId", { length: 191 }).references(() => issues.id),
+  jiraKey: varchar("jiraKey", { length: 50 }).notNull(),
+  repoId: varchar("repoId", { length: 191 }).references(() => githubRepos.id).notNull(),
+  environment: mysqlEnum("environment", ["staging", "production", "canonical"]).notNull(),
+  siteName: varchar("siteName", { length: 191 }),
+  siteLabel: varchar("siteLabel", { length: 255 }),
+  branch: varchar("branch", { length: 255 }).notNull(),
+  prNumber: int("prNumber"),
+  prTitle: varchar("prTitle", { length: 500 }),
+  prUrl: varchar("prUrl", { length: 500 }),
+  commitSha: varchar("commitSha", { length: 50 }),
+  deployedBy: varchar("deployedBy", { length: 255 }),
+  githubDeploymentId: varchar("githubDeploymentId", { length: 50 }),
+  isHotfix: boolean("isHotfix").default(false),
+  deployedAt: timestamp("deployedAt").notNull(),
+  createdAt: timestamp("createdAt").defaultNow(),
+});
+
+// --- Workload Tracking ---
 
 export const workloadSnapshots = mysqlTable("workload_snapshots", {
   id: varchar("id", { length: 191 }).primaryKey(),
