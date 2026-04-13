@@ -725,6 +725,57 @@ GITHUB_WEBHOOK_SECRET=...      # Shared secret for webhook verification
 
 ---
 
+### Phase 10.7: Cloudflare R2 Avatar Caching
+**Duration:** 2-3 days | **Complexity:** Medium
+
+Cache team member avatars in Cloudflare R2 object storage instead of loading from external sources (Gravatar, Google) which rate-limit under concurrent requests.
+
+**Problem:** Google `lh3.googleusercontent.com` returns 429 when ~14+ avatars load simultaneously on Overview. Even Gravatar adds external latency.
+
+**Solution:** During team sync, download avatars from source (JIRA/Google), upload to R2, serve from `cdn.haider-team.appz.cc`. Two sizes per member for thumbnail + full-size viewing.
+
+**R2 Bucket:** `teamflow-avatars`
+**Custom domain:** `cdn.haider-team.appz.cc` (appz.cc already on Cloudflare)
+
+**Storage architecture:**
+```
+avatars/{memberId}/sm.jpg    → 96x96 (dev cards, tables, search, notifications)
+avatars/{memberId}/lg.jpg    → 256x256 (profile header, click-to-enlarge)
+```
+
+**Change detection:** Store `sourceAvatarUrl` (original JIRA/Google URL) + `avatarHash` (MD5) on `team_members`. On each sync: compare source URL → if changed, re-download + re-upload. URL derives sizes from source (Gravatar `?s=96`/`?s=256`, Google `=s96`/`=s256`).
+
+**Database changes:**
+- Add `sourceAvatarUrl TEXT` and `avatarHash VARCHAR(64)` to `team_members`
+
+**Files to create:**
+- `src/lib/r2/client.ts` — S3-compatible R2 client (`@aws-sdk/client-s3`), upload/delete
+- `src/lib/r2/avatars.ts` — Download from source at 2 sizes, upload to R2, hash comparison
+- `scripts/cache-avatars.ts` — One-time migration for existing external avatar URLs
+
+**Files to modify:**
+- `src/lib/db/schema.ts` — Add 2 columns to `team_members`
+- `src/lib/sync/team-sync.ts` — After member sync, if R2 configured: cache avatars to R2
+- `package.json` — Add `@aws-sdk/client-s3`, add `cache-avatars` script
+
+**Environment variables:**
+```
+CLOUDFLARE_R2_ACCOUNT_ID=...
+CLOUDFLARE_R2_ACCESS_KEY_ID=...
+CLOUDFLARE_R2_SECRET_ACCESS_KEY=...
+CLOUDFLARE_R2_BUCKET_NAME=teamflow-avatars
+CLOUDFLARE_R2_PUBLIC_URL=https://cdn.haider-team.appz.cc
+```
+
+**Fallback:** If R2 not configured, existing behavior preserved (external URLs). If upload fails, keep current avatarUrl. Departed members skipped.
+
+**No UI changes needed** — all components use `<img src={avatarUrl}>`, URL just changes from Gravatar to R2.
+
+**Deliverable:** All team member avatars served from `cdn.haider-team.appz.cc` with zero external image requests
+**Verify:** Run `yarn cache-avatars` → avatars visible at `cdn.haider-team.appz.cc/avatars/{id}/sm.jpg`. Refresh app → avatars load from CDN. Change avatar in JIRA → run sync → R2 updates.
+
+---
+
 ### Phase 11: Polish + Deploy
 **Duration:** 3-4 days | **Complexity:** Large
 
