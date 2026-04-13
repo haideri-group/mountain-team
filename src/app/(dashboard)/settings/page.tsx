@@ -6,6 +6,7 @@ import { redirect } from "next/navigation";
 import { BoardsManager } from "@/components/settings/boards-manager";
 import { TeamSyncManager } from "@/components/settings/team-sync-manager";
 import { IssueSyncManager } from "@/components/settings/issue-sync-manager";
+import { GitHubReposManager } from "@/components/settings/github-repos-manager";
 
 export default async function SettingsPage() {
   const session = await auth();
@@ -76,6 +77,11 @@ export default async function SettingsPage() {
                 : null
             }
           />
+        </section>
+
+        {/* GitHub Deployment Tracking */}
+        <section>
+          <GitHubReposManager />
         </section>
 
         {/* Projects / Boards Management */}

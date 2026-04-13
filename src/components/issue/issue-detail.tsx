@@ -35,9 +35,11 @@ export function IssueDetail({ issueKey }: IssueDetailProps) {
   const [phase1, setPhase1] = useState<Phase1Data | null>(null);
   const [phase2, setPhase2] = useState<Phase2Data | null>(null);
   const [github, setGithub] = useState<GitHubData | null>(null);
+  const [deploymentData, setDeploymentData] = useState<any>(null);
   const [phase1Loading, setPhase1Loading] = useState(true);
   const [phase2Loading, setPhase2Loading] = useState(true);
   const [githubLoading, setGithubLoading] = useState(true);
+  const [deploymentLoading, setDeploymentLoading] = useState(true);
   const [phase1Error, setPhase1Error] = useState<string | null>(null);
 
   // Phase 1: DB data — instant
@@ -104,6 +106,28 @@ export function IssueDetail({ issueKey }: IssueDetailProps) {
         // GitHub failure is non-fatal
       } finally {
         if (!cancelled) setGithubLoading(false);
+      }
+    };
+
+    void load();
+    return () => { cancelled = true; };
+  }, [issueKey]);
+
+  // Phase 4: Deployment tracking data — background
+  useEffect(() => {
+    let cancelled = false;
+
+    const load = async () => {
+      setDeploymentLoading(true);
+      try {
+        const res = await fetch(`/api/issues/${issueKey}/deployments`);
+        if (!res.ok) return;
+        const data = await res.json();
+        if (!cancelled) setDeploymentData(data);
+      } catch {
+        // Deployment data failure is non-fatal
+      } finally {
+        if (!cancelled) setDeploymentLoading(false);
       }
     };
 
@@ -498,6 +522,8 @@ export function IssueDetail({ issueKey }: IssueDetailProps) {
           phase2Loading={phase2Loading}
           github={github}
           githubLoading={githubLoading}
+          deploymentData={deploymentData}
+          deploymentLoading={deploymentLoading}
           jiraBaseUrl={jiraBaseUrl}
           issueKey={issueKey}
         />

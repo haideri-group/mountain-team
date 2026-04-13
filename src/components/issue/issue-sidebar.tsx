@@ -21,6 +21,7 @@ import {
   formatDateFull,
   formatFileSize,
 } from "./issue-helpers";
+import { DeploymentPipeline } from "./deployment-pipeline";
 
 // ─── Mini Cycle Time Bar Chart ────────────────────────────────────────────────
 
@@ -55,6 +56,8 @@ interface IssueSidebarProps {
   phase2Loading: boolean;
   github: GitHubData | null;
   githubLoading: boolean;
+  deploymentData: any;
+  deploymentLoading: boolean;
   jiraBaseUrl: string;
   issueKey: string;
 }
@@ -67,6 +70,8 @@ export function IssueSidebar({
   phase2Loading,
   github,
   githubLoading,
+  deploymentData,
+  deploymentLoading,
   jiraBaseUrl,
   issueKey,
 }: IssueSidebarProps) {
@@ -529,6 +534,17 @@ export function IssueSidebar({
               )}
             </div>
           )}
+        </div>
+      )}
+
+      {/* Deployment Pipeline Section */}
+      {(deploymentLoading || deploymentData) && (
+        <div className="bg-card rounded-xl p-6 shadow-sm">
+          <DeploymentPipeline
+            pipeline={deploymentData?.pipeline ?? []}
+            isHotfix={deploymentData?.isHotfix ?? false}
+            loading={deploymentLoading}
+          />
         </div>
       )}
 
