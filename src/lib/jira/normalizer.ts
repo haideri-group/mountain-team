@@ -132,6 +132,8 @@ export interface NormalizedIssue {
   storyPoints: number | null;
   labels: string;
   requestPriority: string | null;
+  website: string | null;
+  brands: string | null;
   jiraCreatedAt: string | null;
   jiraUpdatedAt: string | null;
 }
@@ -198,7 +200,21 @@ export function normalizeIssue(
     storyPoints,
     labels: JSON.stringify(raw.fields.labels || []),
     requestPriority: (raw.fields.customfield_10795 as { value?: string } | null)?.value || null,
+    website: extractFieldValue(raw.fields.customfield_10734),
+    brands: extractFieldValue(raw.fields.customfield_10805),
     jiraCreatedAt: raw.fields.created || null,
     jiraUpdatedAt: raw.fields.updated || null,
   };
+}
+
+function extractFieldValue(field: unknown): string | null {
+  if (!field) return null;
+  if (typeof field === "string") return field;
+  if (Array.isArray(field)) {
+    return field.map((v: { value?: string; name?: string }) => v.value || v.name || String(v)).join(", ");
+  }
+  if (typeof field === "object" && field !== null && "value" in field) {
+    return (field as { value: string }).value;
+  }
+  return null;
 }

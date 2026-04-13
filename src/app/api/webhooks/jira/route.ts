@@ -156,6 +156,8 @@ export async function POST(request: Request) {
         cycleTime,
         storyPoints: normalized.storyPoints,
         labels: normalized.labels,
+        website: normalized.website,
+        brands: normalized.brands,
         jiraCreatedAt: normalized.jiraCreatedAt,
         jiraUpdatedAt: normalized.jiraUpdatedAt,
       })

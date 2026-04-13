@@ -86,11 +86,19 @@ async function isDuplicate(
 
 // --- Record Deployment ---
 
+export interface DeploymentResult {
+  recorded: number;
+  skipped: number;
+  environment: string | null;
+  siteName: string | null;
+  siteLabel: string | null;
+}
+
 export async function recordDeployment(
   input: DeploymentInput,
-): Promise<{ recorded: number; skipped: number }> {
+): Promise<DeploymentResult> {
   const resolved = await resolveBranchEnvironment(input.repoId, input.branch);
-  if (!resolved) return { recorded: 0, skipped: 0 };
+  if (!resolved) return { recorded: 0, skipped: 0, environment: null, siteName: null, siteLabel: null };
 
   const hotfix = isHotfixBranch(input.branch);
 
@@ -158,7 +166,7 @@ export async function recordDeployment(
       input.repoId,
       input.commitSha ?? null,
     );
-    if (dup) return { recorded: 0, skipped: 1 };
+    if (dup) return { recorded: 0, skipped: 1, environment: resolved.environment, siteName: resolved.siteName, siteLabel: resolved.siteLabel };
 
     const id = `deploy_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
     await db.insert(deployments).values({
@@ -182,7 +190,7 @@ export async function recordDeployment(
     recorded = 1;
   }
 
-  return { recorded, skipped };
+  return { recorded, skipped, environment: resolved.environment, siteName: resolved.siteName, siteLabel: resolved.siteLabel };
 }
 
 // --- Get Deployments for Issue ---

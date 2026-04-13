@@ -220,6 +220,8 @@ async function syncIssues(type: IssueSyncType, filterBoardKey?: string): Promise
           storyPoints: normalized.storyPoints,
           labels: normalized.labels,
           requestPriority: normalized.requestPriority,
+          website: normalized.website,
+          brands: normalized.brands,
           jiraCreatedAt: normalized.jiraCreatedAt,
           jiraUpdatedAt: normalized.jiraUpdatedAt,
         })

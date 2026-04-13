@@ -1,6 +1,11 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/auth";
-import { backfillDeployments } from "@/lib/github/backfill";
+import { backfillDeployments, getBackfillProgress } from "@/lib/github/backfill";
+
+// GET /api/github/repos/:id/backfill — Poll backfill progress
+export async function GET() {
+  return NextResponse.json({ progress: getBackfillProgress() });
+}
 
 // POST /api/github/repos/:id/backfill — Backfill deployment history
 export async function POST(

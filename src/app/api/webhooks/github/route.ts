@@ -5,6 +5,7 @@ import { eq } from "drizzle-orm";
 import { verifyWebhookSignature } from "@/lib/github/client";
 import { extractJiraKeys, extractKeysFromPR } from "@/lib/github/jira-keys";
 import { recordDeployment } from "@/lib/github/deployments";
+import { generateDeploymentNotification } from "@/lib/notifications/generator";
 
 // POST /api/webhooks/github — Receives GitHub webhook events
 export async function POST(request: Request) {
@@ -108,6 +109,13 @@ async function handleDeploymentStatus(
     });
     totalRecorded += result.recorded;
     totalSkipped += result.skipped;
+
+    // Generate deployment notification
+    if (result.recorded > 0 && result.environment) {
+      try {
+        await generateDeploymentNotification(jiraKey, result.environment, result.siteName, result.siteLabel, deployedBy);
+      } catch { /* non-fatal */ }
+    }
   }
 
   return NextResponse.json({
@@ -187,6 +195,13 @@ async function handlePullRequest(
     });
     totalRecorded += result.recorded;
     totalSkipped += result.skipped;
+
+    // Generate deployment notification
+    if (result.recorded > 0 && result.environment) {
+      try {
+        await generateDeploymentNotification(jiraKey, result.environment, result.siteName, result.siteLabel, mergedBy);
+      } catch { /* non-fatal */ }
+    }
   }
 
   return NextResponse.json({
