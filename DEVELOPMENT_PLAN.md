@@ -652,13 +652,34 @@ issue_deployments (
 
 **Architecture:**
 
-1. **Settings UI: GitHub Repos Manager**
-   - Add/remove tracked GitHub repos (owner/repo)
-   - Branch → environment mappings auto-populated from known config, editable by admin
-   - Test connection button (validates GitHub token access to repo)
-   - GitHub webhook setup instructions + auto-generate webhook URL
+1. **Settings UI: Add GitHub Repo (SlideOver panel)**
+   - **Manual entry:** Input field for `owner/repo` (or paste full GitHub URL — extract owner/repo)
+   - **"Detect Branches" button:** Fetches all branches from GitHub API (`GET /repos/{owner}/{repo}/branches`), displays as a list
+   - **Branch mapping table:** For each detected branch, user assigns:
+     - Environment: dropdown (Staging / Production / Canonical / Skip)
+     - Site Name: text input (e.g., `tilemtn`)
+     - Site Label: text input (e.g., `Tile Mountain`)
+     - Default all to "Skip" — user explicitly opts in per branch
+   - **Preset quick-fill buttons:** "Frontend (tile-mountain-sdk)" and "Backend (tilemountain2)" auto-populate known branch mappings. User can still edit/add/remove rows after applying preset.
+   - **"Is All Sites" checkbox:** For branches like `stage` that deploy to all staging sites
+   - **Save:** Creates repo + all branch mappings in one transaction
+   - Validation: verify repo exists on GitHub before saving
 
-2. **GitHub Webhook Endpoint** (`/api/webhooks/github`)
+2. **Settings UI: GitHub Repos Manager (main view)**
+   - Card per tracked repo showing: owner/repo, webhook status badge, branch mapping count, last backfill date
+   - Expand card to see branch mappings grouped by staging/production/canonical
+   - Actions per repo: Edit mappings, Backfill (with progress), Delete
+   - "Add Repo" button opens the SlideOver panel
+
+3. **Backfill with Live Progress**
+   - Backfill runs as a background process with in-memory progress state (same pattern as `src/lib/sync/issue-sync.ts`)
+   - Progress phases: `idle` → `fetching_prs` → `processing` → `done` / `failed`
+   - Progress data: `{ phase, message, prsFetched, prsProcessed, prsTotal, deploymentsCreated }`
+   - UI polls `GET /api/github/repos/{id}/backfill?progress=1` every 1 second during backfill
+   - Shows progress bar with "Processing PR 24 of 87..." message
+   - Result summary: "Backfill complete: 142 deployments recorded from 87 PRs"
+
+4. **GitHub Webhook Endpoint** (`/api/webhooks/github`)
    - Listen for `deployment_status` events (the CI already creates these via `chrnorm/deployment-action`)
      - Extract commit SHA → find JIRA keys in commit messages and associated PR titles/branches
      - Record deployment status (success/failure) per client per environment
@@ -667,18 +688,12 @@ issue_deployments (
      - Record which deployment branch the PR was merged to
    - Protected by `GITHUB_WEBHOOK_SECRET` (HMAC-SHA256 verification)
 
-3. **GitHub Deployments API Sync** (backfill + periodic check)
-   - `GET /repos/{owner}/{repo}/deployments?environment={env}`
-   - Cross-reference deployment SHAs with JIRA keys from commit messages
-   - Handles cases where webhooks were missed (initial setup, downtime)
-   - Triggered manually from Settings or on issue detail page load
-
-4. **JIRA Dev-Status Enrichment** (enhancement to existing issue detail)
+5. **JIRA Dev-Status Enrichment** (enhancement to existing issue detail)
    - When loading an issue, fetch dev-status from JIRA (already done)
    - Parse PR merge targets and cross-reference with branch-env config
    - Merge with `issue_deployments` data for a complete picture
 
-5. **Deployment Status on Issue Detail Page**
+6. **Deployment Status on Issue Detail Page**
    - New "Deployments" section in issue sidebar
    - Visual pipeline: Feature Branch → Staging → Production → Main
    - Per-site status: "TM Staged ✓", "BM Live ✓", "WF Pending", "BM Deploy Failed ✗"
@@ -686,11 +701,11 @@ issue_deployments (
    - Color coding: green (deployed), amber (staging only), red (failed), gray (not deployed)
    - Shows `skip:` labels if a site was explicitly excluded from staging deploy
 
-6. **Deployment Status on Developer Cards / Task Lists**
+7. **Deployment Status on Developer Cards / Task Lists**
    - Small deployment indicators on tasks: icons or dots showing stage/live status
    - Filter tasks by deployment status (e.g., "show only tasks not yet on live")
 
-7. **Deployment Overview / Reports**
+8. **Deployment Overview / Reports**
    - Which tasks are on staging but not yet live (release candidates)
    - Time from merge-to-staging to merge-to-live (deployment velocity)
    - Tasks merged to main (sync complete)
@@ -702,26 +717,31 @@ GITHUB_TOKEN=ghp_...           # GitHub PAT with repo read access
 GITHUB_WEBHOOK_SECRET=...      # Shared secret for webhook verification
 ```
 
-**Files to create:**
-- `src/lib/github/client.ts` — GitHub API client (repos, branches, PRs, commits)
-- `src/lib/github/deployment-tracker.ts` — Parse JIRA keys, match branches, update DB
-- `src/app/api/webhooks/github/route.ts` — GitHub webhook endpoint
-- `src/app/api/github/repos/route.ts` — CRUD for tracked repos
-- `src/app/api/github/repos/[id]/route.ts` — Repo detail + branch config
-- `src/app/api/issues/[key]/deployments/route.ts` — Deployment status per issue
-- `src/components/settings/github-repos-manager.tsx` — Settings UI for repos
-- `src/components/issue/deployment-status.tsx` — Issue detail deployment pipeline
-- DB migration: `github_repos`, `github_branch_envs`, `issue_deployments` tables
+**Implementation status:**
 
-**Files to modify:**
-- `src/lib/db/schema.ts` — Add 3 new tables
-- `src/components/issue/issue-sidebar.tsx` — Add Deployments section
-- `src/components/overview/dev-card.tsx` — Add deployment indicators
-- `src/app/(dashboard)/settings/page.tsx` — Add GitHub Repos Manager
-- `src/types/index.ts` — Add deployment types
+| Component | Status | Notes |
+|-----------|--------|-------|
+| DB tables (github_repos, github_branch_mappings, deployments) | ✅ Done | 3 tables + website/brands columns on issues |
+| GitHub API client (`src/lib/github/client.ts`) | ✅ Done | Auth, fetch, HMAC verification |
+| JIRA key extraction (`src/lib/github/jira-keys.ts`) | ✅ Done | PR title + branch + commit fallback |
+| Branch resolver (`src/lib/github/branch-resolver.ts`) | ✅ Done | DB-driven, no hardcoding |
+| Deployment recording (`src/lib/github/deployments.ts`) | ✅ Done | Dedup, skip labels, pipeline builder |
+| GitHub webhook handler (`/api/webhooks/github`) | ✅ Done | deployment_status + pull_request events |
+| Issue deployments API (`/api/issues/:key/deployments`) | ✅ Done | Pipeline data per issue |
+| GitHub repos CRUD API | ✅ Done | GET/POST/PATCH/DELETE |
+| Deployment pipeline component (issue sidebar) | ✅ Done | Visual Staging → Production → Main |
+| Deployment indicator component (dev cards) | ✅ Done | Rocket/server icons |
+| Webhook diagnostic logging | ✅ Done | webhook_logs table + /api/webhooks/logs |
+| **Settings UI: Add Repo panel (proper form)** | ❌ Rebuild | Owner/repo input + Detect Branches + manual mapping table + presets as quick-fill |
+| **Settings UI: Repos Manager (edit/expand)** | ❌ Rebuild | Expandable cards, edit mappings, progress-aware backfill |
+| **Backfill with live progress** | ❌ Rebuild | In-memory progress state, poll every 1s, progress bar in UI |
+| **Wire website/brands into normalizer + issue sync** | ❌ Pending | Extract JIRA custom fields during sync |
+| **Wire deployment status into overview API** | ❌ Pending | Batch query deployments, add to dev card data |
+| **Deployment notifications** | ❌ Pending | "Deployed to production" scoped by Website field |
+| **Pending releases report** | ❌ Pending | Staging-but-not-live table |
 
 **Deliverable:** Per-task deployment visibility — know if any JIRA task is on staging, live, or main for each site
-**Verify:** Create a PR referencing a JIRA key, merge to stage-tilemtn → TeamFlow shows "TM Staged". Merge to main-tilemtn → shows "TM Live". Check issue detail page shows full deployment pipeline.
+**Verify:** Add a repo via Settings → Detect Branches → assign environments → Save. Click Backfill → watch progress bar. Visit issue detail → see deployment pipeline. Merge a PR to stage-tilemtn → TeamFlow shows "TM Staged" in real-time via webhook.
 
 ---
 
