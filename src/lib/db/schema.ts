@@ -21,6 +21,8 @@ export const team_members = mysqlTable("team_members", {
   departedDate: varchar("departedDate", { length: 50 }),
   capacity: int("capacity").default(15),
   avatarUrl: text("avatarUrl"),
+  sourceAvatarUrl: text("sourceAvatarUrl"),
+  avatarHash: varchar("avatarHash", { length: 64 }),
   color: varchar("color", { length: 50 }),
   teamId: varchar("teamId", { length: 191 }),
   teamName: varchar("teamName", { length: 255 }),

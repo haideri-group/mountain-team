@@ -282,6 +282,62 @@ export async function runTeamSync(googleAccessToken?: string): Promise<{
       }
     }
 
+    // Cache avatars to Cloudflare R2 (if configured)
+    try {
+      const { isR2Configured } = await import("@/lib/r2/client");
+      if (isR2Configured()) {
+        const { cacheAvatarsForTeam } = await import("@/lib/r2/avatars");
+
+        const activeMembers = await db
+          .select({
+            id: team_members.id,
+            avatarUrl: team_members.avatarUrl,
+            sourceAvatarUrl: team_members.sourceAvatarUrl,
+            avatarHash: team_members.avatarHash,
+            status: team_members.status,
+          })
+          .from(team_members);
+
+        const r2PublicUrl = (process.env.CLOUDFLARE_R2_PUBLIC_URL || "").replace(/\/$/, "");
+
+        // Find members that have an avatar URL that isn't already from R2
+        const toCache = activeMembers
+          .filter(
+            (m) =>
+              m.status !== "departed" &&
+              m.avatarUrl &&
+              !m.avatarUrl.startsWith(r2PublicUrl),
+          )
+          .map((m) => ({
+            id: m.id,
+            sourceUrl: m.avatarUrl!,
+            existingSourceUrl: m.sourceAvatarUrl,
+            existingHash: m.avatarHash,
+          }));
+
+        if (toCache.length > 0) {
+          console.log(`Caching ${toCache.length} avatars to R2...`);
+          const cached = await cacheAvatarsForTeam(toCache);
+
+          for (const [memberId, cacheResult] of cached) {
+            await db
+              .update(team_members)
+              .set({
+                avatarUrl: cacheResult.r2UrlSmall,
+                sourceAvatarUrl: cacheResult.sourceUrl,
+                avatarHash: cacheResult.hash,
+              })
+              .where(eq(team_members.id, memberId));
+          }
+          console.log(`Cached ${cached.size} avatars to R2`);
+        }
+      }
+    } catch (r2Error) {
+      result.errors.push(
+        `R2 avatar caching failed: ${r2Error instanceof Error ? r2Error.message : "Unknown error"}`,
+      );
+    }
+
     // Update log to completed
     await db
       .update(syncLogs)
