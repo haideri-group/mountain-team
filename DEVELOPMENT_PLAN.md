@@ -558,6 +558,139 @@ Team members are no longer manually managed. They are auto-synced from the Atlas
 
 ---
 
+### Phase 10.6: GitHub Deployment Tracking
+**Duration:** 5-7 days | **Complexity:** Extra Large
+
+Track which JIRA tasks are deployed to staging and production environments by monitoring GitHub branch merges. Uses JIRA dev-status API (already connected) as primary data source + GitHub webhooks for real-time updates.
+
+**Data sources (3 layers, most accurate → most real-time):**
+1. **GitHub Deployments API** — The CI/CD workflow (`build-and-deploy.yml`) already creates GitHub Deployment objects via `chrnorm/deployment-action@v2` with environment=`production`/`stage`, commit SHA, and success/failure status. This is the most accurate source — it confirms the code was actually built and deployed, not just merged.
+2. **JIRA dev-status API** (`/rest/dev-status/latest/issue/detail`) — returns branches, PRs (with merge targets), and commits per issue. Already connected via "GitHub for Jira" app. Gives us PR merge destinations (e.g., `PROD-5612` merged to `stage-tilemtn`, `main-tilemtn`).
+3. **GitHub Webhooks** — real-time `deployment_status` events when deployments succeed/fail + `pull_request` events when PRs are merged. Eliminates polling.
+
+**CI/CD Architecture (Vue Storefront Cloud):**
+- Matrix-based deployment: `.github/workflows/matrix/{branch}_deploy.json` defines which clients to deploy
+- `main-*` / `stage-*` branches extract client name from suffix (e.g., `main-tilemtn` → client `tilemtn`)
+- `stage` branch deploys ALL clients unless `skip:{client}` labels on the PR
+- Docker images built per client, deployed to Vue Storefront Cloud (GCP europe-west1)
+- Environment URLs: `https://{client}-{instance}.europe-west1.gcp.storefrontcloud.io`
+
+**JIRA key detection pattern:**
+Developers use varied branch naming: `fix/PROD-5123`, `PROD-5123`, `PROD-5123_v1`, `fix_PROD-5123_v2`, `prod-5123`. Regex: `/[A-Z]{2,}-\d+/gi` applied to branch names, PR titles, and commit messages.
+
+**Repository: `tilemountainuk/tile-mountain-sdk`**
+
+| Site | Live Branch | Staging Branch |
+|------|-------------|----------------|
+| tilemountain.co.uk | `main-tilemtn` | `stage-tilemtn` |
+| bathroommountain.co.uk | `main-bathmtn` | `stage-bathmtn` |
+| wallsandfloors.co.uk | `main-wallsandfloors` | `stage-wallsandfloors` |
+| tilemountain.ae | `main-tilemtnae` | `stage-tilemtnae` |
+| trade.wallsandfloors.co.uk | `main-waftrd` | `stage-waftrd` |
+| splendourtiles.co.uk | `main-splendourtiles` | `stage-splendourtiles` |
+| All staging (shared) | — | `stage` |
+| Sync/canonical | `main` | — |
+
+**Note:** Merging to `stage` deploys to all staging sites (unless excluded via config). Merging to `main` is the final sync after ~24h on live with no issues.
+
+**Database tables to create:**
+
+```sql
+-- Tracked GitHub repositories
+github_repos (
+  id, owner, repo, displayName, defaultBranch,
+  githubWebhookSecret, isActive, createdAt
+)
+
+-- Branch-to-environment mapping
+github_branch_envs (
+  id, repoId, branchPattern, environmentType (staging|production|canonical),
+  siteName, siteUrl, createdAt
+)
+
+-- Deployment status per issue per branch (populated from JIRA dev-status + GitHub webhooks)
+issue_deployments (
+  id, issueId, jiraKey, repoId, branchName,
+  environmentType, siteName, prNumber, prUrl,
+  mergedAt, mergedBy, commitSha, createdAt
+)
+```
+
+**Architecture:**
+
+1. **Settings UI: GitHub Repos Manager**
+   - Add/remove tracked GitHub repos (owner/repo)
+   - Branch → environment mappings auto-populated from known config, editable by admin
+   - Test connection button (validates GitHub token access to repo)
+   - GitHub webhook setup instructions + auto-generate webhook URL
+
+2. **GitHub Webhook Endpoint** (`/api/webhooks/github`)
+   - Listen for `deployment_status` events (the CI already creates these via `chrnorm/deployment-action`)
+     - Extract commit SHA → find JIRA keys in commit messages and associated PR titles/branches
+     - Record deployment status (success/failure) per client per environment
+   - Also listen for `pull_request` events (action: `closed` + `merged: true`)
+     - Extract JIRA keys from PR title, body, source branch name
+     - Record which deployment branch the PR was merged to
+   - Protected by `GITHUB_WEBHOOK_SECRET` (HMAC-SHA256 verification)
+
+3. **GitHub Deployments API Sync** (backfill + periodic check)
+   - `GET /repos/{owner}/{repo}/deployments?environment={env}`
+   - Cross-reference deployment SHAs with JIRA keys from commit messages
+   - Handles cases where webhooks were missed (initial setup, downtime)
+   - Triggered manually from Settings or on issue detail page load
+
+4. **JIRA Dev-Status Enrichment** (enhancement to existing issue detail)
+   - When loading an issue, fetch dev-status from JIRA (already done)
+   - Parse PR merge targets and cross-reference with branch-env config
+   - Merge with `issue_deployments` data for a complete picture
+
+5. **Deployment Status on Issue Detail Page**
+   - New "Deployments" section in issue sidebar
+   - Visual pipeline: Feature Branch → Staging → Production → Main
+   - Per-site status: "TM Staged ✓", "BM Live ✓", "WF Pending", "BM Deploy Failed ✗"
+   - Click to see PR details, deployment time, commit SHA, who merged
+   - Color coding: green (deployed), amber (staging only), red (failed), gray (not deployed)
+   - Shows `skip:` labels if a site was explicitly excluded from staging deploy
+
+6. **Deployment Status on Developer Cards / Task Lists**
+   - Small deployment indicators on tasks: icons or dots showing stage/live status
+   - Filter tasks by deployment status (e.g., "show only tasks not yet on live")
+
+7. **Deployment Overview / Reports**
+   - Which tasks are on staging but not yet live (release candidates)
+   - Time from merge-to-staging to merge-to-live (deployment velocity)
+   - Tasks merged to main (sync complete)
+   - Failed deployments requiring attention
+
+**Environment variables:**
+```
+GITHUB_TOKEN=ghp_...           # GitHub PAT with repo read access
+GITHUB_WEBHOOK_SECRET=...      # Shared secret for webhook verification
+```
+
+**Files to create:**
+- `src/lib/github/client.ts` — GitHub API client (repos, branches, PRs, commits)
+- `src/lib/github/deployment-tracker.ts` — Parse JIRA keys, match branches, update DB
+- `src/app/api/webhooks/github/route.ts` — GitHub webhook endpoint
+- `src/app/api/github/repos/route.ts` — CRUD for tracked repos
+- `src/app/api/github/repos/[id]/route.ts` — Repo detail + branch config
+- `src/app/api/issues/[key]/deployments/route.ts` — Deployment status per issue
+- `src/components/settings/github-repos-manager.tsx` — Settings UI for repos
+- `src/components/issue/deployment-status.tsx` — Issue detail deployment pipeline
+- DB migration: `github_repos`, `github_branch_envs`, `issue_deployments` tables
+
+**Files to modify:**
+- `src/lib/db/schema.ts` — Add 3 new tables
+- `src/components/issue/issue-sidebar.tsx` — Add Deployments section
+- `src/components/overview/dev-card.tsx` — Add deployment indicators
+- `src/app/(dashboard)/settings/page.tsx` — Add GitHub Repos Manager
+- `src/types/index.ts` — Add deployment types
+
+**Deliverable:** Per-task deployment visibility — know if any JIRA task is on staging, live, or main for each site
+**Verify:** Create a PR referencing a JIRA key, merge to stage-tilemtn → TeamFlow shows "TM Staged". Merge to main-tilemtn → shows "TM Live". Check issue detail page shows full deployment pipeline.
+
+---
+
 ### Phase 11: Polish + Deploy
 **Duration:** 3-4 days | **Complexity:** Large
 
@@ -603,6 +736,10 @@ Team members are no longer manually managed. They are auto-synced from the Atlas
 13. **NEVER delete team members or their data.** When a member is removed from the JIRA team, update status to `departed` — never delete the record. All historical task data, performance history, and assignments are preserved permanently for reporting and audit.
 14. **Team members are sync-managed.** No manual member creation/deletion. Members auto-imported from Atlassian Teams API. Admin (Syed Haider Hassan) excluded from sync — he's the dashboard admin, not a tracked team member.
 15. **Two member statuses only:** `active` (in JIRA team) and `departed` (removed from JIRA team). No manual status management.
+16. **Deployment tracking via GitHub.** Track which JIRA tasks are merged to staging/production branches. Primary data source: JIRA dev-status API (already connected). Secondary: GitHub webhooks for real-time updates. JIRA keys extracted from branch names, PR titles, and commit messages using pattern `/[A-Z]{2,}-\d+/gi`.
+17. **Branch naming convention for JIRA keys:** `fix/PROD-5123`, `PROD-5123`, `PROD-5123_v1`, `fix_PROD-5123_v2`, `prod-5123` — all valid patterns that link to JIRA issue PROD-5123.
+18. **Deployment pipeline:** Feature Branch → `stage`/`stage-*` (staging) → `main-*` (production per site) → `main` (canonical sync after ~24h).
+19. **`stage` branch deploys to all staging sites** unless excluded by config. `main` is the final sync branch merged ~24h after live with no issues.
 
 ---
 

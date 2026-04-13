@@ -196,6 +196,26 @@ This ensures all team member work is captured regardless of labels, plus any Fro
 - Normalizes and upserts single issue per event
 - Setup guide: `docs/JIRA_WEBHOOK_SETUP.md`
 
+## GitHub Deployment Tracking (Phase 10.6 — planned)
+
+Track which JIRA tasks are deployed to staging and production environments across multiple sites.
+
+**Primary repo:** `tilemountainuk/tile-mountain-sdk` (frontend monorepo powering all live sites)
+
+**Branch → environment mapping:**
+- Live: `main-tilemtn`, `main-bathmtn`, `main-wallsandfloors`, `main-tilemtnae`, `main-waftrd`, `main-splendourtiles`
+- Staging: `stage-tilemtn`, `stage-bathmtn`, `stage-wallsandfloors`, `stage-tilemtnae`, `stage-waftrd`, `stage-splendourtiles`
+- Shared staging: `stage` (deploys to all staging unless excluded)
+- Canonical: `main` (final sync ~24h after live with no issues)
+
+**Data sources:**
+- JIRA dev-status API (already connected, returns PR merge targets per issue)
+- GitHub webhooks (real-time — fires when PR merged to deployment branch)
+
+**JIRA key detection:** Regex `/[A-Z]{2,}-\d+/gi` on branch names, PR titles, commit messages. Developers use varied formats: `fix/PROD-5123`, `PROD-5123_v1`, `prod-5123`, etc.
+
+**Pipeline visualization:** Feature Branch → Staging → Production → Main
+
 ## API Routes
 
 All routes under `src/app/api/`. Auth required on every route.
@@ -237,6 +257,13 @@ GET    /api/cron/sync-teams              → Daily team sync (SYNC_SECRET auth)
 GET    /api/cron/sync-issues             → Daily issue sync (SYNC_SECRET auth)
 
 POST   /api/webhooks/jira               → JIRA webhook receiver
+POST   /api/webhooks/github             → GitHub webhook receiver (deployment tracking)
+
+GET    /api/github/repos                → List tracked GitHub repos (admin only)
+POST   /api/github/repos                → Add tracked repo (admin only)
+PATCH  /api/github/repos/:id            → Update repo config (admin only)
+DELETE /api/github/repos/:id            → Remove tracked repo (admin only)
+GET    /api/issues/:key/deployments     → Deployment status per issue
 
 GET    /api/jira/projects                → Browse JIRA projects (admin only)
 GET    /api/google/directory-search      → Google Workspace people search (admin only)
@@ -256,7 +283,8 @@ Copy `.env.example` to `.env.local`. Required for full functionality:
 - `JIRA_ORG_ID` — Atlassian organization ID
 - `JIRA_TEAM_IDS` — Comma-separated Atlassian team IDs to sync
 - `JIRA_CLOUD_ID` — Atlassian Cloud site ID
-- `GITHUB_TOKEN` — GitHub PAT (for future direct GitHub features)
+- `GITHUB_TOKEN` — GitHub PAT with repo read access (for deployment tracking)
+- `GITHUB_WEBHOOK_SECRET` — Shared secret for GitHub webhook verification
 - `SYNC_SECRET` — Secret for cron and webhook endpoint auth
 
 ## Public vs Protected Pages
