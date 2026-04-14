@@ -259,10 +259,11 @@ export async function runTeamSync(googleAccessToken?: string): Promise<{
           for (const [memberId, match] of matchMap) {
             const updates: Record<string, string | null> = {};
             if (match.email) updates.email = match.email;
-            // Prefer Google photos — they are real profile pictures from Google Workspace
-            // R2 caching eliminates the rate-limit concern (Google only hit during sync, not page loads)
+            // Store Google photo as sourceAvatarUrl — R2 caching step will
+            // download from this and set avatarUrl to the R2 path.
+            // NEVER set avatarUrl directly to a Google URL (causes rate-limiting).
             if (match.photoUrl) {
-              updates.avatarUrl = match.photoUrl;
+              updates.sourceAvatarUrl = match.photoUrl;
             }
 
             if (Object.keys(updates).length > 0) {
@@ -297,20 +298,25 @@ export async function runTeamSync(googleAccessToken?: string): Promise<{
           })
           .from(team_members);
 
-        // Find members that have an external avatar URL (not already an R2 path)
+        // Find members that need avatar caching:
+        // 1. avatarUrl is still an external URL (not yet cached to R2)
+        // 2. OR sourceAvatarUrl exists and differs from what was last cached (avatar changed at source)
         const toCache = activeMembers
-          .filter(
-            (m) =>
-              m.status !== "departed" &&
-              m.avatarUrl &&
-              m.avatarUrl.startsWith("http"),
-          )
+          .filter((m) => {
+            if (m.status === "departed") return false;
+            // Has an external URL as avatar (never cached)
+            if (m.avatarUrl && m.avatarUrl.startsWith("http")) return true;
+            // Source changed since last cache (Google/JIRA avatar updated)
+            if (m.sourceAvatarUrl && m.avatarHash === null) return true;
+            return false;
+          })
           .map((m) => ({
             id: m.id,
-            sourceUrl: m.avatarUrl!,
+            sourceUrl: m.sourceAvatarUrl || m.avatarUrl!,
             existingSourceUrl: m.sourceAvatarUrl,
             existingHash: m.avatarHash,
-          }));
+          }))
+          .filter((m) => m.sourceUrl && m.sourceUrl.startsWith("http"));
 
         if (toCache.length > 0) {
           console.log(`Caching ${toCache.length} avatars to R2...`);
