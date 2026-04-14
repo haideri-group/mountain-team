@@ -97,6 +97,7 @@ export function GitHubReposManager() {
             if (data.progress && (data.progress.phase === "done" || data.progress.phase === "failed")) {
               setBackfillRepoId(null);
               setBackfillProgress(null);
+              setActionLoading(null);
               if (data.progress.phase === "done") {
                 setBackfillResult(`Backfill complete: ${data.progress.deploymentsCreated} deployments from ${data.progress.prsScanned} PRs`);
               }
@@ -105,11 +106,13 @@ export function GitHubReposManager() {
             if (data.progress?.phase === "idle" && seenActive) {
               setBackfillRepoId(null);
               setBackfillProgress(null);
+              setActionLoading(null);
             }
             // Safety timeout: if still idle after 15 seconds, stop polling
             if (data.progress?.phase === "idle" && !seenActive && Date.now() - startedAt > 15000) {
               setBackfillRepoId(null);
               setBackfillProgress(null);
+              setActionLoading(null);
             }
           }
         } catch { /* ignore */ }
@@ -172,6 +175,7 @@ export function GitHubReposManager() {
         if (!res.ok) {
           setBackfillResult(`Error: ${data?.error || "Backfill failed"}`);
           setBackfillRepoId(null);
+          setActionLoading(null);
           return;
         }
 
@@ -179,8 +183,11 @@ export function GitHubReposManager() {
         if (data?.error || data?.success === false) {
           setBackfillResult(`Error: ${data.error || "Backfill returned an error"}`);
           setBackfillRepoId(null);
+          setActionLoading(null);
           return;
         }
+
+        // Success path — actionLoading stays set, cleared by polling when done
 
         // If there are partial errors, show them as warnings
         if (data?.errors?.length > 0) {
@@ -190,8 +197,6 @@ export function GitHubReposManager() {
       .catch(() => {
         setBackfillResult("Error: Failed to connect");
         setBackfillRepoId(null);
-      })
-      .finally(() => {
         setActionLoading(null);
       });
   };
