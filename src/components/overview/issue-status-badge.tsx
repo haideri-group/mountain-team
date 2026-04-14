@@ -3,6 +3,7 @@
 import { cn } from "@/lib/utils";
 
 const statusStyles: Record<string, string> = {
+  backlog: "bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400",
   todo: "bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400",
   on_hold: "bg-orange-50 text-orange-700 dark:bg-orange-950 dark:text-orange-400",
   in_progress: "bg-blue-50 text-blue-700 dark:bg-blue-950 dark:text-blue-400",
@@ -16,6 +17,7 @@ const statusStyles: Record<string, string> = {
 };
 
 const statusLabels: Record<string, string> = {
+  backlog: "Backlog",
   todo: "To Do",
   on_hold: "On Hold",
   in_progress: "In Progress",

@@ -5,28 +5,35 @@ import { eq } from "drizzle-orm";
 
 // --- App Enum Values ---
 
-type IssueStatus = "todo" | "on_hold" | "in_progress" | "in_review" | "ready_for_testing" | "ready_for_live" | "rolling_out" | "post_live_testing" | "done" | "closed";
+type IssueStatus = "backlog" | "todo" | "on_hold" | "in_progress" | "in_review" | "ready_for_testing" | "ready_for_live" | "rolling_out" | "post_live_testing" | "done" | "closed";
 type IssuePriority = "highest" | "high" | "medium" | "low" | "lowest";
 type IssueType = "bug" | "story" | "cms_change" | "enhancement" | "task" | "subtask";
 
 // --- Status Mapping (Code-level defaults, overridden by DB) ---
 
 const STATUS_MAP: Record<string, IssueStatus> = {
+  "backlog": "backlog",
+  "backlogs": "backlog",
+  "triage": "backlog",
+  "awaiting triage": "backlog",
+  "parking lot": "backlog",
+  "for future development": "backlog",
+  "open": "backlog",
+  "new": "backlog",
   "to do": "todo",
-  "backlog": "todo",
-  "open": "todo",
-  "new": "todo",
+  "todo": "todo",
+  "to-do": "todo",
   "selected for development": "todo",
   "reopened": "todo",
   "reopend": "todo",
   "re opened": "todo",
   "reopen": "todo",
   "on hold": "on_hold",
-  "triage": "on_hold",
-  "awaiting triage": "on_hold",
   "pending": "on_hold",
   "blocked": "on_hold",
   "merge conflict": "on_hold",
+  "waiting for requirements": "on_hold",
+  "requirements not clear": "on_hold",
   "in progress": "in_progress",
   "in development": "in_progress",
   "inprogress": "in_progress",
@@ -79,7 +86,7 @@ const STATUS_MAP: Record<string, IssueStatus> = {
 };
 
 const CATEGORY_FALLBACK: Record<string, IssueStatus> = {
-  new: "todo",
+  new: "backlog",
   indeterminate: "in_progress",
   done: "done",
 };

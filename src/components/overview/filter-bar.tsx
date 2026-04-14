@@ -52,6 +52,7 @@ const priorityOptions = [
 
 const statusOptions = [
   { value: "", label: "All Statuses" },
+  { value: "backlog", label: "Backlog" },
   { value: "todo", label: "To Do" },
   { value: "on_hold", label: "On Hold" },
   { value: "in_progress", label: "In Progress" },
