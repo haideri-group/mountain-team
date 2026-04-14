@@ -322,7 +322,7 @@ export async function fetchSingleIssue(
       ...extraFields,
     ].join(",");
 
-    const res = await fetch(
+    const res = await fetchWithRetry(
       `${baseUrl}/rest/api/3/issue/${jiraKey}?expand=renderedFields&fields=${fields}`,
       {
         headers: {
