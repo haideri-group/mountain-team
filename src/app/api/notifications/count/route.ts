@@ -57,12 +57,9 @@ export async function GET() {
       userMemberId = member?.id ?? null;
     }
 
-    // Filter aging + overdue to only user's own tasks
+    // All notifications scoped to user's own assigned tasks
     const filtered = unread.filter((n) => {
-      if (n.type === "aging" || n.type === "overdue") {
-        return userMemberId && n.relatedMemberId === userMemberId;
-      }
-      return true;
+      return userMemberId && n.relatedMemberId === userMemberId;
     });
 
     return NextResponse.json({ count: filtered.length });

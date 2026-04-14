@@ -54,13 +54,10 @@ export async function GET(request: NextRequest) {
       .orderBy(desc(notifications.createdAt))
       .limit(isAdmin ? limit : limit * 2); // fetch extra for non-admins since we filter below
 
-    // Non-admins: aging + overdue only for their own assigned tasks
+    // Non-admins: only see notifications for their own assigned tasks
     if (!isAdmin) {
       result = result.filter((n) => {
-        if (n.type === "aging" || n.type === "overdue") {
-          return userMemberId && n.relatedMemberId === userMemberId;
-        }
-        return true;
+        return userMemberId && n.relatedMemberId === userMemberId;
       }).slice(0, limit);
     }
 
