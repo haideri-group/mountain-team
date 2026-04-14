@@ -88,16 +88,16 @@ function NotificationIcon({ type, isRead }: { type: NotificationType; isRead: bo
 
 // ─── Tab config ──────────────────────────────────────────────────────────────
 
-const TABS: { key: TabKey; label: string }[] = [
+const ALL_TABS: { key: TabKey; label: string; adminOnly?: boolean }[] = [
   { key: "all", label: "All" },
   { key: "aging", label: "Aging" },
   { key: "overdue", label: "Overdue" },
-  { key: "capacity", label: "Capacity" },
+  { key: "capacity", label: "Capacity", adminOnly: true },
 ];
 
 // ─── Main Component ───────────────────────────────────────────────────────────
 
-export function NotificationsDropdown() {
+export function NotificationsDropdown({ isAdmin = false }: { isAdmin?: boolean }) {
   const router = useRouter();
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -275,7 +275,7 @@ export function NotificationsDropdown() {
 
           {/* Tabs */}
           <div className="flex items-center gap-1 px-4 pb-3 shrink-0">
-            {TABS.map((tab) => (
+            {ALL_TABS.filter((tab) => !tab.adminOnly || isAdmin).map((tab) => (
               <button
                 key={tab.key}
                 onClick={() => setActiveTab(tab.key)}

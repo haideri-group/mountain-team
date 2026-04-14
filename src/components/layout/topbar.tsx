@@ -59,7 +59,7 @@ export function Topbar({
         <ThemeToggle />
         {isLoggedIn ? (
           <>
-            <NotificationsDropdown />
+            <NotificationsDropdown isAdmin={userRole === "admin"} />
             <div
               className="w-px h-5 bg-foreground/10 mx-1"
               aria-hidden="true"

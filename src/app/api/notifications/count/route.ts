@@ -42,6 +42,7 @@ export async function GET() {
           eq(notifications.isRead, false),
           gte(notifications.createdAt, thirtyDaysAgo),
           ne(notifications.type, "user_joined"),
+          ne(notifications.type, "capacity"),
         ),
       );
 

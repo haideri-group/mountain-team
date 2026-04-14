@@ -27,6 +27,7 @@ export async function GET(request: NextRequest) {
     // Non-admins: hide admin-only types entirely
     if (!isAdmin) {
       conditions.push(ne(notifications.type, "user_joined"));
+      conditions.push(ne(notifications.type, "capacity"));
     }
 
     // For non-admin users: find their team_member ID to scope aging notifications
