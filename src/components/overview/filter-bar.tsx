@@ -58,6 +58,7 @@ const statusOptions = [
   { value: "in_review", label: "In Review" },
   { value: "ready_for_testing", label: "Ready for Testing" },
   { value: "ready_for_live", label: "Ready for Live" },
+  { value: "rolling_out", label: "Rolling Out" },
   { value: "post_live_testing", label: "Post Live Testing" },
   { value: "done", label: "Done" },
 ];
