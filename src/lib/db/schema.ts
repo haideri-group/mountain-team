@@ -1,4 +1,4 @@
-import { mysqlTable, varchar, text, int, boolean, timestamp, mysqlEnum, float } from "drizzle-orm/mysql-core";
+import { mysqlTable, varchar, text, int, boolean, timestamp, mysqlEnum, float, index } from "drizzle-orm/mysql-core";
 
 export const users = mysqlTable("users", {
   id: varchar("id", { length: 191 }).primaryKey(),
@@ -160,7 +160,9 @@ export const deployments = mysqlTable("deployments", {
   isHotfix: boolean("isHotfix").default(false),
   deployedAt: timestamp("deployedAt").notNull(),
   createdAt: timestamp("createdAt").defaultNow(),
-});
+}, (table) => [
+  index("idx_deployments_jirakey_env").on(table.jiraKey, table.environment),
+]);
 
 // --- Workload Tracking ---
 
