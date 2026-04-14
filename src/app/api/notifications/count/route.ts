@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { notifications } from "@/lib/db/schema";
-import { eq, and, gte, count } from "drizzle-orm";
+import { eq, and, gte, ne, count } from "drizzle-orm";
 import { auth } from "@/auth";
 
 // GET /api/notifications/count — Lightweight unread count for badge
@@ -12,18 +12,24 @@ export async function GET() {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
+    const isAdmin = session.user.role === "admin";
     const thirtyDaysAgo = new Date();
     thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+
+    const conditions = [
+      eq(notifications.isRead, false),
+      gte(notifications.createdAt, thirtyDaysAgo),
+    ];
+
+    // Non-admins should not count admin-only notifications
+    if (!isAdmin) {
+      conditions.push(ne(notifications.type, "user_joined"));
+    }
 
     const [result] = await db
       .select({ count: count() })
       .from(notifications)
-      .where(
-        and(
-          eq(notifications.isRead, false),
-          gte(notifications.createdAt, thirtyDaysAgo),
-        ),
-      );
+      .where(and(...conditions));
 
     return NextResponse.json({ count: result.count });
   } catch (error) {

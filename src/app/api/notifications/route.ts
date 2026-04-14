@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 import { db } from "@/lib/db";
 import { notifications, issues, team_members } from "@/lib/db/schema";
-import { desc, eq, and, gte } from "drizzle-orm";
+import { desc, eq, and, gte, ne } from "drizzle-orm";
 import { auth } from "@/auth";
 import { withResolvedAvatar } from "@/lib/db/helpers";
 
@@ -14,6 +14,7 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
+    const isAdmin = session.user.role === "admin";
     const { searchParams } = request.nextUrl;
     const typeFilter = searchParams.get("type") || "";
     const limit = Math.min(parseInt(searchParams.get("limit") || "50", 10), 100);
@@ -22,6 +23,11 @@ export async function GET(request: NextRequest) {
     thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
 
     const conditions = [gte(notifications.createdAt, thirtyDaysAgo)];
+
+    // Non-admins should not see admin-only notifications
+    if (!isAdmin) {
+      conditions.push(ne(notifications.type, "user_joined"));
+    }
 
     if (typeFilter) {
       conditions.push(
