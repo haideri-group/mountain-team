@@ -231,3 +231,24 @@ export async function matchFromDirectory(
 
   return matchMap;
 }
+
+/**
+ * Find a Google Workspace photo URL by exact email match.
+ * Used for single-member avatar sync after email change.
+ */
+export async function findPhotoByEmail(
+  accessToken: string,
+  email: string,
+): Promise<string | null> {
+  try {
+    const people = await searchDirectory(accessToken, email);
+    const match = people.find((p) =>
+      p.emailAddresses?.some(
+        (e) => e.value?.toLowerCase() === email.toLowerCase(),
+      ),
+    );
+    return match?.photos?.[0]?.url || null;
+  } catch {
+    return null;
+  }
+}

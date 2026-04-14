@@ -193,3 +193,52 @@ export async function cacheAvatarsForTeam(
 
   return results;
 }
+
+/**
+ * Sync a single member's avatar: Google Directory lookup → download → R2 cache → DB update.
+ * Used after email change and can be reused by team sync for individual members.
+ */
+export async function syncSingleMemberAvatar(
+  memberId: string,
+  email: string,
+  googleAccessToken?: string,
+): Promise<boolean> {
+  try {
+    if (!googleAccessToken || !email) return false;
+
+    const { findPhotoByEmail } = await import("@/lib/google/directory");
+    const photoUrl = await findPhotoByEmail(googleAccessToken, email);
+    if (!photoUrl) return false;
+
+    const { db } = await import("@/lib/db");
+    const { team_members } = await import("@/lib/db/schema");
+    const { eq } = await import("drizzle-orm");
+    const { isR2Configured } = await import("@/lib/r2/client");
+
+    // Update sourceAvatarUrl
+    await db
+      .update(team_members)
+      .set({ sourceAvatarUrl: photoUrl, avatarHash: null })
+      .where(eq(team_members.id, memberId));
+
+    // Cache to R2 if configured
+    if (isR2Configured()) {
+      const result = await cacheAvatar(memberId, photoUrl, null, null);
+      if (result) {
+        await db
+          .update(team_members)
+          .set({
+            avatarUrl: result.r2UrlSmall,
+            sourceAvatarUrl: result.sourceUrl,
+            avatarHash: result.hash,
+          })
+          .where(eq(team_members.id, memberId));
+      }
+    }
+
+    return true;
+  } catch (err) {
+    console.warn(`Failed to sync avatar for member ${memberId}:`, err instanceof Error ? err.message : err);
+    return false;
+  }
+}
