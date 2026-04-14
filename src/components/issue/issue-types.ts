@@ -17,6 +17,7 @@ export interface Phase1Data {
     description: string | null;
     jiraCreatedAt: string | null;
     jiraUpdatedAt: string | null;
+    updatedAt: string | null;
     boardKey: string;
     boardName: string;
     boardColor: string;

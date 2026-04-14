@@ -6,6 +6,7 @@ import { recordWorkloadSnapshots } from "@/lib/workload/snapshots";
 import {
   discoverCustomFieldIds,
   fetchIssuesByJql,
+  fetchSingleIssue,
   buildFullSyncJql,
   buildIncrementalSyncJql,
 } from "@/lib/jira/issues";
@@ -342,4 +343,135 @@ export async function runIssueSync(type: IssueSyncType, boardKey?: string): Prom
 
     throw error;
   }
+}
+
+// --- Single Issue Sync ---
+
+/**
+ * Sync a single issue from JIRA by key.
+ * Fetches latest data, normalizes, resolves board/assignee, and upserts.
+ * Reuses the same logic as the bulk sync and webhook handler.
+ */
+export async function syncSingleIssue(
+  jiraKey: string,
+): Promise<{ success: boolean; message: string }> {
+  // 1. Fetch from JIRA
+  const raw = await fetchSingleIssue(jiraKey);
+  if (!raw) {
+    return { success: false, message: `Issue ${jiraKey} not found on JIRA` };
+  }
+
+  // 2. Load status mappings + discover custom fields
+  await loadStatusMappingCache();
+  const customFields = await discoverCustomFieldIds();
+
+  // 3. Normalize
+  const normalized = await normalizeIssue(raw, customFields);
+
+  // 4. Resolve board
+  const [board] = await db
+    .select()
+    .from(boards)
+    .where(eq(boards.jiraKey, normalized.projectKey))
+    .limit(1);
+
+  if (!board) {
+    return { success: false, message: `Board ${normalized.projectKey} is not tracked in TeamFlow` };
+  }
+
+  // 5. Resolve assignee
+  let assigneeId: string | null = null;
+  if (normalized.assigneeAccountId) {
+    const [member] = await db
+      .select()
+      .from(team_members)
+      .where(eq(team_members.jiraAccountId, normalized.assigneeAccountId))
+      .limit(1);
+    assigneeId = member?.id || null;
+  }
+
+  // 6. Cycle time logic
+  const [existing] = await db
+    .select()
+    .from(issues)
+    .where(eq(issues.jiraKey, normalized.jiraKey))
+    .limit(1);
+
+  let { completedDate, cycleTime } = normalized;
+
+  if (existing) {
+    const wasDone = existing.status === "done" || existing.status === "closed";
+    const nowActive = normalized.status !== "done" && normalized.status !== "closed";
+    if (wasDone && nowActive) {
+      completedDate = null;
+      cycleTime = null;
+    }
+
+    const wasActive = existing.status !== "done" && existing.status !== "closed";
+    const nowDone = normalized.status === "done" || normalized.status === "closed";
+    if (wasActive && nowDone && !completedDate) {
+      completedDate = new Date().toISOString().split("T")[0];
+      cycleTime = calculateCycleTime(
+        normalized.startDate || existing.startDate,
+        completedDate,
+      );
+    }
+  }
+
+  // 7. Upsert
+  const id = existing?.id || `iss_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+
+  await db
+    .insert(issues)
+    .values({
+      id,
+      jiraKey: normalized.jiraKey,
+      boardId: board.id,
+      assigneeId,
+      title: normalized.title,
+      status: normalized.status,
+      jiraStatusName: normalized.jiraStatusName,
+      priority: normalized.priority,
+      type: normalized.type,
+      startDate: normalized.startDate,
+      dueDate: normalized.dueDate,
+      completedDate,
+      cycleTime,
+      storyPoints: normalized.storyPoints,
+      labels: normalized.labels,
+      description: normalized.description,
+      requestPriority: normalized.requestPriority,
+      website: normalized.website,
+      brands: normalized.brands,
+      jiraCreatedAt: normalized.jiraCreatedAt,
+      jiraUpdatedAt: normalized.jiraUpdatedAt,
+    })
+    .onDuplicateKeyUpdate({
+      set: {
+        boardId: board.id,
+        assigneeId,
+        title: normalized.title,
+        status: normalized.status,
+        jiraStatusName: normalized.jiraStatusName,
+        priority: normalized.priority,
+        type: normalized.type,
+        startDate: normalized.startDate,
+        dueDate: normalized.dueDate,
+        completedDate,
+        cycleTime,
+        storyPoints: normalized.storyPoints,
+        labels: normalized.labels,
+        description: normalized.description,
+        requestPriority: normalized.requestPriority,
+        website: normalized.website,
+        brands: normalized.brands,
+        jiraCreatedAt: normalized.jiraCreatedAt,
+        jiraUpdatedAt: normalized.jiraUpdatedAt,
+      },
+    });
+
+  return {
+    success: true,
+    message: `Synced ${jiraKey} from JIRA (status: ${normalized.jiraStatusName || normalized.status})`,
+  };
 }
