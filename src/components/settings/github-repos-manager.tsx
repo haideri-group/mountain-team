@@ -48,6 +48,7 @@ export function GitHubReposManager() {
   const [showAddPanel, setShowAddPanel] = useState(false);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [backfillResult, setBackfillResult] = useState<string | null>(null);
+  const [backfillResultRepoId, setBackfillResultRepoId] = useState<string | null>(null);
   const [backfillRepoId, setBackfillRepoId] = useState<string | null>(null);
   const [backfillProgress, setBackfillProgress] = useState<{
     phase: string; message: string; prsScanned: number; prsTotal: number; deploymentsCreated: number;
@@ -79,25 +80,56 @@ export function GitHubReposManager() {
   // Poll progress while backfilling
   useEffect(() => {
     if (backfillRepoId) {
+      let seenActive = false;
+      const startedAt = Date.now();
+
       const poll = async () => {
         try {
           const res = await fetch(`/api/github/repos/${backfillRepoId}/backfill`);
           if (res.ok) {
             const data = await res.json();
             setBackfillProgress(data.progress);
-            if (data.progress && (data.progress.phase === "done" || data.progress.phase === "failed" || data.progress.phase === "idle")) {
+
+            if (data.progress && (data.progress.phase === "fetching" || data.progress.phase === "processing")) {
+              seenActive = true;
+            }
+
+            // Only stop polling on done/failed (not idle — backfill may not have started yet)
+            if (data.progress && (data.progress.phase === "done" || data.progress.phase === "failed")) {
+              setBackfillResultRepoId(backfillRepoId);
               setBackfillRepoId(null);
               setBackfillProgress(null);
+              setActionLoading(null);
               if (data.progress.phase === "done") {
                 setBackfillResult(`Backfill complete: ${data.progress.deploymentsCreated} deployments from ${data.progress.prsScanned} PRs`);
               }
             }
+            // If we saw activity then it went back to idle, stop (edge case)
+            if (data.progress?.phase === "idle" && seenActive) {
+              setBackfillRepoId(null);
+              setBackfillProgress(null);
+              setActionLoading(null);
+            }
+            // Safety timeout: if still idle after 15 seconds, stop polling
+            if (data.progress?.phase === "idle" && !seenActive && Date.now() - startedAt > 15000) {
+              setBackfillRepoId(null);
+              setBackfillProgress(null);
+              setActionLoading(null);
+            }
           }
         } catch { /* ignore */ }
       };
-      poll();
-      pollRef.current = setInterval(poll, 1000);
-      return () => { if (pollRef.current) clearInterval(pollRef.current); };
+
+      // Delay first poll by 1 second to let the POST reach the server
+      const initialDelay = setTimeout(() => {
+        poll();
+        pollRef.current = setInterval(poll, 1000);
+      }, 1000);
+
+      return () => {
+        clearTimeout(initialDelay);
+        if (pollRef.current) clearInterval(pollRef.current);
+      };
     } else {
       if (pollRef.current) clearInterval(pollRef.current);
       return;
@@ -131,24 +163,49 @@ export function GitHubReposManager() {
     }
   };
 
-  const handleBackfill = async (repo: GitHubRepo) => {
+  const handleBackfill = (repo: GitHubRepo) => {
     setActionLoading(`backfill_${repo.id}`);
     setBackfillResult(null);
+    setBackfillResultRepoId(null);
     setBackfillRepoId(repo.id);
 
-    try {
-      const res = await fetch(`/api/github/repos/${repo.id}/backfill`, { method: "POST" });
-      const data = await res.json();
-      if (!res.ok) {
-        setBackfillResult(`Error: ${data.error || "Backfill failed"}`);
-      }
-      // Result is handled by polling (progress phase → done)
-    } catch {
-      setBackfillResult("Error: Failed to connect");
-      setBackfillRepoId(null);
-    } finally {
-      setActionLoading(null);
-    }
+    // Fire-and-forget — polling handles the lifecycle
+    fetch(`/api/github/repos/${repo.id}/backfill`, { method: "POST" })
+      .then(async (res) => {
+        const data = await res.json().catch(() => null);
+
+        // HTTP error
+        if (!res.ok) {
+          setBackfillResult(`Error: ${data?.error || "Backfill failed"}`);
+          setBackfillResultRepoId(repo.id);
+          setBackfillRepoId(null);
+          setActionLoading(null);
+          return;
+        }
+
+        // Logical error — HTTP 200 but payload indicates failure
+        if (data?.error || data?.success === false) {
+          setBackfillResult(`Error: ${data.error || "Backfill returned an error"}`);
+          setBackfillResultRepoId(repo.id);
+          setBackfillRepoId(null);
+          setActionLoading(null);
+          return;
+        }
+
+        // Success path — actionLoading stays set, cleared by polling when done
+
+        // If there are partial errors, show them as warnings
+        if (data?.errors?.length > 0) {
+          setBackfillResult(`Completed with warnings: ${data.errors.join(", ")}`);
+          setBackfillResultRepoId(repo.id);
+        }
+      })
+      .catch(() => {
+        setBackfillResult("Error: Failed to connect");
+        setBackfillResultRepoId(repo.id);
+        setBackfillRepoId(null);
+        setActionLoading(null);
+      });
   };
 
   return (
@@ -312,8 +369,8 @@ export function GitHubReposManager() {
                 </div>
               )}
 
-              {/* Backfill result */}
-              {backfillResult && (
+              {/* Backfill result — scoped to the repo that was backfilled */}
+              {backfillResult && backfillResultRepoId === repo.id && (
                 <div className={`flex items-center gap-2 text-xs px-3 py-2 rounded-lg ${backfillResult.startsWith("Error") ? "bg-destructive/10 text-destructive" : "bg-emerald-50 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-400"}`}>
                   {backfillResult.startsWith("Error") ? (
                     <AlertTriangle className="h-3 w-3" />
