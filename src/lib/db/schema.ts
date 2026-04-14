@@ -7,6 +7,7 @@ export const users = mysqlTable("users", {
   hashedPassword: text("hashedPassword"),
   role: mysqlEnum("role", ["admin", "user"]).default("user").notNull(),
   avatarUrl: text("avatarUrl"),
+  authProvider: mysqlEnum("authProvider", ["credentials", "google"]).default("credentials"),
   isActive: boolean("isActive").default(true).notNull(),
   createdAt: timestamp("createdAt").defaultNow(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow(),

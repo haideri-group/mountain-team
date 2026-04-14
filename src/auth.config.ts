@@ -78,6 +78,7 @@ export const authConfig = {
             name: token.name || null,
             role,
             avatarUrl: (token.picture as string) || null,
+            authProvider: "google",
             lastLoginAt: new Date(),
           });
           token.role = role;

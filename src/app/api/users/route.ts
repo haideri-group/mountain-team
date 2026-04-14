@@ -47,7 +47,7 @@ export async function GET(request: NextRequest) {
       .where(where);
 
     // Paginated results
-    const userList = await db
+    const userListRaw = await db
       .select({
         id: users.id,
         email: users.email,
@@ -55,6 +55,8 @@ export async function GET(request: NextRequest) {
         role: users.role,
         avatarUrl: users.avatarUrl,
         isActive: users.isActive,
+        authProvider: users.authProvider,
+        hashedPassword: users.hashedPassword,
         createdAt: users.createdAt,
         lastLoginAt: users.lastLoginAt,
       })
@@ -63,6 +65,13 @@ export async function GET(request: NextRequest) {
       .orderBy(desc(users.createdAt))
       .limit(pageSize)
       .offset((page - 1) * pageSize);
+
+    // Don't expose hashedPassword — just indicate auth methods
+    const userList = userListRaw.map(({ hashedPassword, ...rest }) => ({
+      ...rest,
+      hasPassword: !!hashedPassword,
+      isGoogleOAuth: rest.authProvider === "google",
+    }));
 
     // Metrics (unfiltered)
     const allUsers = await db
