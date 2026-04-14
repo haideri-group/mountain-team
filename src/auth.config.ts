@@ -104,24 +104,32 @@ export const authConfig = {
           : 0;
       }
 
-      // Per-request DB check: re-validate isActive + role from DB
-      // Ensures deactivated users lose access immediately and role changes take effect instantly
+      // Periodic DB check: re-validate isActive + role from DB
+      // Cached for 60 seconds to avoid overwhelming the connection pool
+      // Deactivated users lose access within 60 seconds, role changes take effect within 60 seconds
       if (token.id && !account) {
-        const [dbUser] = await db
-          .select({ role: users.role, isActive: users.isActive })
-          .from(users)
-          .where(eq(users.id, token.id as string))
-          .limit(1);
+        const lastCheck = (token._lastDbCheck as number) || 0;
+        const now = Date.now();
+        if (now - lastCheck > 60_000) { // check every 60 seconds
+          try {
+            const [dbUser] = await db
+              .select({ role: users.role, isActive: users.isActive })
+              .from(users)
+              .where(eq(users.id, token.id as string))
+              .limit(1);
 
-        if (dbUser) {
-          // Super-admin always gets admin role
-          if (token.email === SUPER_ADMIN_EMAIL) {
-            token.role = "admin";
-          } else if (!dbUser.isActive) {
-            // Force sign-out for deactivated users
-            return {} as typeof token;
-          } else {
-            token.role = dbUser.role;
+            if (dbUser) {
+              if (token.email === SUPER_ADMIN_EMAIL) {
+                token.role = "admin";
+              } else if (!dbUser.isActive) {
+                return {} as typeof token;
+              } else {
+                token.role = dbUser.role;
+              }
+            }
+            token._lastDbCheck = now;
+          } catch {
+            // DB connection failed — keep existing token data, retry next time
           }
         }
       }

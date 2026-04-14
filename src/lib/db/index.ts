@@ -8,6 +8,9 @@ if (!process.env.DATABASE_URL) {
 
 const poolConnection = mysql.createPool({
   uri: process.env.DATABASE_URL,
+  connectionLimit: 5,
+  waitForConnections: true,
+  queueLimit: 50,
 });
 
 export const db = drizzle(poolConnection, { schema, mode: "default" });
