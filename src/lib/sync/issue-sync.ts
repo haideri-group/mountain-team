@@ -1,5 +1,5 @@
 import { db } from "@/lib/db";
-import { issues, boards, team_members, syncLogs } from "@/lib/db/schema";
+import { issues, boards, team_members, syncLogs, githubRepos } from "@/lib/db/schema";
 import { eq, desc, inArray } from "drizzle-orm";
 import { generateNotificationsFromSync } from "@/lib/notifications/generator";
 import { recordWorkloadSnapshots } from "@/lib/workload/snapshots";
@@ -11,6 +11,8 @@ import {
   buildIncrementalSyncJql,
 } from "@/lib/jira/issues";
 import { normalizeIssue, calculateCycleTime, loadStatusMappingCache, invalidateStatusMappingCache } from "@/lib/jira/normalizer";
+import { getAuthHeader, getBaseUrl } from "@/lib/jira/client";
+import { recordDeployment } from "@/lib/github/deployments";
 
 // --- Types ---
 
@@ -404,8 +406,68 @@ export async function syncSingleIssue(
     .values({ id, jiraKey: normalized.jiraKey, ...fields })
     .onDuplicateKeyUpdate({ set: fields });
 
+  // Sync deployments from JIRA dev-status (merged PRs → deployment branches)
+  let deploymentsRecorded = 0;
+  try {
+    const issueId = encodeURIComponent(raw.id);
+    const devStatusUrl = `${getBaseUrl()}/rest/dev-status/latest/issue/detail?issueId=${issueId}&applicationType=GitHub&dataType=pullrequest`;
+    const devRes = await fetch(devStatusUrl, {
+      headers: { Authorization: getAuthHeader(), Accept: "application/json" },
+      cache: "no-store",
+    });
+
+    if (devRes.ok) {
+      const devData = await devRes.json();
+      const mergedPRs: Array<{ detail: any; pr: any }> = [];
+
+      for (const detail of devData.detail || []) {
+        for (const pr of detail.pullRequests || []) {
+          if (pr.status === "MERGED") mergedPRs.push({ detail, pr });
+        }
+      }
+
+      if (mergedPRs.length > 0) {
+        const allRepos = await db.select().from(githubRepos);
+        const repoMap = new Map(allRepos.map((r) => [r.fullName, r.id]));
+
+        for (const { detail, pr } of mergedPRs) {
+          const destBranch = pr.destination?.branch;
+          const repoFullName = detail._instance?.name === "GitHub"
+            ? (pr.source?.repository?.name || detail.repositories?.[0]?.name || "")
+            : "";
+          if (!destBranch || !repoFullName) continue;
+
+          const repoId = repoMap.get(repoFullName);
+          if (!repoId) continue;
+
+          // Use merge_commit_sha or PR ID as commitSha fallback for dedup
+          const commitSha = pr.lastCommit?.id || `pr-${pr.id}`;
+          // Use merged_at timestamp, fall back to lastUpdate
+          const deployedAt = new Date(pr.mergedAt || pr.lastUpdate || Date.now());
+
+          const result = await recordDeployment({
+            jiraKey: normalized.jiraKey,
+            repoId,
+            branch: destBranch,
+            prNumber: Number(pr.id) || null,
+            prTitle: pr.name || null,
+            prUrl: pr.url || null,
+            commitSha,
+            deployedBy: pr.author?.name || null,
+            deployedAt,
+          });
+          deploymentsRecorded += result.recorded;
+        }
+      }
+    }
+  } catch (err) {
+    console.warn("Deployment sync failed (non-fatal):", err instanceof Error ? err.message : err);
+  }
+
+  const deploymentMsg = deploymentsRecorded > 0 ? `, ${deploymentsRecorded} deployment(s) recorded` : "";
+
   return {
     success: true,
-    message: `Synced ${jiraKey} from JIRA (status: ${normalized.jiraStatusName || normalized.status})`,
+    message: `Synced ${jiraKey} from JIRA (status: ${normalized.jiraStatusName || normalized.status})${deploymentMsg}`,
   };
 }

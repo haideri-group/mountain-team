@@ -156,16 +156,20 @@ export function IssueDetail({ issueKey }: IssueDetailProps) {
       setSyncSuccess(true);
       setTimeout(() => setSyncSuccess(false), 2000);
 
-      // Re-fetch Phase 1 + Phase 2 to update the page with fresh data
-      const [freshRes, freshPhase2Res] = await Promise.all([
+      // Re-fetch Phase 1 + Phase 2 + Phase 4 (deployments) to update the page
+      const [freshRes, freshPhase2Res, freshDeployRes] = await Promise.all([
         fetch(`/api/issues/${issueKey}`),
         fetch(`/api/issues/${issueKey}/jira`),
+        fetch(`/api/issues/${issueKey}/deployments`),
       ]);
       if (freshRes.ok) {
         setPhase1(await freshRes.json());
       }
       if (freshPhase2Res.ok) {
         setPhase2(await freshPhase2Res.json());
+      }
+      if (freshDeployRes.ok) {
+        setDeploymentData(await freshDeployRes.json());
       }
     } catch {
       setSyncError("Failed to connect");
