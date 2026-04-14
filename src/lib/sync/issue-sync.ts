@@ -171,86 +171,17 @@ async function syncIssues(type: IssueSyncType, filterBoardKey?: string): Promise
         ? memberByAccountId.get(normalized.assigneeAccountId)
         : null;
 
-      // Check existing for cycle time logic
-      const existing = existingByKey.get(normalized.jiraKey);
-      let { completedDate, cycleTime } = normalized;
-
-      if (existing) {
-        // Issue reopened: was done/closed, now active
-        const wasDone =
-          existing.status === "done" || existing.status === "closed";
-        const nowActive =
-          normalized.status !== "done" && normalized.status !== "closed";
-
-        if (wasDone && nowActive) {
-          completedDate = null;
-          cycleTime = null;
-        }
-
-        // Newly done: wasn't done, now is
-        const wasActive =
-          existing.status !== "done" && existing.status !== "closed";
-        const nowDone =
-          normalized.status === "done" || normalized.status === "closed";
-
-        if (wasActive && nowDone && !completedDate) {
-          completedDate = new Date().toISOString().split("T")[0];
-          cycleTime = calculateCycleTime(
-            normalized.startDate || existing.startDate,
-            completedDate,
-          );
-        }
-      }
-
+      // Cycle time logic + upsert (shared utilities)
+      const existing = existingByKey.get(normalized.jiraKey) || null;
+      const { completedDate, cycleTime } = applyCycleTimeLogic(normalized, existing);
       const id = existing?.id || `iss_${Date.now()}_${result.inserted + result.updated}`;
+      const fields = buildIssueUpsertFields(normalized, board.id, member?.id || null, completedDate, cycleTime);
 
       await db
         .insert(issues)
-        .values({
-          id,
-          jiraKey: normalized.jiraKey,
-          boardId: board.id,
-          assigneeId: member?.id || null,
-          title: normalized.title,
-          status: normalized.status,
-          jiraStatusName: normalized.jiraStatusName,
-          priority: normalized.priority,
-          type: normalized.type,
-          startDate: normalized.startDate,
-          dueDate: normalized.dueDate,
-          completedDate,
-          cycleTime,
-          storyPoints: normalized.storyPoints,
-          labels: normalized.labels,
-          requestPriority: normalized.requestPriority,
-          description: normalized.description,
-          website: normalized.website,
-          brands: normalized.brands,
-          jiraCreatedAt: normalized.jiraCreatedAt,
-          jiraUpdatedAt: normalized.jiraUpdatedAt,
-        })
+        .values({ id, jiraKey: normalized.jiraKey, ...fields })
         .onDuplicateKeyUpdate({
-          set: {
-            boardId: board.id,
-            assigneeId: member?.id || null,
-            title: normalized.title,
-            status: normalized.status,
-          jiraStatusName: normalized.jiraStatusName,
-            priority: normalized.priority,
-            type: normalized.type,
-            startDate: normalized.startDate,
-            dueDate: normalized.dueDate,
-            completedDate,
-            cycleTime,
-            storyPoints: normalized.storyPoints,
-            labels: normalized.labels,
-            requestPriority: normalized.requestPriority,
-            description: normalized.description,
-            website: normalized.website,
-            brands: normalized.brands,
-            jiraCreatedAt: normalized.jiraCreatedAt,
-            jiraUpdatedAt: normalized.jiraUpdatedAt,
-          },
+          set: fields,
         });
 
       if (existing) {
@@ -345,58 +276,16 @@ export async function runIssueSync(type: IssueSyncType, boardKey?: string): Prom
   }
 }
 
-// --- Single Issue Sync ---
+// --- Shared Utilities (used by bulk sync, webhook, and single-issue sync) ---
 
 /**
- * Sync a single issue from JIRA by key.
- * Fetches latest data, normalizes, resolves board/assignee, and upserts.
- * Reuses the same logic as the bulk sync and webhook handler.
+ * Apply cycle time logic based on status transitions.
+ * Handles: reopened (clear), newly done (calculate), unchanged (passthrough).
  */
-export async function syncSingleIssue(
-  jiraKey: string,
-): Promise<{ success: boolean; message: string }> {
-  // 1. Fetch from JIRA
-  const raw = await fetchSingleIssue(jiraKey);
-  if (!raw) {
-    return { success: false, message: `Issue ${jiraKey} not found on JIRA` };
-  }
-
-  // 2. Load status mappings + discover custom fields
-  await loadStatusMappingCache();
-  const customFields = await discoverCustomFieldIds();
-
-  // 3. Normalize
-  const normalized = await normalizeIssue(raw, customFields);
-
-  // 4. Resolve board
-  const [board] = await db
-    .select()
-    .from(boards)
-    .where(eq(boards.jiraKey, normalized.projectKey))
-    .limit(1);
-
-  if (!board) {
-    return { success: false, message: `Board ${normalized.projectKey} is not tracked in TeamFlow` };
-  }
-
-  // 5. Resolve assignee
-  let assigneeId: string | null = null;
-  if (normalized.assigneeAccountId) {
-    const [member] = await db
-      .select()
-      .from(team_members)
-      .where(eq(team_members.jiraAccountId, normalized.assigneeAccountId))
-      .limit(1);
-    assigneeId = member?.id || null;
-  }
-
-  // 6. Cycle time logic
-  const [existing] = await db
-    .select()
-    .from(issues)
-    .where(eq(issues.jiraKey, normalized.jiraKey))
-    .limit(1);
-
+export function applyCycleTimeLogic(
+  normalized: { status: string; startDate: string | null; completedDate: string | null; cycleTime: number | null },
+  existing: { status: string; startDate: string | null } | null,
+): { completedDate: string | null; cycleTime: number | null } {
   let { completedDate, cycleTime } = normalized;
 
   if (existing) {
@@ -418,57 +307,102 @@ export async function syncSingleIssue(
     }
   }
 
-  // 7. Upsert
+  return { completedDate, cycleTime };
+}
+
+/**
+ * Build the fields object for issue upsert (insert values + onDuplicateKeyUpdate set).
+ * Single source of truth for which fields are persisted.
+ */
+export function buildIssueUpsertFields(
+  normalized: import("@/lib/jira/normalizer").NormalizedIssue,
+  boardId: string,
+  assigneeId: string | null,
+  completedDate: string | null,
+  cycleTime: number | null,
+  descriptionOverride?: string | null,
+) {
+  return {
+    boardId,
+    assigneeId,
+    title: normalized.title,
+    status: normalized.status,
+    jiraStatusName: normalized.jiraStatusName,
+    priority: normalized.priority,
+    type: normalized.type,
+    startDate: normalized.startDate,
+    dueDate: normalized.dueDate,
+    completedDate,
+    cycleTime,
+    storyPoints: normalized.storyPoints,
+    labels: normalized.labels,
+    description: descriptionOverride !== undefined ? descriptionOverride : normalized.description,
+    requestPriority: normalized.requestPriority,
+    website: normalized.website,
+    brands: normalized.brands,
+    jiraCreatedAt: normalized.jiraCreatedAt,
+    jiraUpdatedAt: normalized.jiraUpdatedAt,
+  };
+}
+
+// --- Single Issue Sync ---
+
+/**
+ * Sync a single issue from JIRA by key.
+ * Fetches latest data, normalizes, resolves board/assignee, and upserts.
+ * Uses shared utilities (applyCycleTimeLogic, buildIssueUpsertFields).
+ */
+export async function syncSingleIssue(
+  jiraKey: string,
+): Promise<{ success: boolean; message: string }> {
+  const raw = await fetchSingleIssue(jiraKey);
+  if (!raw) {
+    return { success: false, message: `Issue ${jiraKey} not found on JIRA` };
+  }
+
+  await loadStatusMappingCache();
+  const customFields = await discoverCustomFieldIds();
+  const normalized = await normalizeIssue(raw, customFields);
+
+  // Resolve board
+  const [board] = await db
+    .select()
+    .from(boards)
+    .where(eq(boards.jiraKey, normalized.projectKey))
+    .limit(1);
+
+  if (!board) {
+    return { success: false, message: `Board ${normalized.projectKey} is not tracked in TeamFlow` };
+  }
+
+  // Resolve assignee
+  let assigneeId: string | null = null;
+  if (normalized.assigneeAccountId) {
+    const [member] = await db
+      .select()
+      .from(team_members)
+      .where(eq(team_members.jiraAccountId, normalized.assigneeAccountId))
+      .limit(1);
+    assigneeId = member?.id || null;
+  }
+
+  // Cycle time
+  const [existing] = await db
+    .select()
+    .from(issues)
+    .where(eq(issues.jiraKey, normalized.jiraKey))
+    .limit(1);
+
+  const { completedDate, cycleTime } = applyCycleTimeLogic(normalized, existing);
+
+  // Upsert
   const id = existing?.id || `iss_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+  const fields = buildIssueUpsertFields(normalized, board.id, assigneeId, completedDate, cycleTime);
 
   await db
     .insert(issues)
-    .values({
-      id,
-      jiraKey: normalized.jiraKey,
-      boardId: board.id,
-      assigneeId,
-      title: normalized.title,
-      status: normalized.status,
-      jiraStatusName: normalized.jiraStatusName,
-      priority: normalized.priority,
-      type: normalized.type,
-      startDate: normalized.startDate,
-      dueDate: normalized.dueDate,
-      completedDate,
-      cycleTime,
-      storyPoints: normalized.storyPoints,
-      labels: normalized.labels,
-      description: normalized.description,
-      requestPriority: normalized.requestPriority,
-      website: normalized.website,
-      brands: normalized.brands,
-      jiraCreatedAt: normalized.jiraCreatedAt,
-      jiraUpdatedAt: normalized.jiraUpdatedAt,
-    })
-    .onDuplicateKeyUpdate({
-      set: {
-        boardId: board.id,
-        assigneeId,
-        title: normalized.title,
-        status: normalized.status,
-        jiraStatusName: normalized.jiraStatusName,
-        priority: normalized.priority,
-        type: normalized.type,
-        startDate: normalized.startDate,
-        dueDate: normalized.dueDate,
-        completedDate,
-        cycleTime,
-        storyPoints: normalized.storyPoints,
-        labels: normalized.labels,
-        description: normalized.description,
-        requestPriority: normalized.requestPriority,
-        website: normalized.website,
-        brands: normalized.brands,
-        jiraCreatedAt: normalized.jiraCreatedAt,
-        jiraUpdatedAt: normalized.jiraUpdatedAt,
-      },
-    });
+    .values({ id, jiraKey: normalized.jiraKey, ...fields })
+    .onDuplicateKeyUpdate({ set: fields });
 
   return {
     success: true,

@@ -3,7 +3,8 @@ import { db } from "@/lib/db";
 import { issues, boards, team_members } from "@/lib/db/schema";
 import { eq, sql } from "drizzle-orm";
 import { discoverCustomFieldIds } from "@/lib/jira/issues";
-import { normalizeIssue, calculateCycleTime } from "@/lib/jira/normalizer";
+import { normalizeIssue } from "@/lib/jira/normalizer";
+import { applyCycleTimeLogic, buildIssueUpsertFields } from "@/lib/sync/issue-sync";
 import { generateNotificationForIssue } from "@/lib/notifications/generator";
 import type { JiraIssueRaw } from "@/lib/jira/issues";
 
@@ -83,7 +84,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ ok: true, action: "marked_closed" });
     }
 
-    // For created/updated events, normalize and upsert
+    // For created/updated events, normalize and upsert using shared utilities
     const customFields = await discoverCustomFieldIds();
     const normalized = await normalizeIssue(issue, customFields);
 
@@ -137,82 +138,21 @@ export async function POST(request: Request) {
       assigneeId = member?.id || null;
     }
 
-    // Check existing for cycle time logic
+    // Cycle time + upsert using shared utilities
     const [existing] = await db
       .select()
       .from(issues)
       .where(eq(issues.jiraKey, normalized.jiraKey))
       .limit(1);
 
-    let { completedDate, cycleTime } = normalized;
-
-    if (existing) {
-      const wasDone = existing.status === "done" || existing.status === "closed";
-      const nowActive = normalized.status !== "done" && normalized.status !== "closed";
-      if (wasDone && nowActive) {
-        completedDate = null;
-        cycleTime = null;
-      }
-
-      const wasActive = existing.status !== "done" && existing.status !== "closed";
-      const nowDone = normalized.status === "done" || normalized.status === "closed";
-      if (wasActive && nowDone && !completedDate) {
-        completedDate = new Date().toISOString().split("T")[0];
-        cycleTime = calculateCycleTime(
-          normalized.startDate || existing.startDate,
-          completedDate,
-        );
-      }
-    }
-
-    const id = existing?.id || `iss_${Date.now()}`;
+    const { completedDate, cycleTime } = applyCycleTimeLogic(normalized, existing);
+    const id = existing?.id || `iss_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+    const fields = buildIssueUpsertFields(normalized, board.id, assigneeId, completedDate, cycleTime, renderedDescription);
 
     await db
       .insert(issues)
-      .values({
-        id,
-        jiraKey: normalized.jiraKey,
-        boardId: board.id,
-        assigneeId,
-        title: normalized.title,
-        status: normalized.status,
-        jiraStatusName: normalized.jiraStatusName,
-        priority: normalized.priority,
-        type: normalized.type,
-        startDate: normalized.startDate,
-        dueDate: normalized.dueDate,
-        completedDate,
-        cycleTime,
-        storyPoints: normalized.storyPoints,
-        labels: normalized.labels,
-        description: renderedDescription,
-        website: normalized.website,
-        brands: normalized.brands,
-        jiraCreatedAt: normalized.jiraCreatedAt,
-        jiraUpdatedAt: normalized.jiraUpdatedAt,
-      })
-      .onDuplicateKeyUpdate({
-        set: {
-          boardId: board.id,
-          assigneeId,
-          title: normalized.title,
-          status: normalized.status,
-        jiraStatusName: normalized.jiraStatusName,
-          priority: normalized.priority,
-          type: normalized.type,
-          startDate: normalized.startDate,
-          dueDate: normalized.dueDate,
-          completedDate,
-          cycleTime,
-          storyPoints: normalized.storyPoints,
-          labels: normalized.labels,
-          description: renderedDescription,
-          website: normalized.website,
-          brands: normalized.brands,
-          jiraCreatedAt: normalized.jiraCreatedAt,
-          jiraUpdatedAt: normalized.jiraUpdatedAt,
-        },
-      });
+      .values({ id, jiraKey: normalized.jiraKey, ...fields })
+      .onDuplicateKeyUpdate({ set: fields });
 
     // Generate notification for this issue change
     try {
