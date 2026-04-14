@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { team_members, issues, boards } from "@/lib/db/schema";
+import { team_members, issues, boards, deployments } from "@/lib/db/schema";
 import { eq, inArray } from "drizzle-orm";
 import { auth } from "@/auth";
 import { withResolvedAvatars } from "@/lib/db/helpers";
@@ -31,6 +31,22 @@ export async function GET() {
 
     // Build board lookup for colors
     const boardMap = new Map(trackedBoards.map((b) => [b.id, b]));
+
+    // Build deployment status lookup per jiraKey
+    // For each issue, find the highest deployment environment (production > staging > null)
+    const allDeployments = await db
+      .select({ jiraKey: deployments.jiraKey, environment: deployments.environment })
+      .from(deployments);
+
+    const deploymentStatusMap = new Map<string, "production" | "staging">();
+    for (const d of allDeployments) {
+      const current = deploymentStatusMap.get(d.jiraKey);
+      if (d.environment === "production" || d.environment === "canonical") {
+        deploymentStatusMap.set(d.jiraKey, "production");
+      } else if (d.environment === "staging" && current !== "production") {
+        deploymentStatusMap.set(d.jiraKey, "staging");
+      }
+    }
 
     // 7 days ago for "recent done"
     const sevenDaysAgo = new Date();
@@ -115,6 +131,7 @@ export async function GET() {
           ...issue,
           boardKey: board?.jiraKey || "",
           boardColor: board?.color || "#6b7280",
+          deploymentStatus: deploymentStatusMap.get(issue.jiraKey) || null,
         };
       };
 
