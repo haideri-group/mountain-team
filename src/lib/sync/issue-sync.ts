@@ -410,7 +410,8 @@ export async function syncSingleIssue(
     const { getAuthHeader, getBaseUrl } = await import("@/lib/jira/client");
     const { recordDeployment } = await import("@/lib/github/deployments");
 
-    const devStatusUrl = `${getBaseUrl()}/rest/dev-status/latest/issue/detail?issueId=${raw.id}&applicationType=GitHub&dataType=pullrequest`;
+    const issueId = encodeURIComponent(raw.id);
+    const devStatusUrl = `${getBaseUrl()}/rest/dev-status/latest/issue/detail?issueId=${issueId}&applicationType=GitHub&dataType=pullrequest`;
     const devRes = await fetch(devStatusUrl, {
       headers: { Authorization: getAuthHeader(), Accept: "application/json" },
       cache: "no-store",
@@ -418,12 +419,19 @@ export async function syncSingleIssue(
 
     if (devRes.ok) {
       const devData = await devRes.json();
-      const allRepos = await db.select().from(githubRepos);
-      const repoMap = new Map(allRepos.map((r) => [r.fullName, r.id]));
+      const mergedPRs: Array<{ detail: any; pr: any }> = [];
 
       for (const detail of devData.detail || []) {
         for (const pr of detail.pullRequests || []) {
-          if (pr.status !== "MERGED") continue;
+          if (pr.status === "MERGED") mergedPRs.push({ detail, pr });
+        }
+      }
+
+      if (mergedPRs.length > 0) {
+        const allRepos = await db.select().from(githubRepos);
+        const repoMap = new Map(allRepos.map((r) => [r.fullName, r.id]));
+
+        for (const { detail, pr } of mergedPRs) {
           const destBranch = pr.destination?.branch;
           const repoFullName = detail._instance?.name === "GitHub"
             ? (pr.source?.repository?.name || detail.repositories?.[0]?.name || "")
@@ -433,23 +441,28 @@ export async function syncSingleIssue(
           const repoId = repoMap.get(repoFullName);
           if (!repoId) continue;
 
+          // Use merge_commit_sha or PR ID as commitSha fallback for dedup
+          const commitSha = pr.lastCommit?.id || `pr-${pr.id}`;
+          // Use merged_at timestamp, fall back to lastUpdate
+          const deployedAt = new Date(pr.mergedAt || pr.lastUpdate || Date.now());
+
           const result = await recordDeployment({
             jiraKey: normalized.jiraKey,
             repoId,
             branch: destBranch,
-            prNumber: parseInt(pr.id) || null,
+            prNumber: Number(pr.id) || null,
             prTitle: pr.name || null,
             prUrl: pr.url || null,
-            commitSha: pr.lastCommit?.id || null,
+            commitSha,
             deployedBy: pr.author?.name || null,
-            deployedAt: new Date(pr.lastUpdate || Date.now()),
+            deployedAt,
           });
           deploymentsRecorded += result.recorded;
         }
       }
     }
-  } catch {
-    // Non-fatal — deployment sync is best-effort
+  } catch (err) {
+    console.warn("Deployment sync failed (non-fatal):", err instanceof Error ? err.message : err);
   }
 
   const deploymentMsg = deploymentsRecorded > 0 ? `, ${deploymentsRecorded} deployment(s) recorded` : "";
