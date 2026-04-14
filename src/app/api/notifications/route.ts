@@ -27,7 +27,6 @@ export async function GET(request: NextRequest) {
     // Non-admins: hide admin-only types entirely
     if (!isAdmin) {
       conditions.push(ne(notifications.type, "user_joined"));
-      conditions.push(ne(notifications.type, "overdue"));
     }
 
     // For non-admin users: find their team_member ID to scope aging notifications
@@ -54,14 +53,13 @@ export async function GET(request: NextRequest) {
       .orderBy(desc(notifications.createdAt))
       .limit(isAdmin ? limit : limit * 2); // fetch extra for non-admins since we filter below
 
-    // Non-admins: only see aging notifications for their own assigned tasks
+    // Non-admins: aging + overdue only for their own assigned tasks
     if (!isAdmin) {
       result = result.filter((n) => {
-        if (n.type === "aging") {
-          // Only show if assigned to this user's team member
+        if (n.type === "aging" || n.type === "overdue") {
           return userMemberId && n.relatedMemberId === userMemberId;
         }
-        return true; // other types pass through
+        return true;
       }).slice(0, limit);
     }
 

@@ -42,7 +42,6 @@ export async function GET() {
           eq(notifications.isRead, false),
           gte(notifications.createdAt, thirtyDaysAgo),
           ne(notifications.type, "user_joined"),
-          ne(notifications.type, "overdue"),
         ),
       );
 
@@ -57,9 +56,9 @@ export async function GET() {
       userMemberId = member?.id ?? null;
     }
 
-    // Filter aging to only user's own tasks
+    // Filter aging + overdue to only user's own tasks
     const filtered = unread.filter((n) => {
-      if (n.type === "aging") {
+      if (n.type === "aging" || n.type === "overdue") {
         return userMemberId && n.relatedMemberId === userMemberId;
       }
       return true;
