@@ -166,10 +166,25 @@ export function GitHubReposManager() {
     // Fire-and-forget — polling handles the lifecycle
     fetch(`/api/github/repos/${repo.id}/backfill`, { method: "POST" })
       .then(async (res) => {
+        const data = await res.json().catch(() => null);
+
+        // HTTP error
         if (!res.ok) {
-          const data = await res.json();
-          setBackfillResult(`Error: ${data.error || "Backfill failed"}`);
+          setBackfillResult(`Error: ${data?.error || "Backfill failed"}`);
           setBackfillRepoId(null);
+          return;
+        }
+
+        // Logical error — HTTP 200 but payload indicates failure
+        if (data?.error || data?.success === false) {
+          setBackfillResult(`Error: ${data.error || "Backfill returned an error"}`);
+          setBackfillRepoId(null);
+          return;
+        }
+
+        // If there are partial errors, show them as warnings
+        if (data?.errors?.length > 0) {
+          setBackfillResult(`Completed with warnings: ${data.errors.join(", ")}`);
         }
       })
       .catch(() => {
