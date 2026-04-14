@@ -209,6 +209,10 @@ export function MembersTable({ isAdmin }: MembersTableProps) {
           m.id === memberId ? { ...m, email: editEmailValue || null } : m,
         ),
       );
+      // Avatar will be synced in background by the API — refresh after a few seconds
+      if (editEmailValue) {
+        setTimeout(() => fetchMembers(), 5000);
+      }
     }
     setEditingEmailId(null);
     setShowSuggestions(false);
