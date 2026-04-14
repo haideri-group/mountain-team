@@ -6,11 +6,22 @@ if (!process.env.DATABASE_URL) {
   throw new Error("DATABASE_URL environment variable is not set");
 }
 
-const poolConnection = mysql.createPool({
-  uri: process.env.DATABASE_URL,
-  connectionLimit: 5,
-  waitForConnections: true,
-  queueLimit: 50,
-});
+// Cache the pool on globalThis to survive Next.js dev hot reloads.
+// Without this, every hot reload creates a new pool (5 connections)
+// while old pools aren't garbage collected — exhausting MySQL's max_connections.
+const globalForDb = globalThis as unknown as {
+  _dbPool?: mysql.Pool;
+};
 
-export const db = drizzle(poolConnection, { schema, mode: "default" });
+if (!globalForDb._dbPool) {
+  globalForDb._dbPool = mysql.createPool({
+    uri: process.env.DATABASE_URL,
+    connectionLimit: 5,
+    waitForConnections: true,
+    queueLimit: 50,
+    enableKeepAlive: true,
+    keepAliveInitialDelay: 10000,
+  });
+}
+
+export const db = drizzle(globalForDb._dbPool, { schema, mode: "default" });
