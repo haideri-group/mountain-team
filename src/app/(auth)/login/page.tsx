@@ -1,14 +1,21 @@
 "use client";
 
 import { useActionState } from "react";
+import { useSearchParams } from "next/navigation";
+import { Suspense } from "react";
 import { authenticate, loginWithGoogle } from "@/app/actions/auth";
 import { Loader2 } from "lucide-react";
 
-export default function LoginPage() {
+function LoginContent() {
   const [errorMessage, formAction, isPending] = useActionState(
     authenticate,
     undefined,
   );
+  const searchParams = useSearchParams();
+  const urlError = searchParams.get("error");
+  const deactivatedMessage = urlError === "AccountDeactivated"
+    ? "Your account has been deactivated. Contact an administrator."
+    : null;
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-[var(--surface-bg)] relative overflow-hidden">
@@ -65,8 +72,8 @@ export default function LoginPage() {
           </button>
           
           <div className="h-6 flex items-center justify-center px-1">
-             {errorMessage && (
-                <p className="text-sm text-red-500 font-medium animate-in fade-in slide-in-from-bottom-2">{errorMessage}</p>
+             {(errorMessage || deactivatedMessage) && (
+                <p className="text-sm text-red-500 font-medium animate-in fade-in slide-in-from-bottom-2">{deactivatedMessage || errorMessage}</p>
              )}
           </div>
         </form>
@@ -103,5 +110,13 @@ export default function LoginPage() {
         </button>
       </div>
     </div>
+  );
+}
+
+export default function LoginPage() {
+  return (
+    <Suspense>
+      <LoginContent />
+    </Suspense>
   );
 }

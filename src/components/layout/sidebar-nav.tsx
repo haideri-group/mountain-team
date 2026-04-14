@@ -9,6 +9,7 @@ import {
   PieChart,
   Settings,
   BarChart3,
+  ShieldCheck,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -18,6 +19,7 @@ const iconMap: Record<string, React.ElementType> = {
   Calendar,
   UserCircle,
   PieChart,
+  ShieldCheck,
   Settings,
 };
 

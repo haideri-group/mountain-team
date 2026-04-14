@@ -7,7 +7,10 @@ export const users = mysqlTable("users", {
   hashedPassword: text("hashedPassword"),
   role: mysqlEnum("role", ["admin", "user"]).default("user").notNull(),
   avatarUrl: text("avatarUrl"),
+  isActive: boolean("isActive").default(true).notNull(),
   createdAt: timestamp("createdAt").defaultNow(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow(),
+  lastLoginAt: timestamp("lastLoginAt"),
 });
 
 export const team_members = mysqlTable("team_members", {
@@ -94,7 +97,7 @@ export const dashboardConfig = mysqlTable("dashboard_config", {
 
 export const notifications = mysqlTable("notifications", {
   id: varchar("id", { length: 191 }).primaryKey(),
-  type: mysqlEnum("type", ["aging", "overdue", "capacity", "completed", "unblocked", "deployed"]).notNull(),
+  type: mysqlEnum("type", ["aging", "overdue", "capacity", "completed", "unblocked", "deployed", "user_joined"]).notNull(),
   title: varchar("title", { length: 255 }).notNull(),
   message: text("message").notNull(),
   relatedIssueId: varchar("relatedIssueId", { length: 191 }).references(() => issues.id),

@@ -21,7 +21,10 @@ export async function Sidebar() {
   ];
 
   const systemItems = isAdmin
-    ? [{ href: "/settings", icon: "Settings", label: "Settings" }]
+    ? [
+        { href: "/users", icon: "ShieldCheck", label: "Users" },
+        { href: "/settings", icon: "Settings", label: "Settings" },
+      ]
     : [];
 
   return (

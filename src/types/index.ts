@@ -6,7 +6,7 @@ export type IssuePriority = "highest" | "high" | "medium" | "low" | "lowest";
 export type IssueType = "bug" | "story" | "cms_change" | "enhancement" | "task" | "subtask";
 export type SyncType = "full" | "incremental" | "manual" | "team_sync";
 export type SyncStatus = "running" | "completed" | "failed";
-export type NotificationType = "aging" | "overdue" | "capacity" | "completed" | "unblocked" | "deployed";
+export type NotificationType = "aging" | "overdue" | "capacity" | "completed" | "unblocked" | "deployed" | "user_joined";
 export type DeploymentEnvironment = "staging" | "production" | "canonical";
 export type Theme = "light" | "dark" | "system";
 

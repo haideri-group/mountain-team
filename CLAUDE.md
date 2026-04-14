@@ -76,13 +76,14 @@ All request-time APIs are **async** and must be awaited:
 - `(dashboard)/members` — Team roster with server-side pagination
 - `(dashboard)/members/[id]` — Developer profile (active or departed)
 - `(dashboard)/reports` — Analytics with 12 chart sections (placeholder)
+- `(dashboard)/users` — Admin-only: user listing, role management, account deactivation
 - `(dashboard)/settings` — Admin-only: team sync, issue sync, board management
 
 Route groups `(auth)` and `(dashboard)` use separate layouts. Dashboard layout includes sidebar (280px dark navy) + topbar (64px).
 
 **Database:** MySQL (Railway) with Drizzle ORM. 11+ tables: users, team_members, boards, issues, sync_logs, dashboard_config, notifications, workload_snapshots, github_repos, github_branch_mappings, deployments.
 
-**Auth:** Auth.js v5 (NextAuth beta) with Google OAuth + Credentials providers. JWT session strategy. Two roles: `admin` (full access) and `user` (read-only, no Settings/Sync). Google OAuth stores access token in JWT for Google Directory API access.
+**Auth:** Auth.js v5 (NextAuth beta) with Google OAuth + Credentials providers. JWT session strategy. Two roles: `admin` (full access) and `user` (read-only, no Settings/Sync/Users). Google OAuth stores access token in JWT for Google Directory API access. Per-request DB check ensures deactivated users lose access immediately and role changes take effect instantly. Super-admin (`syed.haider@ki5.co.uk`) cannot be deactivated or demoted. New Google sign-ins default to `user` role.
 
 **State management:** Client-side `useState` + `fetch()` for data. No TanStack Query hooks yet — components fetch from API routes directly.
 
@@ -245,6 +246,9 @@ GET    /api/team                         → Paginated members (search, status, 
 GET    /api/team/:id                     → Single member
 PATCH  /api/team/:id                     → Update admin fields (admin only)
 GET    /api/team/:id/profile             → Full profile with issues + stats
+
+GET    /api/users                        → Paginated user list (admin only, search + role/status filters)
+PATCH  /api/users/:id                   → Update role or isActive (admin only, super-admin protected)
 
 GET    /api/boards                       → List boards
 POST   /api/boards                       → Add board (admin only)

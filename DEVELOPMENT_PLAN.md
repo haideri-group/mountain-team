@@ -816,6 +816,64 @@ Add live progress bar to the Team Sync (Sync Now) button in Settings, matching t
 
 ---
 
+### Phase 10.9: Users Management Page
+**Duration:** 2-3 days | **Complexity:** Medium
+
+Admin-only page to view and manage all application users, their roles, and account status.
+
+**Problem:** No visibility into who has access to TeamFlow. Users are auto-created on Google sign-in with admin role by default (security issue). No way to deactivate accounts or manage roles.
+
+**Key decisions:**
+- Roles: `admin` (full access) + `user` (read-only). No additional roles.
+- User creation: Google OAuth only — no manual creation. Admin assigns role after first login.
+- Lifecycle: deactivate only (no permanent deletion). New sign-ins default to `user` role.
+- Super-admin: `syed.haider@ki5.co.uk` always admin, cannot be deactivated or demoted.
+- Immediate session invalidation: per-request DB check ensures deactivated users lose access instantly.
+
+**Schema changes:**
+- Add `isActive BOOLEAN DEFAULT TRUE`, `updatedAt TIMESTAMP`, `lastLoginAt TIMESTAMP` to `users` table
+- Add `"user_joined"` to `notifications.type` enum
+
+**Auth changes:**
+- First Google sign-in defaults to `user` role (not `admin`). Exception: super-admin email always gets `admin`.
+- `signIn` callback blocks deactivated users with redirect to `/login?error=AccountDeactivated`
+- Per-request JWT callback re-checks `isActive` + `role` from DB (1 query per request, PK lookup)
+- New user notification: admin gets bell notification when someone new signs in
+
+**API routes:**
+- `GET /api/users` — paginated list with search, role/status filters, metrics (admin only)
+- `PATCH /api/users/:id` — update role or isActive (admin only). Guards: can't modify super-admin, can't deactivate self, can't remove last active admin
+
+**UI (admin-only `/users` page):**
+- Metric cards: Total Users, Admins (orange), Users (gray), Deactivated (red)
+- Server-side paginated table with search + role/status filters
+- Columns: User (avatar+name+email), Role (clickable badge toggle), Status (activate/deactivate toggle), Last Login, Created
+- Deactivated rows dimmed at 50% opacity
+- Self-deactivation disabled with tooltip
+- Reuses `MembersTablePagination` with generalized `label` prop
+
+**Sidebar:** "Users" with `ShieldCheck` icon in SYSTEM section, before Settings. Admin-only.
+
+**Files to create:**
+- `src/app/api/users/route.ts` — GET paginated list
+- `src/app/api/users/[id]/route.ts` — PATCH role/status
+- `src/components/users/users-table.tsx` — Main table component
+- `src/app/(dashboard)/users/page.tsx` — Page (admin redirect)
+
+**Files to modify:**
+- `src/lib/db/schema.ts` — 3 columns + notification type
+- `src/auth.config.ts` — default role fix, signIn callback, per-request DB check, new user notification
+- `src/auth.ts` — isActive check in Credentials
+- `src/app/(auth)/login/page.tsx` — deactivation error display
+- `src/components/layout/sidebar.tsx` + `sidebar-nav.tsx` — Users nav item
+- `src/components/members/members-table-pagination.tsx` — label prop
+- `src/types/index.ts` — "user_joined" NotificationType
+
+**Deliverable:** Admin can see all users, toggle roles, deactivate accounts, get notified on new sign-ins
+**Verify:** New Google sign-in → role defaults to "user". Deactivate user → immediate logout. Super-admin cannot be modified. Last-admin protection works.
+
+---
+
 ### Phase 11: Polish + Deploy
 **Duration:** 3-4 days | **Complexity:** Large
 
@@ -841,6 +899,7 @@ Add live progress bar to the Team Sync (Sync Now) button in Settings, matching t
 | Capacity Alert | Developer over 100% capacity | Warning | White (orange icon) |
 | Task Completed | Issue moved to `done` | Info (read style) | White (green icon, 50% opacity) |
 | Task Unblocked | Issue status changed from `blocked` | Info | White (blue icon) |
+| User Joined | New Google sign-in (first time) | Info | White (blue user icon) |
 
 ---
 
@@ -865,6 +924,9 @@ Add live progress bar to the Team Sync (Sync Now) button in Settings, matching t
 17. **Branch naming convention for JIRA keys:** `fix/PROD-5123`, `PROD-5123`, `PROD-5123_v1`, `fix_PROD-5123_v2`, `prod-5123` — all valid patterns that link to JIRA issue PROD-5123.
 18. **Deployment pipeline:** Feature Branch → `stage`/`stage-*` (staging) → `main-*` (production per site) → `main` (canonical sync after ~24h).
 19. **`stage` branch deploys to all staging sites** unless excluded by config. `main` is the final sync branch merged ~24h after live with no issues.
+20. **Super-admin protection:** `syed.haider@ki5.co.uk` is the system owner — always admin, cannot be deactivated or demoted. Enforced in auth callbacks and API endpoints.
+21. **User accounts are deactivated, never deleted.** Deactivated users cannot login. Immediate session invalidation via per-request DB check.
+22. **New Google sign-ins default to `user` role.** Admin must manually promote to `admin` from the Users page.
 
 ---
 

@@ -63,6 +63,11 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
           return null;
         }
 
+        // Block deactivated users
+        if (!user.isActive) {
+          return null;
+        }
+
         const passwordsMatch = await bcrypt.compare(password, user.hashedPassword);
 
         if (passwordsMatch) {

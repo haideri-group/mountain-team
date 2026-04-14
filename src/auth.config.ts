@@ -1,7 +1,9 @@
 import type { NextAuthConfig } from "next-auth";
 import { db } from "./lib/db/index";
-import { users } from "./lib/db/schema";
+import { users, notifications } from "./lib/db/schema";
 import { eq } from "drizzle-orm";
+
+const SUPER_ADMIN_EMAIL = "syed.haider@ki5.co.uk";
 
 export const authConfig = {
   trustHost: true,
@@ -11,12 +13,49 @@ export const authConfig = {
     signIn: "/login",
   },
   callbacks: {
+    async signIn({ user }) {
+      const email = user?.email;
+      if (!email) return true;
+
+      const [dbUser] = await db
+        .select({ isActive: users.isActive, email: users.email })
+        .from(users)
+        .where(eq(users.email, email))
+        .limit(1);
+
+      // First-time sign-in — allow (user will be created in jwt callback)
+      if (!dbUser) return true;
+
+      // Super-admin is never blocked
+      if (email === SUPER_ADMIN_EMAIL) {
+        await db
+          .update(users)
+          .set({ lastLoginAt: new Date() })
+          .where(eq(users.email, email));
+        return true;
+      }
+
+      // Block deactivated users
+      if (!dbUser.isActive) {
+        return "/login?error=AccountDeactivated";
+      }
+
+      // Update lastLoginAt on successful sign-in
+      await db
+        .update(users)
+        .set({ lastLoginAt: new Date() })
+        .where(eq(users.email, email));
+
+      return true;
+    },
+
     async jwt({ token, user, account }) {
       if (user) {
         token.role = user.role;
         token.id = user.id;
       }
-      // For Google OAuth: look up role from DB by email (user.role is undefined from Google)
+
+      // For Google OAuth: look up role from DB by email
       if (account?.provider === "google" && token.email) {
         const [dbUser] = await db
           .select()
@@ -28,18 +67,32 @@ export const authConfig = {
           token.role = dbUser.role;
           token.id = dbUser.id;
         } else {
-          // First-time Google sign-in: create user record as admin
-          // (only the admin uses Google OAuth in this app)
+          // First-time Google sign-in: create user record
+          const isSuperAdmin = token.email === SUPER_ADMIN_EMAIL;
           const id = `usr_${Date.now()}`;
+          const role = isSuperAdmin ? "admin" : "user";
+
           await db.insert(users).values({
             id,
             email: token.email,
             name: token.name || null,
-            role: "admin",
+            role,
             avatarUrl: (token.picture as string) || null,
+            lastLoginAt: new Date(),
           });
-          token.role = "admin";
+          token.role = role;
           token.id = id;
+
+          // Notify admins about new user
+          try {
+            await db.insert(notifications).values({
+              id: `notif_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+              type: "user_joined",
+              title: "New user signed in",
+              message: `${token.name || token.email} joined TeamFlow. Default role: ${role}.${!isSuperAdmin ? " Change their role from the Users page." : ""}`,
+              isRead: false,
+            });
+          } catch { /* non-fatal */ }
         }
 
         // Store Google OAuth tokens for directory API access
@@ -50,11 +103,33 @@ export const authConfig = {
           : 0;
       }
 
+      // Per-request DB check: re-validate isActive + role from DB
+      // Ensures deactivated users lose access immediately and role changes take effect instantly
+      if (token.id && !account) {
+        const [dbUser] = await db
+          .select({ role: users.role, isActive: users.isActive })
+          .from(users)
+          .where(eq(users.id, token.id as string))
+          .limit(1);
+
+        if (dbUser) {
+          // Super-admin always gets admin role
+          if (token.email === SUPER_ADMIN_EMAIL) {
+            token.role = "admin";
+          } else if (!dbUser.isActive) {
+            // Force sign-out for deactivated users
+            return {} as typeof token;
+          } else {
+            token.role = dbUser.role;
+          }
+        }
+      }
+
       // Refresh Google access token if expired
       if (
         token.googleRefreshToken &&
         token.googleTokenExpiry &&
-        Date.now() > (token.googleTokenExpiry as number) - 60000 // refresh 1 min before expiry
+        Date.now() > (token.googleTokenExpiry as number) - 60000
       ) {
         try {
           const res = await fetch("https://oauth2.googleapis.com/token", {
@@ -75,7 +150,7 @@ export const authConfig = {
             }
           }
         } catch {
-          // Refresh failed — token may be revoked. Keep existing (expired) token.
+          // Refresh failed — keep existing token
         }
       }
 
