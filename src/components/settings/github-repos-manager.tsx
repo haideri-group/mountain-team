@@ -315,8 +315,8 @@ export function GitHubReposManager() {
                 </div>
               )}
 
-              {/* Backfill result */}
-              {backfillResult && (
+              {/* Backfill result — scoped to the repo that was backfilled */}
+              {backfillResult && backfillRepoId === repo.id && (
                 <div className={`flex items-center gap-2 text-xs px-3 py-2 rounded-lg ${backfillResult.startsWith("Error") ? "bg-destructive/10 text-destructive" : "bg-emerald-50 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-400"}`}>
                   {backfillResult.startsWith("Error") ? (
                     <AlertTriangle className="h-3 w-3" />
