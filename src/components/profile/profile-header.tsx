@@ -158,11 +158,13 @@ function CopyEmail({ email }: { email: string }) {
           <Copy className="h-3 w-3 text-muted-foreground" />
         )}
       </span>
-      {copied && (
-        <span className="absolute -top-7 left-1/2 -translate-x-1/2 px-2 py-1 rounded-md bg-foreground text-background text-[10px] font-mono font-bold whitespace-nowrap animate-in fade-in slide-in-from-bottom-1 duration-200">
-          Copied!
-        </span>
-      )}
+      <span
+        className={`absolute -top-7 left-1/2 -translate-x-1/2 px-2 py-1 rounded-md bg-foreground text-background text-[10px] font-mono font-bold whitespace-nowrap transition-all duration-300 pointer-events-none ${
+          copied ? "opacity-100 translate-y-0" : "opacity-0 translate-y-1"
+        }`}
+      >
+        Copied!
+      </span>
     </button>
   );
 }
