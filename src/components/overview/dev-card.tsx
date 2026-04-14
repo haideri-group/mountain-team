@@ -6,6 +6,7 @@ import { Inbox, Check, Circle } from "lucide-react";
 import { StatusBadge } from "@/components/shared/status-badge";
 import { IssueStatusBadge } from "./issue-status-badge";
 import { IssueTypeIcon } from "@/components/shared/issue-type-icon";
+import { DeploymentIndicator } from "./deployment-indicator";
 import type { MemberStatus } from "@/types";
 
 interface EnrichedIssue {
@@ -21,6 +22,7 @@ interface EnrichedIssue {
   storyPoints: number | null;
   boardKey: string;
   boardColor: string;
+  deploymentStatus: "production" | "staging" | null;
 }
 
 interface DevCardMember {
@@ -128,6 +130,7 @@ export function DevCard({ member }: { member: DevCardMember }) {
                 <IssueTypeIcon type={member.currentIssue.type} size={12} />
                 {member.currentIssue.jiraKey}
               </Link>
+              <DeploymentIndicator status={member.currentIssue.deploymentStatus} />
               <IssueStatusBadge status={member.currentIssue.status} />
             </div>
             <p className="text-xs text-foreground leading-relaxed line-clamp-2">
@@ -165,6 +168,7 @@ export function DevCard({ member }: { member: DevCardMember }) {
                   <IssueTypeIcon type={issue.type} size={12} />
                   {issue.jiraKey}
                 </Link>
+                <DeploymentIndicator status={issue.deploymentStatus} />
                 <span className="text-xs text-muted-foreground truncate">{issue.title}</span>
               </div>
             ))}
@@ -195,6 +199,7 @@ export function DevCard({ member }: { member: DevCardMember }) {
                   <IssueTypeIcon type={issue.type} size={12} />
                   {issue.jiraKey}
                 </Link>
+                <DeploymentIndicator status={issue.deploymentStatus} />
                 <span className="text-xs text-muted-foreground truncate">{issue.title}</span>
               </div>
             ))}
