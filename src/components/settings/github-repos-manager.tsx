@@ -79,25 +79,52 @@ export function GitHubReposManager() {
   // Poll progress while backfilling
   useEffect(() => {
     if (backfillRepoId) {
+      let seenActive = false;
+      const startedAt = Date.now();
+
       const poll = async () => {
         try {
           const res = await fetch(`/api/github/repos/${backfillRepoId}/backfill`);
           if (res.ok) {
             const data = await res.json();
             setBackfillProgress(data.progress);
-            if (data.progress && (data.progress.phase === "done" || data.progress.phase === "failed" || data.progress.phase === "idle")) {
+
+            if (data.progress && (data.progress.phase === "fetching" || data.progress.phase === "processing")) {
+              seenActive = true;
+            }
+
+            // Only stop polling on done/failed (not idle — backfill may not have started yet)
+            if (data.progress && (data.progress.phase === "done" || data.progress.phase === "failed")) {
               setBackfillRepoId(null);
               setBackfillProgress(null);
               if (data.progress.phase === "done") {
                 setBackfillResult(`Backfill complete: ${data.progress.deploymentsCreated} deployments from ${data.progress.prsScanned} PRs`);
               }
             }
+            // If we saw activity then it went back to idle, stop (edge case)
+            if (data.progress?.phase === "idle" && seenActive) {
+              setBackfillRepoId(null);
+              setBackfillProgress(null);
+            }
+            // Safety timeout: if still idle after 15 seconds, stop polling
+            if (data.progress?.phase === "idle" && !seenActive && Date.now() - startedAt > 15000) {
+              setBackfillRepoId(null);
+              setBackfillProgress(null);
+            }
           }
         } catch { /* ignore */ }
       };
-      poll();
-      pollRef.current = setInterval(poll, 1000);
-      return () => { if (pollRef.current) clearInterval(pollRef.current); };
+
+      // Delay first poll by 1 second to let the POST reach the server
+      const initialDelay = setTimeout(() => {
+        poll();
+        pollRef.current = setInterval(poll, 1000);
+      }, 1000);
+
+      return () => {
+        clearTimeout(initialDelay);
+        if (pollRef.current) clearInterval(pollRef.current);
+      };
     } else {
       if (pollRef.current) clearInterval(pollRef.current);
       return;
