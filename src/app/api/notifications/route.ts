@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 import { db } from "@/lib/db";
 import { notifications, issues, team_members } from "@/lib/db/schema";
-import { desc, eq, and, gte, ne } from "drizzle-orm";
+import { desc, eq, and, gte, ne, like } from "drizzle-orm";
 import { auth } from "@/auth";
 import { withResolvedAvatar } from "@/lib/db/helpers";
 
@@ -24,10 +24,21 @@ export async function GET(request: NextRequest) {
 
     const conditions = [gte(notifications.createdAt, thirtyDaysAgo)];
 
-    // Non-admins should not see admin-only notifications
+    // Non-admins: hide admin-only types entirely
     if (!isAdmin) {
       conditions.push(ne(notifications.type, "user_joined"));
       conditions.push(ne(notifications.type, "overdue"));
+    }
+
+    // For non-admin users: find their team_member ID to scope aging notifications
+    let userMemberId: string | null = null;
+    if (!isAdmin && session.user.email) {
+      const [member] = await db
+        .select({ id: team_members.id })
+        .from(team_members)
+        .where(eq(team_members.email, session.user.email))
+        .limit(1);
+      userMemberId = member?.id ?? null;
     }
 
     if (typeFilter) {
@@ -36,12 +47,23 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    const result = await db
+    let result = await db
       .select()
       .from(notifications)
       .where(and(...conditions))
       .orderBy(desc(notifications.createdAt))
-      .limit(limit);
+      .limit(isAdmin ? limit : limit * 2); // fetch extra for non-admins since we filter below
+
+    // Non-admins: only see aging notifications for their own assigned tasks
+    if (!isAdmin) {
+      result = result.filter((n) => {
+        if (n.type === "aging") {
+          // Only show if assigned to this user's team member
+          return userMemberId && n.relatedMemberId === userMemberId;
+        }
+        return true; // other types pass through
+      }).slice(0, limit);
+    }
 
     // Enrich with related issue/member data
     const enriched = await Promise.all(
