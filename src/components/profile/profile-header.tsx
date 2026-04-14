@@ -129,7 +129,7 @@ function CopyEmail({ email }: { email: string }) {
     try {
       await navigator.clipboard.writeText(email);
       setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
+      setTimeout(() => setCopied(false), 1000);
     } catch {
       // Fallback for older browsers
       const textarea = document.createElement("textarea");
@@ -139,7 +139,7 @@ function CopyEmail({ email }: { email: string }) {
       document.execCommand("copy");
       document.body.removeChild(textarea);
       setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
+      setTimeout(() => setCopied(false), 1000);
     }
   };
 
