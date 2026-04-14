@@ -183,13 +183,41 @@ export async function matchFromDirectory(
 
   for (const member of members) {
     try {
+      // If member already has an email, search by email first for exact match
+      if (member.email) {
+        const peopleByEmail = await searchDirectory(accessToken, member.email);
+        const emailMatch = peopleByEmail.find((p) =>
+          p.emailAddresses?.some(
+            (e) => e.value?.toLowerCase() === member.email!.toLowerCase(),
+          ),
+        );
+        if (emailMatch) {
+          matchMap.set(member.id, {
+            email: null, // already have email
+            photoUrl: emailMatch.photos?.[0]?.url || null,
+          });
+          continue;
+        }
+      }
+
+      // Fallback: search by name
       const result = await searchDirectoryByName(
         accessToken,
         member.displayName,
       );
       if (result) {
+        // If member has email, verify the match email contains part of the member's name
+        // to avoid false positives (e.g., "Danish Saeed" matching for "Danish Mahmood")
+        if (member.email && result.email) {
+          const memberPrefix = member.email.split("@")[0].toLowerCase();
+          const matchPrefix = result.email.split("@")[0].toLowerCase();
+          if (memberPrefix !== matchPrefix && !matchPrefix.includes(memberPrefix) && !memberPrefix.includes(matchPrefix)) {
+            // Email prefixes don't match — likely a false positive, skip
+            continue;
+          }
+        }
         matchMap.set(member.id, {
-          email: member.email ? null : result.email, // only set email if missing
+          email: member.email ? null : result.email,
           photoUrl: result.photoUrl,
         });
       }
