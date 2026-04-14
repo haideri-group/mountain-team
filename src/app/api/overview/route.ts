@@ -32,14 +32,17 @@ export async function GET() {
     // Build board lookup for colors
     const boardMap = new Map(trackedBoards.map((b) => [b.id, b]));
 
-    // Build deployment status lookup per jiraKey
-    // For each issue, find the highest deployment environment (production > staging > null)
-    const allDeployments = await db
-      .select({ jiraKey: deployments.jiraKey, environment: deployments.environment })
-      .from(deployments);
+    // Build deployment status lookup per jiraKey (scoped to current issues only)
+    const issueKeys = allIssues.map((i) => i.jiraKey);
+    const matchingDeployments = issueKeys.length > 0
+      ? await db
+          .select({ jiraKey: deployments.jiraKey, environment: deployments.environment })
+          .from(deployments)
+          .where(inArray(deployments.jiraKey, issueKeys))
+      : [];
 
     const deploymentStatusMap = new Map<string, "production" | "staging">();
-    for (const d of allDeployments) {
+    for (const d of matchingDeployments) {
       const current = deploymentStatusMap.get(d.jiraKey);
       if (d.environment === "production" || d.environment === "canonical") {
         deploymentStatusMap.set(d.jiraKey, "production");
