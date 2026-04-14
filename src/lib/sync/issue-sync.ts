@@ -11,6 +11,8 @@ import {
   buildIncrementalSyncJql,
 } from "@/lib/jira/issues";
 import { normalizeIssue, calculateCycleTime, loadStatusMappingCache, invalidateStatusMappingCache } from "@/lib/jira/normalizer";
+import { getAuthHeader, getBaseUrl } from "@/lib/jira/client";
+import { recordDeployment } from "@/lib/github/deployments";
 
 // --- Types ---
 
@@ -407,9 +409,6 @@ export async function syncSingleIssue(
   // Sync deployments from JIRA dev-status (merged PRs → deployment branches)
   let deploymentsRecorded = 0;
   try {
-    const { getAuthHeader, getBaseUrl } = await import("@/lib/jira/client");
-    const { recordDeployment } = await import("@/lib/github/deployments");
-
     const issueId = encodeURIComponent(raw.id);
     const devStatusUrl = `${getBaseUrl()}/rest/dev-status/latest/issue/detail?issueId=${issueId}&applicationType=GitHub&dataType=pullrequest`;
     const devRes = await fetch(devStatusUrl, {
