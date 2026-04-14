@@ -1,6 +1,7 @@
 "use client";
 
-import { Mail, Calendar, UserX, ExternalLink, Users } from "lucide-react";
+import { useState } from "react";
+import { Mail, Calendar, UserX, ExternalLink, Users, Check, Copy } from "lucide-react";
 import { StatusBadge } from "@/components/shared/status-badge";
 import type { MemberStatus } from "@/types";
 
@@ -103,10 +104,7 @@ export function ProfileHeader({ member }: ProfileHeaderProps) {
 
             <div className="flex items-center gap-5 mt-3 text-xs text-muted-foreground">
               {member.email && (
-                <span className="flex items-center gap-1.5">
-                  <Mail className="h-3.5 w-3.5" />
-                  {member.email}
-                </span>
+                <CopyEmail email={member.email} />
               )}
               {member.joinedDate && (
                 <span className="flex items-center gap-1.5">
@@ -121,5 +119,50 @@ export function ProfileHeader({ member }: ProfileHeaderProps) {
         </div>
       </div>
     </div>
+  );
+}
+
+function CopyEmail({ email }: { email: string }) {
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(email);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      // Fallback for older browsers
+      const textarea = document.createElement("textarea");
+      textarea.value = email;
+      document.body.appendChild(textarea);
+      textarea.select();
+      document.execCommand("copy");
+      document.body.removeChild(textarea);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    }
+  };
+
+  return (
+    <button
+      onClick={handleCopy}
+      className="relative flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors group cursor-pointer"
+      title="Click to copy email"
+    >
+      <Mail className="h-3.5 w-3.5" />
+      <span>{email}</span>
+      <span className="opacity-0 group-hover:opacity-100 transition-opacity">
+        {copied ? (
+          <Check className="h-3 w-3 text-emerald-500" />
+        ) : (
+          <Copy className="h-3 w-3 text-muted-foreground" />
+        )}
+      </span>
+      {copied && (
+        <span className="absolute -top-7 left-1/2 -translate-x-1/2 px-2 py-1 rounded-md bg-foreground text-background text-[10px] font-mono font-bold whitespace-nowrap animate-in fade-in slide-in-from-bottom-1 duration-200">
+          Copied!
+        </span>
+      )}
+    </button>
   );
 }
