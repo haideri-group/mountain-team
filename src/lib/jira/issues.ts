@@ -49,6 +49,14 @@ let cachedFieldIds: CustomFieldIds | null = null;
 let cachedAt = 0;
 const CACHE_TTL = 24 * 60 * 60 * 1000; // 24 hours
 
+// --- Shared JIRA field list (single source of truth) ---
+
+const BASE_ISSUE_FIELDS = [
+  "summary", "status", "priority", "issuetype", "assignee", "project",
+  "labels", "description", "duedate", "created", "updated", "resolutiondate",
+  "statuscategorychangedate",
+];
+
 // --- Retry-aware fetch ---
 
 async function fetchWithRetry(
@@ -181,22 +189,7 @@ export async function fetchIssuesByJql(
   jql: string,
   customFields: CustomFieldIds,
 ): Promise<JiraIssueRaw[]> {
-  const fields = [
-    "summary",
-    "status",
-    "priority",
-    "issuetype",
-    "assignee",
-    "project",
-    "labels",
-    "duedate",
-    "created",
-    "updated",
-    "resolutiondate",
-    "statuscategorychangedate",
-    "description",
-  ];
-
+  const fields = [...BASE_ISSUE_FIELDS];
   if (customFields.storyPoints) fields.push(customFields.storyPoints);
   if (customFields.startDate) fields.push(customFields.startDate);
   fields.push("customfield_10795"); // Request Priority (P1-P4)
@@ -315,12 +308,7 @@ export async function fetchSingleIssue(
       "customfield_10805", // brands
     ].filter(Boolean);
 
-    const fields = [
-      "summary", "status", "priority", "issuetype", "assignee", "project",
-      "labels", "description", "duedate", "created", "updated", "resolutiondate",
-      "statuscategorychangedate",
-      ...extraFields,
-    ].join(",");
+    const fields = [...BASE_ISSUE_FIELDS, ...extraFields].join(",");
 
     const res = await fetchWithRetry(
       `${baseUrl}/rest/api/3/issue/${jiraKey}?expand=renderedFields&fields=${fields}`,
