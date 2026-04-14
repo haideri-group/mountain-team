@@ -1,4 +1,7 @@
 import type { JiraIssueRaw, CustomFieldIds } from "./issues";
+import { db } from "@/lib/db";
+import { statusMappings } from "@/lib/db/schema";
+import { eq } from "drizzle-orm";
 
 // --- App Enum Values ---
 
@@ -6,7 +9,7 @@ type IssueStatus = "todo" | "on_hold" | "in_progress" | "in_review" | "ready_for
 type IssuePriority = "highest" | "high" | "medium" | "low" | "lowest";
 type IssueType = "bug" | "story" | "cms_change" | "enhancement" | "task" | "subtask";
 
-// --- Status Mapping ---
+// --- Status Mapping (Code-level defaults, overridden by DB) ---
 
 const STATUS_MAP: Record<string, IssueStatus> = {
   "to do": "todo",
@@ -14,11 +17,16 @@ const STATUS_MAP: Record<string, IssueStatus> = {
   "open": "todo",
   "new": "todo",
   "selected for development": "todo",
+  "reopened": "todo",
+  "reopend": "todo",
+  "re opened": "todo",
+  "reopen": "todo",
   "on hold": "on_hold",
   "triage": "on_hold",
   "awaiting triage": "on_hold",
   "pending": "on_hold",
   "blocked": "on_hold",
+  "merge conflict": "on_hold",
   "in progress": "in_progress",
   "in development": "in_progress",
   "inprogress": "in_progress",
@@ -64,10 +72,6 @@ const STATUS_MAP: Record<string, IssueStatus> = {
   "won't do": "closed",
   "rejected": "closed",
   "declined": "closed",
-  "reopened": "todo",
-  "reopend": "todo",
-  "re opened": "todo",
-  "reopen": "todo",
 };
 
 const CATEGORY_FALLBACK: Record<string, IssueStatus> = {
@@ -76,14 +80,93 @@ const CATEGORY_FALLBACK: Record<string, IssueStatus> = {
   done: "done",
 };
 
-function mapStatus(status: { name: string; statusCategory: { key: string } }): IssueStatus {
-  const mapped = STATUS_MAP[status.name.toLowerCase()];
-  if (mapped) return mapped;
+// --- DB-Cached Status Mapping ---
 
-  const fallback = CATEGORY_FALLBACK[status.statusCategory.key];
-  if (fallback) return fallback;
+let _mappingCache: Map<string, { workflowStage: IssueStatus }> | null = null;
+let _cacheLoadedAt = 0;
+const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
 
-  return "todo";
+export async function loadStatusMappingCache(): Promise<void> {
+  const rows = await db.select().from(statusMappings);
+  _mappingCache = new Map();
+  for (const row of rows) {
+    _mappingCache.set(row.jiraStatusName.toLowerCase(), {
+      workflowStage: row.workflowStage as IssueStatus,
+    });
+  }
+  _cacheLoadedAt = Date.now();
+}
+
+export function invalidateStatusMappingCache(): void {
+  _mappingCache = null;
+  _cacheLoadedAt = 0;
+}
+
+async function ensureCache(): Promise<Map<string, { workflowStage: IssueStatus }>> {
+  if (!_mappingCache || Date.now() - _cacheLoadedAt > CACHE_TTL) {
+    await loadStatusMappingCache();
+  }
+  return _mappingCache!;
+}
+
+// Auto-create a mapping in the DB for a new JIRA status
+async function autoCreateMapping(
+  jiraStatusName: string,
+  workflowStage: IssueStatus,
+  statusCategory: string,
+): Promise<void> {
+  try {
+    const id = `smap_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+    await db
+      .insert(statusMappings)
+      .values({
+        id,
+        jiraStatusName,
+        workflowStage,
+        statusCategory,
+        isAutoMapped: true,
+      })
+      .onDuplicateKeyUpdate({
+        set: { statusCategory }, // no-op update on conflict
+      });
+    // Update cache
+    if (_mappingCache) {
+      _mappingCache.set(jiraStatusName.toLowerCase(), { workflowStage });
+    }
+  } catch {
+    // Non-fatal — mapping will be created on next attempt
+  }
+}
+
+// --- Async mapStatus (DB-first, code fallback, auto-create on miss) ---
+
+async function mapStatus(
+  status: { name: string; statusCategory: { key: string } },
+): Promise<{ workflowStage: IssueStatus; jiraStatusName: string }> {
+  const jiraName = status.name;
+  const key = jiraName.toLowerCase();
+
+  // 1. Check DB cache
+  const cache = await ensureCache();
+  const dbMapping = cache.get(key);
+  if (dbMapping) {
+    return { workflowStage: dbMapping.workflowStage, jiraStatusName: jiraName };
+  }
+
+  // 2. Check code-level STATUS_MAP
+  const codeMapped = STATUS_MAP[key];
+  if (codeMapped) {
+    // Auto-create in DB so it shows up in Settings UI
+    await autoCreateMapping(jiraName, codeMapped, status.statusCategory.key);
+    return { workflowStage: codeMapped, jiraStatusName: jiraName };
+  }
+
+  // 3. Fallback to statusCategory
+  const categoryFallback = CATEGORY_FALLBACK[status.statusCategory.key] || "in_progress";
+  await autoCreateMapping(jiraName, categoryFallback, status.statusCategory.key);
+  console.warn(`Auto-mapped unknown JIRA status "${jiraName}" (category: ${status.statusCategory.key}) → ${categoryFallback}`);
+
+  return { workflowStage: categoryFallback, jiraStatusName: jiraName };
 }
 
 // --- Priority Mapping ---
@@ -151,6 +234,7 @@ export interface NormalizedIssue {
   assigneeAccountId: string | null;
   title: string;
   status: IssueStatus;
+  jiraStatusName: string;
   priority: IssuePriority | null;
   type: IssueType | null;
   startDate: string | null;
@@ -167,20 +251,20 @@ export interface NormalizedIssue {
   jiraUpdatedAt: string | null;
 }
 
-// --- Main Normalizer ---
+// --- Main Normalizer (now async) ---
 
-export function normalizeIssue(
+export async function normalizeIssue(
   raw: JiraIssueRaw,
   customFields: CustomFieldIds,
-): NormalizedIssue {
-  const status = mapStatus(raw.fields.status);
+): Promise<NormalizedIssue> {
+  const { workflowStage, jiraStatusName } = await mapStatus(raw.fields.status);
 
   // Extract start date from custom field
   let startDate: string | null = null;
   if (customFields.startDate) {
     const val = raw.fields[customFields.startDate];
     if (typeof val === "string") {
-      startDate = val.split("T")[0]; // normalize to YYYY-MM-DD
+      startDate = val.split("T")[0];
     }
   }
 
@@ -190,11 +274,8 @@ export function normalizeIssue(
     : null;
 
   // Extract completed date for done/closed issues
-  // Priority: resolutiondate → statuscategorychangedate → updated
-  // statuscategorychangedate is the exact moment the status category changed to "Done"
-  // (kanban boards often skip resolutiondate but always have statuscategorychangedate)
   let completedDate: string | null = null;
-  if (status === "done" || status === "closed") {
+  if (workflowStage === "done" || workflowStage === "closed") {
     const statusCategoryChangeDate = raw.fields.statuscategorychangedate as string | undefined;
     if (raw.fields.resolutiondate) {
       completedDate = raw.fields.resolutiondate;
@@ -219,7 +300,8 @@ export function normalizeIssue(
     projectKey: raw.fields.project.key,
     assigneeAccountId: raw.fields.assignee?.accountId ?? null,
     title: raw.fields.summary,
-    status,
+    status: workflowStage,
+    jiraStatusName,
     priority: mapPriority(raw.fields.priority),
     type: mapType(raw.fields.issuetype),
     startDate,

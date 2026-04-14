@@ -85,7 +85,7 @@ export async function POST(request: Request) {
 
     // For created/updated events, normalize and upsert
     const customFields = await discoverCustomFieldIds();
-    const normalized = normalizeIssue(issue, customFields);
+    const normalized = await normalizeIssue(issue, customFields);
 
     // Fetch rendered description (webhooks don't include renderedFields)
     let renderedDescription: string | null = normalized.description;
@@ -176,6 +176,7 @@ export async function POST(request: Request) {
         assigneeId,
         title: normalized.title,
         status: normalized.status,
+        jiraStatusName: normalized.jiraStatusName,
         priority: normalized.priority,
         type: normalized.type,
         startDate: normalized.startDate,
@@ -196,6 +197,7 @@ export async function POST(request: Request) {
           assigneeId,
           title: normalized.title,
           status: normalized.status,
+        jiraStatusName: normalized.jiraStatusName,
           priority: normalized.priority,
           type: normalized.type,
           startDate: normalized.startDate,

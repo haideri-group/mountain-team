@@ -50,7 +50,8 @@ export const issues = mysqlTable("issues", {
   boardId: varchar("boardId", { length: 191 }).references(() => boards.id).notNull(),
   assigneeId: varchar("assigneeId", { length: 191 }).references(() => team_members.id),
   title: varchar("title", { length: 500 }).notNull(),
-  status: mysqlEnum("status", ["todo", "on_hold", "in_progress", "in_review", "ready_for_testing", "ready_for_live", "post_live_testing", "done", "closed"]).notNull(),
+  status: varchar("status", { length: 50 }).notNull(),
+  jiraStatusName: varchar("jiraStatusName", { length: 255 }),
   priority: mysqlEnum("priority", ["highest", "high", "medium", "low", "lowest"]),
   type: mysqlEnum("type", ["bug", "story", "cms_change", "enhancement", "task", "subtask"]),
   startDate: varchar("startDate", { length: 50 }),
@@ -78,6 +79,16 @@ export const syncLogs = mysqlTable("sync_logs", {
   issueCount: int("issueCount").default(0),
   memberCount: int("memberCount").default(0),
   error: text("error"),
+  createdAt: timestamp("createdAt").defaultNow(),
+});
+
+export const statusMappings = mysqlTable("status_mappings", {
+  id: varchar("id", { length: 191 }).primaryKey(),
+  jiraStatusName: varchar("jiraStatusName", { length: 255 }).unique().notNull(),
+  workflowStage: varchar("workflowStage", { length: 50 }).notNull(),
+  displayColor: varchar("displayColor", { length: 50 }),
+  statusCategory: varchar("statusCategory", { length: 50 }),
+  isAutoMapped: boolean("isAutoMapped").default(false),
   createdAt: timestamp("createdAt").defaultNow(),
 });
 

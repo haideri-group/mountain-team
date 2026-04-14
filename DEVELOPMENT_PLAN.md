@@ -874,6 +874,55 @@ Admin-only page to view and manage all application users, their roles, and accou
 
 ---
 
+### Phase 10.10: Dynamic Status Management System
+**Duration:** 3-4 days | **Complexity:** Large
+
+Replace hardcoded JIRA status mapping with a database-driven, configurable system. Shows exact JIRA status names on badges while maintaining fixed workflow stages for calculations.
+
+**Problem:** JIRA has 713+ statuses. Every new status (Post Live Testing, Merge Conflict, Developed) requires a code change to the normalizer. Statuses display normalized labels instead of real JIRA names.
+
+**Two-layer model:**
+- `issues.jiraStatusName` (varchar) — exact JIRA status name shown in badges (e.g., "Post Live Testing")
+- `issues.status` (varchar, was ENUM) — workflow stage for calculations (e.g., "post_live_testing")
+
+**9 fixed workflow stages** (calculation buckets, never change):
+`todo`, `on_hold`, `in_progress`, `in_review`, `ready_for_testing`, `ready_for_live`, `post_live_testing`, `done`, `closed`
+
+**New table: `status_mappings`** — maps JIRA status names → workflow stages:
+- Pre-seeded with 50+ mappings from current STATUS_MAP
+- Unknown statuses auto-created during sync using JIRA's statusCategory fallback, marked `isAutoMapped = true`
+- Admin reviews and corrects auto-mapped statuses via Settings UI
+- In-memory cache during sync for performance
+
+**Schema changes:**
+- `issues.status`: ENUM → VARCHAR (no data loss)
+- Add `issues.jiraStatusName VARCHAR(255)` — populated on sync
+- New `status_mappings` table (jiraStatusName UNIQUE, workflowStage, isAutoMapped, statusCategory)
+
+**Normalizer refactor:**
+- `mapStatus()` becomes async: checks DB cache → falls back to code STATUS_MAP → auto-creates on miss
+- Returns `{ workflowStage, jiraStatusName }` — both persisted to issues table
+- `normalizeIssue()` becomes async (callers already in async contexts)
+
+**Badge update:**
+- `IssueStatusBadge` accepts new `jiraStatusName` prop
+- Displays JIRA name as label, uses workflow stage for color
+- Falls back to normalized label when jiraStatusName not available
+
+**Settings UI: Status Mapping Manager:**
+- Table of all mappings: JIRA Status Name | Workflow Stage dropdown | Category | Auto-Mapped?
+- Filter to show only unreviewed auto-mapped entries
+- Inline edit: change workflow stage → saves immediately
+- "Apply to existing issues" button: retroactively update issues with changed mapping
+
+**Files to create (4):** status-mappings API (GET/PATCH + apply endpoint), StatusMappingManager component, seed script
+**Files to modify (15+):** schema, types, normalizer, sync, webhook, badge + all components passing status to badge
+
+**Deliverable:** Exact JIRA status names on all badges, configurable mapping via Settings, auto-detection of new statuses
+**Verify:** Sync → badges show JIRA names. Add new board with unknown status → auto-mapped. Change mapping in Settings → Apply → issues update.
+
+---
+
 ### Phase 11: Polish + Deploy
 **Duration:** 3-4 days | **Complexity:** Large
 

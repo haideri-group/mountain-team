@@ -26,7 +26,12 @@ const statusLabels: Record<string, string> = {
   closed: "Closed",
 };
 
-export function IssueStatusBadge({ status }: { status: string }) {
+interface IssueStatusBadgeProps {
+  status: string;
+  jiraStatusName?: string | null;
+}
+
+export function IssueStatusBadge({ status, jiraStatusName }: IssueStatusBadgeProps) {
   return (
     <span
       className={cn(
@@ -34,7 +39,7 @@ export function IssueStatusBadge({ status }: { status: string }) {
         statusStyles[status] || statusStyles.todo,
       )}
     >
-      {statusLabels[status] || status}
+      {jiraStatusName || statusLabels[status] || status}
     </span>
   );
 }

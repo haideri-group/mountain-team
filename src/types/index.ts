@@ -1,7 +1,13 @@
 // Core enums
 export type UserRole = "admin" | "user";
 export type MemberStatus = "active" | "on_leave" | "departed";
-export type IssueStatus = "todo" | "on_hold" | "in_progress" | "in_review" | "ready_for_testing" | "ready_for_live" | "post_live_testing" | "done" | "closed";
+export type WorkflowStage = "todo" | "on_hold" | "in_progress" | "in_review" | "ready_for_testing" | "ready_for_live" | "post_live_testing" | "done" | "closed";
+export type IssueStatus = WorkflowStage; // backward compat
+
+export const WORKFLOW_STAGES: WorkflowStage[] = [
+  "todo", "on_hold", "in_progress", "in_review", "ready_for_testing",
+  "ready_for_live", "post_live_testing", "done", "closed",
+];
 export type IssuePriority = "highest" | "high" | "medium" | "low" | "lowest";
 export type IssueType = "bug" | "story" | "cms_change" | "enhancement" | "task" | "subtask";
 export type SyncType = "full" | "incremental" | "manual" | "team_sync";

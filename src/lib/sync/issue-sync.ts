@@ -9,7 +9,7 @@ import {
   buildFullSyncJql,
   buildIncrementalSyncJql,
 } from "@/lib/jira/issues";
-import { normalizeIssue, calculateCycleTime } from "@/lib/jira/normalizer";
+import { normalizeIssue, calculateCycleTime, loadStatusMappingCache, invalidateStatusMappingCache } from "@/lib/jira/normalizer";
 
 // --- Types ---
 
@@ -99,9 +99,10 @@ async function syncIssues(type: IssueSyncType, filterBoardKey?: string): Promise
     allMembers.map((m) => [m.jiraAccountId, m]),
   );
 
-  // 3. Discover custom field IDs
+  // 3. Discover custom field IDs + load status mapping cache
   updateProgress({ message: "Discovering JIRA custom fields..." });
   const customFields = await discoverCustomFieldIds();
+  await loadStatusMappingCache();
 
   // 4. Build JQL — sync issues assigned to team members OR with Frontend label
   const frontendLabel = process.env.JIRA_FRONTEND_LABEL || "Frontend";
@@ -155,7 +156,7 @@ async function syncIssues(type: IssueSyncType, filterBoardKey?: string): Promise
   let processedCount = 0;
   for (const raw of rawIssues) {
     try {
-      const normalized = normalizeIssue(raw, customFields);
+      const normalized = await normalizeIssue(raw, customFields);
 
       // Resolve board
       const board = boardByKey.get(normalized.projectKey);
@@ -211,6 +212,7 @@ async function syncIssues(type: IssueSyncType, filterBoardKey?: string): Promise
           assigneeId: member?.id || null,
           title: normalized.title,
           status: normalized.status,
+          jiraStatusName: normalized.jiraStatusName,
           priority: normalized.priority,
           type: normalized.type,
           startDate: normalized.startDate,
@@ -232,6 +234,7 @@ async function syncIssues(type: IssueSyncType, filterBoardKey?: string): Promise
             assigneeId: member?.id || null,
             title: normalized.title,
             status: normalized.status,
+          jiraStatusName: normalized.jiraStatusName,
             priority: normalized.priority,
             type: normalized.type,
             startDate: normalized.startDate,
