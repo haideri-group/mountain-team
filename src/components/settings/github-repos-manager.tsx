@@ -48,6 +48,7 @@ export function GitHubReposManager() {
   const [showAddPanel, setShowAddPanel] = useState(false);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [backfillResult, setBackfillResult] = useState<string | null>(null);
+  const [backfillResultRepoId, setBackfillResultRepoId] = useState<string | null>(null);
   const [backfillRepoId, setBackfillRepoId] = useState<string | null>(null);
   const [backfillProgress, setBackfillProgress] = useState<{
     phase: string; message: string; prsScanned: number; prsTotal: number; deploymentsCreated: number;
@@ -95,6 +96,7 @@ export function GitHubReposManager() {
 
             // Only stop polling on done/failed (not idle — backfill may not have started yet)
             if (data.progress && (data.progress.phase === "done" || data.progress.phase === "failed")) {
+              setBackfillResultRepoId(backfillRepoId);
               setBackfillRepoId(null);
               setBackfillProgress(null);
               setActionLoading(null);
@@ -164,6 +166,7 @@ export function GitHubReposManager() {
   const handleBackfill = (repo: GitHubRepo) => {
     setActionLoading(`backfill_${repo.id}`);
     setBackfillResult(null);
+    setBackfillResultRepoId(null);
     setBackfillRepoId(repo.id);
 
     // Fire-and-forget — polling handles the lifecycle
@@ -174,6 +177,7 @@ export function GitHubReposManager() {
         // HTTP error
         if (!res.ok) {
           setBackfillResult(`Error: ${data?.error || "Backfill failed"}`);
+          setBackfillResultRepoId(repo.id);
           setBackfillRepoId(null);
           setActionLoading(null);
           return;
@@ -182,6 +186,7 @@ export function GitHubReposManager() {
         // Logical error — HTTP 200 but payload indicates failure
         if (data?.error || data?.success === false) {
           setBackfillResult(`Error: ${data.error || "Backfill returned an error"}`);
+          setBackfillResultRepoId(repo.id);
           setBackfillRepoId(null);
           setActionLoading(null);
           return;
@@ -192,10 +197,12 @@ export function GitHubReposManager() {
         // If there are partial errors, show them as warnings
         if (data?.errors?.length > 0) {
           setBackfillResult(`Completed with warnings: ${data.errors.join(", ")}`);
+          setBackfillResultRepoId(repo.id);
         }
       })
       .catch(() => {
         setBackfillResult("Error: Failed to connect");
+        setBackfillResultRepoId(repo.id);
         setBackfillRepoId(null);
         setActionLoading(null);
       });
@@ -363,7 +370,7 @@ export function GitHubReposManager() {
               )}
 
               {/* Backfill result — scoped to the repo that was backfilled */}
-              {backfillResult && backfillRepoId === repo.id && (
+              {backfillResult && backfillResultRepoId === repo.id && (
                 <div className={`flex items-center gap-2 text-xs px-3 py-2 rounded-lg ${backfillResult.startsWith("Error") ? "bg-destructive/10 text-destructive" : "bg-emerald-50 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-400"}`}>
                   {backfillResult.startsWith("Error") ? (
                     <AlertTriangle className="h-3 w-3" />
