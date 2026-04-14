@@ -40,7 +40,7 @@ export function SidebarNav({ mainItems, systemItems }: SidebarNavProps) {
   return (
     <div className="flex-1 overflow-y-auto py-6 px-4 space-y-8">
       <div>
-        <h4 className="mb-4 px-2 text-xs font-semibold tracking-widest text-muted uppercase font-mono">
+        <h4 className="mb-4 px-2 text-xs font-semibold tracking-widest text-slate-500 uppercase font-mono">
           Main
         </h4>
         <nav className="space-y-1">
@@ -58,7 +58,7 @@ export function SidebarNav({ mainItems, systemItems }: SidebarNavProps) {
 
       {systemItems.length > 0 && (
         <div>
-          <h4 className="mb-4 px-2 text-xs font-semibold tracking-widest text-muted uppercase font-mono">
+          <h4 className="mb-4 px-2 text-xs font-semibold tracking-widest text-slate-500 uppercase font-mono">
             System
           </h4>
           <nav className="space-y-1">
