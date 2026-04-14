@@ -24,6 +24,7 @@ export async function GET() {
     // Non-admins should not count admin-only notifications
     if (!isAdmin) {
       conditions.push(ne(notifications.type, "user_joined"));
+      conditions.push(ne(notifications.type, "overdue"));
     }
 
     const [result] = await db

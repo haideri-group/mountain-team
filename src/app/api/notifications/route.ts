@@ -27,6 +27,7 @@ export async function GET(request: NextRequest) {
     // Non-admins should not see admin-only notifications
     if (!isAdmin) {
       conditions.push(ne(notifications.type, "user_joined"));
+      conditions.push(ne(notifications.type, "overdue"));
     }
 
     if (typeFilter) {
