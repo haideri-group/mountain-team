@@ -131,24 +131,27 @@ export function GitHubReposManager() {
     }
   };
 
-  const handleBackfill = async (repo: GitHubRepo) => {
+  const handleBackfill = (repo: GitHubRepo) => {
     setActionLoading(`backfill_${repo.id}`);
     setBackfillResult(null);
     setBackfillRepoId(repo.id);
 
-    try {
-      const res = await fetch(`/api/github/repos/${repo.id}/backfill`, { method: "POST" });
-      const data = await res.json();
-      if (!res.ok) {
-        setBackfillResult(`Error: ${data.error || "Backfill failed"}`);
-      }
-      // Result is handled by polling (progress phase → done)
-    } catch {
-      setBackfillResult("Error: Failed to connect");
-      setBackfillRepoId(null);
-    } finally {
-      setActionLoading(null);
-    }
+    // Fire-and-forget — polling handles the lifecycle
+    fetch(`/api/github/repos/${repo.id}/backfill`, { method: "POST" })
+      .then(async (res) => {
+        if (!res.ok) {
+          const data = await res.json();
+          setBackfillResult(`Error: ${data.error || "Backfill failed"}`);
+          setBackfillRepoId(null);
+        }
+      })
+      .catch(() => {
+        setBackfillResult("Error: Failed to connect");
+        setBackfillRepoId(null);
+      })
+      .finally(() => {
+        setActionLoading(null);
+      });
   };
 
   return (
