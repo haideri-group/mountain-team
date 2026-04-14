@@ -501,7 +501,7 @@ export async function GET(request: NextRequest) {
 
     const boardHealth = trackedBoards.map((b) => {
       const boardIssues = filteredIssues.filter((i) => i.boardId === b.id);
-      const activeStatuses = ["todo", "on_hold", "in_progress", "in_review", "ready_for_testing", "ready_for_live"];
+      const activeStatuses = ["todo", "on_hold", "in_progress", "in_review", "ready_for_testing", "ready_for_live", "post_live_testing"];
 
       return {
         boardKey: b.jiraKey,

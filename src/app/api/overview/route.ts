@@ -136,7 +136,7 @@ export async function GET() {
     membersWithIssues.sort((a, b) => b.workloadPercentage - a.workloadPercentage);
 
     // Compute overview metrics
-    const activeStatuses = ["todo", "on_hold", "in_progress", "in_review", "ready_for_testing", "ready_for_live"];
+    const activeStatuses = ["todo", "on_hold", "in_progress", "in_review", "ready_for_testing", "ready_for_live", "post_live_testing"];
     const today = new Date().toISOString().split("T")[0];
 
     const metrics = {

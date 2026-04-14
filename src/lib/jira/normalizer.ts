@@ -2,7 +2,7 @@ import type { JiraIssueRaw, CustomFieldIds } from "./issues";
 
 // --- App Enum Values ---
 
-type IssueStatus = "todo" | "on_hold" | "in_progress" | "in_review" | "ready_for_testing" | "ready_for_live" | "done" | "closed";
+type IssueStatus = "todo" | "on_hold" | "in_progress" | "in_review" | "ready_for_testing" | "ready_for_live" | "post_live_testing" | "done" | "closed";
 type IssuePriority = "highest" | "high" | "medium" | "low" | "lowest";
 type IssueType = "bug" | "story" | "cms_change" | "enhancement" | "task" | "subtask";
 
@@ -21,25 +21,53 @@ const STATUS_MAP: Record<string, IssueStatus> = {
   "blocked": "on_hold",
   "in progress": "in_progress",
   "in development": "in_progress",
+  "inprogress": "in_progress",
   "in review": "in_review",
   "code review": "in_review",
+  "code reveiw": "in_review",
   "peer review": "in_review",
+  "developed": "in_review",
   "ready for testing": "ready_for_testing",
+  "ready for testin": "ready_for_testing",
+  "ready for end to end test": "ready_for_testing",
+  "ready for end to end testing": "ready_for_testing",
   "in testing": "ready_for_testing",
+  "testing": "ready_for_testing",
+  "testing phase": "ready_for_testing",
   "qa": "ready_for_testing",
+  "qa tes": "ready_for_testing",
   "ready for qa": "ready_for_testing",
+  "user acceptance testing": "ready_for_testing",
+  "test complete pending bugs": "ready_for_testing",
   "ready for live": "ready_for_live",
   "ready for deployment": "ready_for_live",
   "ready for release": "ready_for_live",
   "ready for deploy": "ready_for_live",
+  "ready to deploy": "ready_for_live",
+  "ready for production": "ready_for_live",
+  "ready for delivery": "ready_for_live",
+  "published live": "ready_for_live",
+  "post live testing": "post_live_testing",
+  "post-live testing": "post_live_testing",
+  "postlive testing": "post_live_testing",
+  "post live": "post_live_testing",
+  "plt": "post_live_testing",
+  "hypercare": "post_live_testing",
   "done": "done",
   "resolved": "done",
+  "complete": "done",
+  "ticket completed": "done",
+  "launched": "done",
   "closed": "closed",
   "cancelled": "closed",
   "canceled": "closed",
   "won't do": "closed",
   "rejected": "closed",
   "declined": "closed",
+  "reopened": "todo",
+  "reopend": "todo",
+  "re opened": "todo",
+  "reopen": "todo",
 };
 
 const CATEGORY_FALLBACK: Record<string, IssueStatus> = {

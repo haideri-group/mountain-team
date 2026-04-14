@@ -257,6 +257,7 @@ export function TaskHistoryTable({ issues, boards }: TaskHistoryTableProps) {
             <option value="in_review">In Review</option>
             <option value="ready_for_testing">Ready for Testing</option>
             <option value="ready_for_live">Ready for Live</option>
+            <option value="post_live_testing">Post Live Testing</option>
             <option value="done">Done</option>
             <option value="closed">Closed</option>
           </select>
