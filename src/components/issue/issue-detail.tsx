@@ -12,6 +12,8 @@ import {
   Square,
   Link2,
   FileText,
+  RefreshCw,
+  Check,
 } from "lucide-react";
 import { IssueStatusBadge } from "@/components/overview/issue-status-badge";
 import { IssueTypeIcon } from "@/components/shared/issue-type-icon";
@@ -41,6 +43,9 @@ export function IssueDetail({ issueKey }: IssueDetailProps) {
   const [githubLoading, setGithubLoading] = useState(true);
   const [deploymentLoading, setDeploymentLoading] = useState(true);
   const [phase1Error, setPhase1Error] = useState<string | null>(null);
+  const [syncing, setSyncing] = useState(false);
+  const [syncSuccess, setSyncSuccess] = useState(false);
+  const [syncError, setSyncError] = useState<string | null>(null);
 
   // Phase 1: DB data — instant
   useEffect(() => {
@@ -134,6 +139,41 @@ export function IssueDetail({ issueKey }: IssueDetailProps) {
     void load();
     return () => { cancelled = true; };
   }, [issueKey]);
+
+  // ── Sync handler ─────────────────────────────────────────────────────────────
+  const handleSync = async () => {
+    setSyncing(true);
+    setSyncError(null);
+    setSyncSuccess(false);
+    try {
+      const res = await fetch(`/api/issues/${issueKey}/sync`, { method: "POST" });
+      if (!res.ok) {
+        const data = await res.json().catch(() => null);
+        setSyncError(data?.error || "Sync failed");
+        setTimeout(() => setSyncError(null), 3000);
+        return;
+      }
+      setSyncSuccess(true);
+      setTimeout(() => setSyncSuccess(false), 2000);
+
+      // Re-fetch Phase 1 + Phase 2 to update the page with fresh data
+      const [freshRes, freshPhase2Res] = await Promise.all([
+        fetch(`/api/issues/${issueKey}`),
+        fetch(`/api/issues/${issueKey}/jira`),
+      ]);
+      if (freshRes.ok) {
+        setPhase1(await freshRes.json());
+      }
+      if (freshPhase2Res.ok) {
+        setPhase2(await freshPhase2Res.json());
+      }
+    } catch {
+      setSyncError("Failed to connect");
+      setTimeout(() => setSyncError(null), 3000);
+    } finally {
+      setSyncing(false);
+    }
+  };
 
   // ── Loading state ────────────────────────────────────────────────────────────
   if (phase1Loading) {
@@ -264,18 +304,50 @@ export function IssueDetail({ issueKey }: IssueDetailProps) {
             </div>
           </div>
 
-          {jiraBaseUrl && (
-            <a
-              href={`${jiraBaseUrl}/browse/${issue.jiraKey}`}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-[11px] font-bold font-mono uppercase tracking-widest text-white transition-opacity hover:opacity-90 shrink-0"
-              style={{ background: "linear-gradient(135deg, #944a00, #ff8400)" }}
-            >
-              <ExternalLink className="h-3.5 w-3.5" />
-              Open in JIRA
-            </a>
-          )}
+          <div className="flex items-center gap-3 shrink-0">
+            {/* Sync button + last synced */}
+            <div className="flex items-center gap-2">
+              {issue.updatedAt && (
+                <span className="text-[10px] text-muted-foreground font-mono hidden sm:inline">
+                  Synced {formatSmartDate(issue.updatedAt)}
+                </span>
+              )}
+              <button
+                onClick={handleSync}
+                disabled={syncing}
+                className={cn(
+                  "inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-[11px] font-bold font-mono uppercase tracking-widest transition-all shrink-0",
+                  syncSuccess
+                    ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-400"
+                    : syncError
+                      ? "bg-red-50 text-red-600 dark:bg-red-950 dark:text-red-400"
+                      : "bg-muted/30 text-muted-foreground hover:text-foreground hover:bg-muted/50",
+                  syncing && "opacity-50 cursor-wait",
+                )}
+                title="Sync this issue from JIRA"
+              >
+                {syncSuccess ? (
+                  <Check className="h-3.5 w-3.5" />
+                ) : (
+                  <RefreshCw className={cn("h-3.5 w-3.5", syncing && "animate-spin")} />
+                )}
+                {syncing ? "Syncing..." : syncSuccess ? "Synced" : syncError ? "Failed" : "Sync"}
+              </button>
+            </div>
+
+            {jiraBaseUrl && (
+              <a
+                href={`${jiraBaseUrl}/browse/${issue.jiraKey}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-[11px] font-bold font-mono uppercase tracking-widest text-white transition-opacity hover:opacity-90 shrink-0"
+                style={{ background: "linear-gradient(135deg, #944a00, #ff8400)" }}
+              >
+                <ExternalLink className="h-3.5 w-3.5" />
+                Open in JIRA
+              </a>
+            )}
+          </div>
         </div>
       </div>
 

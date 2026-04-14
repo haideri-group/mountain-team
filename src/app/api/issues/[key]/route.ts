@@ -179,6 +179,7 @@ export async function GET(
         description: issue.description || null,
         jiraCreatedAt: issue.jiraCreatedAt,
         jiraUpdatedAt: issue.jiraUpdatedAt,
+        updatedAt: issue.updatedAt?.toISOString() || null,
         boardKey: board?.jiraKey || "",
         boardName: board?.name || "",
         boardColor: board?.color || "#6b7280",

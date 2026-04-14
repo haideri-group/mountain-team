@@ -49,6 +49,14 @@ let cachedFieldIds: CustomFieldIds | null = null;
 let cachedAt = 0;
 const CACHE_TTL = 24 * 60 * 60 * 1000; // 24 hours
 
+// --- Shared JIRA field list (single source of truth) ---
+
+const BASE_ISSUE_FIELDS = [
+  "summary", "status", "priority", "issuetype", "assignee", "project",
+  "labels", "description", "duedate", "created", "updated", "resolutiondate",
+  "statuscategorychangedate",
+];
+
 // --- Retry-aware fetch ---
 
 async function fetchWithRetry(
@@ -181,22 +189,7 @@ export async function fetchIssuesByJql(
   jql: string,
   customFields: CustomFieldIds,
 ): Promise<JiraIssueRaw[]> {
-  const fields = [
-    "summary",
-    "status",
-    "priority",
-    "issuetype",
-    "assignee",
-    "project",
-    "labels",
-    "duedate",
-    "created",
-    "updated",
-    "resolutiondate",
-    "statuscategorychangedate",
-    "description",
-  ];
-
+  const fields = [...BASE_ISSUE_FIELDS];
   if (customFields.storyPoints) fields.push(customFields.storyPoints);
   if (customFields.startDate) fields.push(customFields.startDate);
   fields.push("customfield_10795"); // Request Priority (P1-P4)
@@ -290,4 +283,53 @@ export function buildIncrementalSyncJql(
   conditions.push(`updated >= "${since}"`);
 
   return `${conditions.join(" AND ")} ORDER BY updated DESC`;
+}
+
+// --- Single Issue Fetch ---
+
+/**
+ * Fetch a single issue from JIRA REST API by key.
+ * Includes renderedFields for HTML description.
+ */
+export async function fetchSingleIssue(
+  jiraKey: string,
+): Promise<JiraIssueRaw | null> {
+  try {
+    const baseUrl = getBaseUrl();
+    const authHeader = getAuthHeader();
+
+    // Build fields list including known custom fields
+    const customFields = await discoverCustomFieldIds();
+    const extraFields = [
+      customFields.storyPoints,
+      customFields.startDate,
+      "customfield_10795", // requestPriority
+      "customfield_10734", // website
+      "customfield_10805", // brands
+    ].filter(Boolean);
+
+    const fields = [...BASE_ISSUE_FIELDS, ...extraFields].join(",");
+
+    const res = await fetchWithRetry(
+      `${baseUrl}/rest/api/3/issue/${jiraKey}?expand=renderedFields&fields=${fields}`,
+      {
+        headers: {
+          Authorization: authHeader,
+          Accept: "application/json",
+        },
+        cache: "no-store",
+      },
+    );
+
+    if (!res.ok) {
+      if (res.status === 404) return null;
+      const text = await res.text();
+      throw new Error(`JIRA API error ${res.status}: ${sanitizeErrorText(text)}`);
+    }
+
+    return await res.json();
+  } catch (err) {
+    console.error(`Failed to fetch issue ${jiraKey} from JIRA:`, err);
+    throw err;
+  }
 }
