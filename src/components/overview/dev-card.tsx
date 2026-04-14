@@ -1,7 +1,6 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { Inbox, Check, Circle } from "lucide-react";
 import { StatusBadge } from "@/components/shared/status-badge";
 import { IssueStatusBadge } from "./issue-status-badge";
@@ -68,7 +67,6 @@ function getWorkloadLabel(pct: number): string {
 }
 
 export function DevCard({ member }: { member: DevCardMember }) {
-  const router = useRouter();
   const isIdle = !member.currentIssue && member.queuedIssues.length === 0;
 
   return (
@@ -119,15 +117,15 @@ export function DevCard({ member }: { member: DevCardMember }) {
           </div>
           <div className="rounded-lg bg-muted/20 p-3 space-y-1.5">
             <div className="flex items-center gap-2">
-              <span
-                role="link"
-                onClick={(e) => { e.stopPropagation(); e.preventDefault(); router.push(`/issue/${member.currentIssue!.jiraKey}`); }}
-                className="text-xs font-bold font-mono hover:underline cursor-pointer inline-flex items-center gap-1"
+              <Link
+                href={`/issue/${member.currentIssue!.jiraKey}`}
+                onClick={(e) => e.stopPropagation()}
+                className="text-xs font-bold font-mono hover:underline inline-flex items-center gap-1"
                 style={{ color: member.currentIssue.boardColor }}
               >
                 <IssueTypeIcon type={member.currentIssue.type} size={12} />
                 {member.currentIssue.jiraKey}
-              </span>
+              </Link>
               <IssueStatusBadge status={member.currentIssue.status} />
             </div>
             <p className="text-xs text-foreground leading-relaxed line-clamp-2">
@@ -156,15 +154,15 @@ export function DevCard({ member }: { member: DevCardMember }) {
                     {formatDate(issue.startDate)}
                   </span>
                 )}
-                <span
-                  role="link"
-                  onClick={(e) => { e.stopPropagation(); e.preventDefault(); router.push(`/issue/${issue.jiraKey}`); }}
-                  className="text-xs font-bold font-mono shrink-0 hover:underline cursor-pointer inline-flex items-center gap-1"
+                <Link
+                  href={`/issue/${issue.jiraKey}`}
+                  onClick={(e) => e.stopPropagation()}
+                  className="text-xs font-bold font-mono shrink-0 hover:underline inline-flex items-center gap-1"
                   style={{ color: issue.boardColor }}
                 >
                   <IssueTypeIcon type={issue.type} size={12} />
                   {issue.jiraKey}
-                </span>
+                </Link>
                 <span className="text-xs text-muted-foreground truncate">{issue.title}</span>
               </div>
             ))}
@@ -187,14 +185,14 @@ export function DevCard({ member }: { member: DevCardMember }) {
             {member.recentDone.slice(0, 3).map((issue) => (
               <div key={issue.id} className="flex items-center gap-2 py-0.5">
                 <Check className="h-3 w-3 text-emerald-500 shrink-0" />
-                <span
-                  role="link"
-                  onClick={(e) => { e.stopPropagation(); e.preventDefault(); router.push(`/issue/${issue.jiraKey}`); }}
-                  className="text-xs font-mono text-muted-foreground shrink-0 hover:underline hover:text-foreground cursor-pointer inline-flex items-center gap-1"
+                <Link
+                  href={`/issue/${issue.jiraKey}`}
+                  onClick={(e) => e.stopPropagation()}
+                  className="text-xs font-mono text-muted-foreground shrink-0 hover:underline hover:text-foreground inline-flex items-center gap-1"
                 >
                   <IssueTypeIcon type={issue.type} size={12} />
                   {issue.jiraKey}
-                </span>
+                </Link>
                 <span className="text-xs text-muted-foreground truncate">{issue.title}</span>
               </div>
             ))}
