@@ -637,8 +637,6 @@ export function IssueDetail({ issueKey }: IssueDetailProps) {
           phase2Loading={phase2Loading}
           github={github}
           githubLoading={githubLoading}
-          deploymentData={deploymentData}
-          deploymentLoading={deploymentLoading}
           jiraBaseUrl={jiraBaseUrl}
           issueKey={issueKey}
         />
