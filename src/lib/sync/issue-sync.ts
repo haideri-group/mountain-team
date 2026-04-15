@@ -682,11 +682,11 @@ export async function syncSingleIssue(
         const repoMap = new Map(allRepos.map((r) => [r.fullName, r.id]));
 
         // Extract GitHub PR URLs from comment bodies (ADF JSON)
-        const prUrlRegex = /https:\/\/github\.com\/([^/]+\/[^/]+)\/pull\/(\d+)/g;
         const seenPrUrls = new Set<string>();
 
         for (const comment of commentsData.comments || []) {
           const bodyStr = JSON.stringify(comment.body || "");
+          const prUrlRegex = /https:\/\/github\.com\/([^/]+\/[^/]+)\/pull\/(\d+)/g;
           let match;
           while ((match = prUrlRegex.exec(bodyStr)) !== null) {
             const repoFullName = match[1];
