@@ -354,6 +354,48 @@ export function buildIssueUpsertFields(
  * Fetches latest data, normalizes, resolves board/assignee, and upserts.
  * Uses shared utilities (applyCycleTimeLogic, buildIssueUpsertFields).
  */
+
+// --- Deploy Date Lookup Helper ---
+
+/**
+ * Find the actual date a commit arrived on a branch by walking merge commits.
+ * Returns the merge commit date if found, otherwise the fallback date.
+ */
+async function findBranchDeployDate(
+  repoFullName: string,
+  branchPattern: string,
+  commitSha: string,
+  fallbackDate: Date,
+): Promise<Date> {
+  try {
+    const headers = { Authorization: `Bearer ${process.env.GITHUB_TOKEN}`, Accept: "application/vnd.github+json" };
+    const commitsRes = await fetch(
+      `https://api.github.com/repos/${repoFullName}/commits?sha=${branchPattern}&per_page=50`,
+      { headers, cache: "no-store" },
+    );
+    if (!commitsRes.ok) return fallbackDate;
+
+    const branchCommits = await commitsRes.json();
+    for (let ci = branchCommits.length - 1; ci >= 0; ci--) {
+      const bc = branchCommits[ci];
+      if (bc.parents?.length < 2) continue; // not a merge commit
+      const compareRes = await fetch(
+        `https://api.github.com/repos/${repoFullName}/compare/${commitSha}...${bc.sha}`,
+        { headers, cache: "no-store" },
+      );
+      if (compareRes.ok) {
+        const data = await compareRes.json();
+        if (data.status === "ahead" || data.status === "identical") {
+          return new Date(bc.commit?.committer?.date || fallbackDate);
+        }
+      }
+    }
+  } catch (e) {
+    console.warn("Deploy date lookup error:", e instanceof Error ? e.message : e);
+  }
+  return fallbackDate;
+}
+
 export async function syncSingleIssue(
   jiraKey: string,
 ): Promise<{ success: boolean; message: string }> {
@@ -495,33 +537,7 @@ export async function syncSingleIssue(
                 const compareData = await compareRes.json();
                 if (compareData.status !== "behind" && compareData.status !== "identical") continue;
 
-                // Commit is on this branch — find when it arrived by checking merge commits
-                let branchDeployedAt = deployedAt;
-                try {
-                  const commitsRes = await fetch(
-                    `https://api.github.com/repos/${repoFullName}/commits?sha=${mapping.branchPattern}&per_page=50`,
-                    { headers: { Authorization: `Bearer ${process.env.GITHUB_TOKEN}`, Accept: "application/vnd.github+json" }, cache: "no-store" },
-                  );
-                  if (commitsRes.ok) {
-                    const branchCommits = await commitsRes.json();
-                    // Find the earliest merge commit that is a descendant of our commit
-                    for (let ci = branchCommits.length - 1; ci >= 0; ci--) {
-                      const bc = branchCommits[ci];
-                      if (bc.parents?.length < 2) continue; // not a merge
-                      const ancestorRes = await fetch(
-                        `https://api.github.com/repos/${repoFullName}/compare/${commitSha}...${bc.sha}`,
-                        { headers: { Authorization: `Bearer ${process.env.GITHUB_TOKEN}`, Accept: "application/vnd.github+json" }, cache: "no-store" },
-                      );
-                      if (ancestorRes.ok) {
-                        const ancestorData = await ancestorRes.json();
-                        if (ancestorData.status === "ahead" || ancestorData.status === "identical") {
-                          branchDeployedAt = new Date(bc.commit?.committer?.date || deployedAt);
-                          break;
-                        }
-                      }
-                    }
-                  }
-                } catch (e) { console.warn("Deploy date lookup error:", e instanceof Error ? e.message : e); }
+                const branchDeployedAt = await findBranchDeployDate(repoFullName, mapping.branchPattern, commitSha, deployedAt);
 
                 const propagateResult = await recordDeployment({
                   jiraKey: normalized.jiraKey,
@@ -605,32 +621,7 @@ export async function syncSingleIssue(
                 const cmp = await compareRes.json();
                 if (cmp.status !== "behind" && cmp.status !== "identical") continue;
 
-                // Find actual deploy date on this branch
-                let branchDeployedAt = deployedAt;
-                try {
-                  const commitsRes = await fetch(
-                    `https://api.github.com/repos/${repo.fullName}/commits?sha=${mapping.branchPattern}&per_page=50`,
-                    { headers: { Authorization: `Bearer ${process.env.GITHUB_TOKEN}`, Accept: "application/vnd.github+json" }, cache: "no-store" },
-                  );
-                  if (commitsRes.ok) {
-                    const branchCommits = await commitsRes.json();
-                    for (let ci = branchCommits.length - 1; ci >= 0; ci--) {
-                      const bc = branchCommits[ci];
-                      if (bc.parents?.length < 2) continue;
-                      const ancestorRes = await fetch(
-                        `https://api.github.com/repos/${repo.fullName}/compare/${commitSha}...${bc.sha}`,
-                        { headers: { Authorization: `Bearer ${process.env.GITHUB_TOKEN}`, Accept: "application/vnd.github+json" }, cache: "no-store" },
-                      );
-                      if (ancestorRes.ok) {
-                        const ad = await ancestorRes.json();
-                        if (ad.status === "ahead" || ad.status === "identical") {
-                          branchDeployedAt = new Date(bc.commit?.committer?.date || deployedAt);
-                          break;
-                        }
-                      }
-                    }
-                  }
-                } catch (e) { console.warn("Deploy date lookup error:", e instanceof Error ? e.message : e); }
+                const branchDeployedAt = await findBranchDeployDate(repo.fullName, mapping.branchPattern, commitSha, deployedAt);
 
                 const propResult = await recordDeployment({
                   jiraKey,
