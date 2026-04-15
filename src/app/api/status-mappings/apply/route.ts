@@ -36,8 +36,16 @@ export async function POST(request: Request) {
     );
     const affected = (countResult[0] as any)?.[0]?.affected || 0;
 
+    // Mark mapping as reviewed (clear auto-mapped flag)
+    if (mapping.isAutoMapped) {
+      await db
+        .update(statusMappings)
+        .set({ isAutoMapped: false })
+        .where(eq(statusMappings.id, mappingId));
+    }
+
     if (affected === 0) {
-      return NextResponse.json({ affected: 0, message: "No issues to update" });
+      return NextResponse.json({ affected: 0, message: "Mapping confirmed — no issues needed updating" });
     }
 
     // Apply the mapping retroactively

@@ -99,6 +99,7 @@ export function StatusMappingManager() {
       });
       const data = await res.json();
       setApplyResult(data.message || `Updated ${data.affected} issues`);
+      fetchMappings(); // Refresh to clear Auto badge
     } catch {
       setApplyResult("Failed to apply");
     } finally {
