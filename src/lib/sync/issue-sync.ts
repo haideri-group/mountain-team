@@ -1,5 +1,5 @@
 import { db } from "@/lib/db";
-import { issues, boards, team_members, syncLogs, githubRepos } from "@/lib/db/schema";
+import { issues, boards, team_members, syncLogs, githubRepos, githubBranchMappings } from "@/lib/db/schema";
 import { eq, desc, inArray } from "drizzle-orm";
 import { generateNotificationsFromSync } from "@/lib/notifications/generator";
 import { recordWorkloadSnapshots } from "@/lib/workload/snapshots";
@@ -432,24 +432,45 @@ export async function syncSingleIssue(
 
         for (const { detail, pr } of mergedPRs) {
           const destBranch = pr.destination?.branch;
-          const repoFullName = detail._instance?.name === "GitHub"
-            ? (pr.source?.repository?.name || detail.repositories?.[0]?.name || "")
-            : "";
+          // Extract repo full name from PR URL (e.g., https://github.com/owner/repo/pull/123)
+          let repoFullName = "";
+          if (pr.url) {
+            const match = pr.url.match(/github\.com\/([^/]+\/[^/]+)\//);
+            if (match) repoFullName = match[1];
+          }
+          if (!repoFullName) {
+            repoFullName = pr.source?.repository?.name || detail.repositories?.[0]?.name || "";
+          }
           if (!destBranch || !repoFullName) continue;
 
           const repoId = repoMap.get(repoFullName);
           if (!repoId) continue;
 
-          // Use merge_commit_sha or PR ID as commitSha fallback for dedup
-          const commitSha = pr.lastCommit?.id || `pr-${pr.id}`;
-          // Use merged_at timestamp, fall back to lastUpdate
-          const deployedAt = new Date(pr.mergedAt || pr.lastUpdate || Date.now());
+          // Get merge commit SHA — try JIRA first, then fetch from GitHub API
+          let commitSha = pr.lastCommit?.id || "";
+          let deployedAt = new Date(pr.mergedAt || pr.lastUpdate || Date.now());
+          const prNum = parseInt(pr.id?.replace("#", "") || "0", 10);
+
+          if (!commitSha && prNum && process.env.GITHUB_TOKEN) {
+            try {
+              const ghRes = await fetch(`https://api.github.com/repos/${repoFullName}/pulls/${prNum}`, {
+                headers: { Authorization: `Bearer ${process.env.GITHUB_TOKEN}`, Accept: "application/vnd.github+json" },
+                cache: "no-store",
+              });
+              if (ghRes.ok) {
+                const ghPr = await ghRes.json();
+                commitSha = ghPr.merge_commit_sha || "";
+                if (ghPr.merged_at) deployedAt = new Date(ghPr.merged_at);
+              }
+            } catch (e) { console.warn("Deployment propagation error:", e instanceof Error ? e.message : e); }
+          }
+          if (!commitSha) commitSha = `pr-${prNum}`;
 
           const result = await recordDeployment({
             jiraKey: normalized.jiraKey,
             repoId,
             branch: destBranch,
-            prNumber: Number(pr.id) || null,
+            prNumber: parseInt(pr.id?.replace("#", "") || "0", 10) || null,
             prTitle: pr.name || null,
             prUrl: pr.url || null,
             commitSha,
@@ -457,11 +478,180 @@ export async function syncSingleIssue(
             deployedAt,
           });
           deploymentsRecorded += result.recorded;
+
+          // Check if this commit has propagated to other deployment branches
+          // (e.g., stage → main-tilemtn via bulk merge)
+          if (commitSha && !commitSha.startsWith("pr-")) {
+            const allMappings = await db.select().from(githubBranchMappings).where(eq(githubBranchMappings.repoId, repoId));
+            const otherBranches = allMappings.filter((m) => m.branchPattern !== destBranch && !m.isAllSites);
+
+            for (const mapping of otherBranches) {
+              try {
+                const compareRes = await fetch(
+                  `https://api.github.com/repos/${repoFullName}/compare/${mapping.branchPattern}...${commitSha}`,
+                  { headers: { Authorization: `Bearer ${process.env.GITHUB_TOKEN}`, Accept: "application/vnd.github+json" }, cache: "no-store" },
+                );
+                if (!compareRes.ok) continue;
+                const compareData = await compareRes.json();
+                if (compareData.status !== "behind" && compareData.status !== "identical") continue;
+
+                // Commit is on this branch — find when it arrived by checking merge commits
+                let branchDeployedAt = deployedAt;
+                try {
+                  const commitsRes = await fetch(
+                    `https://api.github.com/repos/${repoFullName}/commits?sha=${mapping.branchPattern}&per_page=50`,
+                    { headers: { Authorization: `Bearer ${process.env.GITHUB_TOKEN}`, Accept: "application/vnd.github+json" }, cache: "no-store" },
+                  );
+                  if (commitsRes.ok) {
+                    const branchCommits = await commitsRes.json();
+                    // Find the earliest merge commit that is a descendant of our commit
+                    for (let ci = branchCommits.length - 1; ci >= 0; ci--) {
+                      const bc = branchCommits[ci];
+                      if (bc.parents?.length < 2) continue; // not a merge
+                      const ancestorRes = await fetch(
+                        `https://api.github.com/repos/${repoFullName}/compare/${commitSha}...${bc.sha}`,
+                        { headers: { Authorization: `Bearer ${process.env.GITHUB_TOKEN}`, Accept: "application/vnd.github+json" }, cache: "no-store" },
+                      );
+                      if (ancestorRes.ok) {
+                        const ancestorData = await ancestorRes.json();
+                        if (ancestorData.status === "ahead" || ancestorData.status === "identical") {
+                          branchDeployedAt = new Date(bc.commit?.committer?.date || deployedAt);
+                          break;
+                        }
+                      }
+                    }
+                  }
+                } catch (e) { console.warn("Deploy date lookup error:", e instanceof Error ? e.message : e); }
+
+                const propagateResult = await recordDeployment({
+                  jiraKey: normalized.jiraKey,
+                  repoId,
+                  branch: mapping.branchPattern,
+                  prNumber: prNum || null,
+                  prTitle: pr.name || null,
+                  prUrl: pr.url || null,
+                  commitSha,
+                  deployedBy: pr.author?.name || null,
+                  deployedAt: branchDeployedAt,
+                });
+                deploymentsRecorded += propagateResult.recorded;
+              } catch {
+                // Non-fatal — skip this branch check
+              }
+            }
+          }
         }
       }
     }
   } catch (err) {
-    console.warn("Deployment sync failed (non-fatal):", err instanceof Error ? err.message : err);
+    console.warn("JIRA deployment sync failed (non-fatal):", err instanceof Error ? err.message : err);
+  }
+
+  // GitHub fallback: if JIRA found no deployments, search GitHub directly for PRs matching the JIRA key
+  if (deploymentsRecorded === 0 && process.env.GITHUB_TOKEN) {
+    try {
+      const allRepos = await db.select().from(githubRepos);
+      for (const repo of allRepos) {
+        // Search for merged PRs with the JIRA key in title or branch name
+        const searchUrl = `https://api.github.com/search/issues?q=${encodeURIComponent(jiraKey)}+repo:${repo.fullName}+is:pr+is:merged&per_page=10`;
+        const searchRes = await fetch(searchUrl, {
+          headers: { Authorization: `Bearer ${process.env.GITHUB_TOKEN}`, Accept: "application/vnd.github+json" },
+          cache: "no-store",
+        });
+
+        if (!searchRes.ok) continue;
+        const searchData = await searchRes.json();
+
+        for (const item of searchData.items || []) {
+          // Fetch full PR data to get merge details
+          const prRes = await fetch(`https://api.github.com/repos/${repo.fullName}/pulls/${item.number}`, {
+            headers: { Authorization: `Bearer ${process.env.GITHUB_TOKEN}`, Accept: "application/vnd.github+json" },
+            cache: "no-store",
+          });
+          if (!prRes.ok) continue;
+          const ghPr = await prRes.json();
+
+          if (!ghPr.merged || !ghPr.base?.ref) continue;
+
+          const commitSha = ghPr.merge_commit_sha || "";
+          const deployedAt = new Date(ghPr.merged_at || Date.now());
+          const destBranch = ghPr.base.ref;
+          const repoId = repo.id;
+
+          const result = await recordDeployment({
+            jiraKey,
+            repoId,
+            branch: destBranch,
+            prNumber: ghPr.number,
+            prTitle: ghPr.title || null,
+            prUrl: ghPr.html_url || null,
+            commitSha,
+            deployedBy: ghPr.user?.login || null,
+            deployedAt,
+          });
+          deploymentsRecorded += result.recorded;
+
+          // Check commit propagation to other branches (with real deploy dates)
+          if (commitSha) {
+            const allMappings = await db.select().from(githubBranchMappings).where(eq(githubBranchMappings.repoId, repoId));
+            for (const mapping of allMappings) {
+              if (mapping.branchPattern === destBranch || mapping.isAllSites) continue;
+              try {
+                const compareRes = await fetch(`https://api.github.com/repos/${repo.fullName}/compare/${mapping.branchPattern}...${commitSha}`, {
+                  headers: { Authorization: `Bearer ${process.env.GITHUB_TOKEN}`, Accept: "application/vnd.github+json" },
+                  cache: "no-store",
+                });
+                if (!compareRes.ok) continue;
+                const cmp = await compareRes.json();
+                if (cmp.status !== "behind" && cmp.status !== "identical") continue;
+
+                // Find actual deploy date on this branch
+                let branchDeployedAt = deployedAt;
+                try {
+                  const commitsRes = await fetch(
+                    `https://api.github.com/repos/${repo.fullName}/commits?sha=${mapping.branchPattern}&per_page=50`,
+                    { headers: { Authorization: `Bearer ${process.env.GITHUB_TOKEN}`, Accept: "application/vnd.github+json" }, cache: "no-store" },
+                  );
+                  if (commitsRes.ok) {
+                    const branchCommits = await commitsRes.json();
+                    for (let ci = branchCommits.length - 1; ci >= 0; ci--) {
+                      const bc = branchCommits[ci];
+                      if (bc.parents?.length < 2) continue;
+                      const ancestorRes = await fetch(
+                        `https://api.github.com/repos/${repo.fullName}/compare/${commitSha}...${bc.sha}`,
+                        { headers: { Authorization: `Bearer ${process.env.GITHUB_TOKEN}`, Accept: "application/vnd.github+json" }, cache: "no-store" },
+                      );
+                      if (ancestorRes.ok) {
+                        const ad = await ancestorRes.json();
+                        if (ad.status === "ahead" || ad.status === "identical") {
+                          branchDeployedAt = new Date(bc.commit?.committer?.date || deployedAt);
+                          break;
+                        }
+                      }
+                    }
+                  }
+                } catch (e) { console.warn("Deploy date lookup error:", e instanceof Error ? e.message : e); }
+
+                const propResult = await recordDeployment({
+                  jiraKey,
+                  repoId,
+                  branch: mapping.branchPattern,
+                  prNumber: ghPr.number,
+                  prTitle: ghPr.title || null,
+                  prUrl: ghPr.html_url || null,
+                  commitSha,
+                  deployedBy: ghPr.user?.login || null,
+                  deployedAt: branchDeployedAt,
+                });
+                deploymentsRecorded += propResult.recorded;
+              } catch (e) { console.warn("Deployment propagation error:", e instanceof Error ? e.message : e); }
+            }
+          }
+        }
+      }
+    } catch (err) {
+      console.warn("GitHub deployment fallback failed (non-fatal):", err instanceof Error ? err.message : err);
+    }
   }
 
   const deploymentMsg = deploymentsRecorded > 0 ? `, ${deploymentsRecorded} deployment(s) recorded` : "";

@@ -24,6 +24,7 @@ import type { Phase1Data, Phase2Data, GitHubData, ActivityEntry } from "./issue-
 import { PRIORITY_COLORS, formatSmartDate, mergeActivity } from "./issue-helpers";
 import { IssueSidebar } from "./issue-sidebar";
 import { ActivityTabs } from "./issue-activity";
+import { DeploymentPipeline } from "./deployment-pipeline";
 
 // ─── Main Component ──────────────────────────────────────────────────────────
 
@@ -44,6 +45,7 @@ export function IssueDetail({ issueKey }: IssueDetailProps) {
   const [deploymentLoading, setDeploymentLoading] = useState(true);
   const [phase1Error, setPhase1Error] = useState<string | null>(null);
   const [syncing, setSyncing] = useState(false);
+  const [syncPhase, setSyncPhase] = useState<string>("");
   const [syncSuccess, setSyncSuccess] = useState(false);
   const [syncError, setSyncError] = useState<string | null>(null);
 
@@ -145,6 +147,7 @@ export function IssueDetail({ issueKey }: IssueDetailProps) {
     setSyncing(true);
     setSyncError(null);
     setSyncSuccess(false);
+    setSyncPhase("Syncing from JIRA...");
     try {
       const res = await fetch(`/api/issues/${issueKey}/sync`, { method: "POST" });
       if (!res.ok) {
@@ -153,8 +156,11 @@ export function IssueDetail({ issueKey }: IssueDetailProps) {
         setTimeout(() => setSyncError(null), 3000);
         return;
       }
-      setSyncSuccess(true);
-      setTimeout(() => setSyncSuccess(false), 2000);
+
+      const result = await res.json();
+      const deployCount = result.message?.match(/(\d+) deployment/)?.[1];
+
+      setSyncPhase("Refreshing page data...");
 
       // Re-fetch Phase 1 + Phase 2 + Phase 4 (deployments) to update the page
       const [freshRes, freshPhase2Res, freshDeployRes] = await Promise.all([
@@ -171,9 +177,13 @@ export function IssueDetail({ issueKey }: IssueDetailProps) {
       if (freshDeployRes.ok) {
         setDeploymentData(await freshDeployRes.json());
       }
+
+      setSyncSuccess(true);
+      setSyncPhase(deployCount ? `Synced + ${deployCount} deployment(s)` : "Synced");
+      setTimeout(() => { setSyncSuccess(false); setSyncPhase(""); }, 3000);
     } catch {
       setSyncError("Failed to connect");
-      setTimeout(() => setSyncError(null), 3000);
+      setTimeout(() => { setSyncError(null); setSyncPhase(""); }, 3000);
     } finally {
       setSyncing(false);
     }
@@ -320,13 +330,15 @@ export function IssueDetail({ issueKey }: IssueDetailProps) {
                 onClick={handleSync}
                 disabled={syncing}
                 className={cn(
-                  "inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-[11px] font-bold font-mono uppercase tracking-widest transition-all shrink-0",
+                  "inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-[11px] font-bold font-mono transition-all shrink-0",
                   syncSuccess
                     ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-400"
                     : syncError
                       ? "bg-red-50 text-red-600 dark:bg-red-950 dark:text-red-400"
-                      : "bg-muted/30 text-muted-foreground hover:text-foreground hover:bg-muted/50",
-                  syncing && "opacity-50 cursor-wait",
+                      : syncing
+                        ? "bg-blue-50 text-blue-700 dark:bg-blue-950 dark:text-blue-400"
+                        : "bg-muted/30 text-muted-foreground hover:text-foreground hover:bg-muted/50",
+                  syncing && "cursor-wait",
                 )}
                 title="Sync this issue from JIRA"
               >
@@ -335,7 +347,9 @@ export function IssueDetail({ issueKey }: IssueDetailProps) {
                 ) : (
                   <RefreshCw className={cn("h-3.5 w-3.5", syncing && "animate-spin")} />
                 )}
-                {syncing ? "Syncing..." : syncSuccess ? "Synced" : syncError ? "Failed" : "Sync"}
+                <span className={syncing || syncSuccess || syncError ? "" : "uppercase tracking-widest"}>
+                  {syncing ? syncPhase : syncSuccess ? syncPhase : syncError ? syncError : "Sync"}
+                </span>
               </button>
             </div>
 
@@ -518,6 +532,17 @@ export function IssueDetail({ issueKey }: IssueDetailProps) {
                   ))}
                 </div>
               )}
+            </div>
+          )}
+
+          {/* Deployments */}
+          {(deploymentLoading || (deploymentData?.deployments?.length > 0)) && (
+            <div className="bg-card rounded-xl p-6 shadow-sm">
+              <DeploymentPipeline
+                pipeline={deploymentData?.pipeline ?? []}
+                isHotfix={deploymentData?.isHotfix ?? false}
+                loading={deploymentLoading}
+              />
             </div>
           )}
 

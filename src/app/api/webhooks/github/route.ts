@@ -105,7 +105,7 @@ async function handleDeploymentStatus(
       commitSha,
       deployedBy,
       githubDeploymentId,
-      deployedAt: new Date(payload.deployment_status?.created_at || Date.now()),
+      deployedAt: new Date(payload.deployment_status?.updated_at || payload.deployment?.created_at || Date.now()),
     });
     totalRecorded += result.recorded;
     totalSkipped += result.skipped;

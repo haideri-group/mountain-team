@@ -16,6 +16,7 @@ import {
 import Link from "next/link";
 import { IssueStatusBadge } from "@/components/overview/issue-status-badge";
 import { IssueTypeIcon } from "@/components/shared/issue-type-icon";
+import { DeploymentIndicator } from "@/components/overview/deployment-indicator";
 
 interface TaskIssue {
   id: string;
@@ -31,6 +32,7 @@ interface TaskIssue {
   boardKey: string;
   boardColor: string;
   jiraCreatedAt: string | null;
+  deploymentStatus?: "production" | "staging" | null;
 }
 
 interface TaskHistoryTableProps {
@@ -399,14 +401,17 @@ export function TaskHistoryTable({ issues, boards }: TaskHistoryTableProps) {
                   className={`border-t border-border/30 ${missed ? "bg-red-50/50 dark:bg-red-950/20" : "hover:bg-muted/5"} transition-colors`}
                 >
                   <td className="px-4 py-3">
-                    <Link
-                      href={`/issue/${issue.jiraKey}`}
-                      className="text-xs font-bold font-mono hover:underline inline-flex items-center gap-1.5"
-                      style={{ color: issue.boardColor }}
-                    >
-                      <IssueTypeIcon type={issue.type} size={14} />
-                      {issue.jiraKey}
-                    </Link>
+                    <div className="inline-flex items-center gap-1.5">
+                      <Link
+                        href={`/issue/${issue.jiraKey}`}
+                        className="text-xs font-bold font-mono hover:underline inline-flex items-center gap-1"
+                        style={{ color: issue.boardColor }}
+                      >
+                        <IssueTypeIcon type={issue.type} size={14} />
+                        {issue.jiraKey}
+                      </Link>
+                      <DeploymentIndicator status={issue.deploymentStatus} />
+                    </div>
                   </td>
                   <td className="px-4 py-3">
                     <span className="text-sm text-foreground line-clamp-1">

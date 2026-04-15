@@ -1,6 +1,6 @@
 import { db } from "@/lib/db";
 import { deployments, issues, githubRepos } from "@/lib/db/schema";
-import { eq, and, desc } from "drizzle-orm";
+import { eq, and, desc, isNull } from "drizzle-orm";
 import {
   resolveBranchEnvironment,
   getAllSitesForEnvironment,
@@ -54,34 +54,38 @@ export interface DeploymentSummary {
   isHotfix: boolean;
 }
 
-// --- Deduplication ---
+// --- Find existing deployment for upsert ---
 
-async function isDuplicate(
+async function findExistingDeployment(
   jiraKey: string,
   environment: string,
   siteName: string | null,
   repoId: string,
   commitSha: string | null,
-): Promise<boolean> {
-  if (!commitSha) return false;
+): Promise<string | null> {
+  if (!commitSha) return null;
+
+  const conditions = [
+    eq(deployments.jiraKey, jiraKey),
+    eq(deployments.environment, environment as "staging" | "production" | "canonical"),
+    eq(deployments.repoId, repoId),
+    eq(deployments.commitSha, commitSha),
+  ];
+
+  // Properly handle NULL siteName with IS NULL
+  if (siteName) {
+    conditions.push(eq(deployments.siteName, siteName));
+  } else {
+    conditions.push(isNull(deployments.siteName));
+  }
 
   const existing = await db
     .select({ id: deployments.id })
     .from(deployments)
-    .where(
-      and(
-        eq(deployments.jiraKey, jiraKey),
-        eq(deployments.environment, environment as "staging" | "production" | "canonical"),
-        eq(deployments.repoId, repoId),
-        eq(deployments.commitSha, commitSha),
-        siteName
-          ? eq(deployments.siteName, siteName)
-          : undefined,
-      ),
-    )
+    .where(and(...conditions))
     .limit(1);
 
-  return existing.length > 0;
+  return existing.length > 0 ? existing[0].id : null;
 }
 
 // --- Record Deployment ---
@@ -127,15 +131,63 @@ export async function recordDeployment(
         continue;
       }
 
-      const dup = await isDuplicate(
+      const existingId = await findExistingDeployment(
         input.jiraKey,
         resolved.environment,
         site.siteName,
         input.repoId,
         input.commitSha ?? null,
       );
-      if (dup) { skipped++; continue; }
 
+      if (existingId) {
+        // Update existing record (fixes wrong dates on re-sync)
+        await db.update(deployments).set({
+          deployedAt: input.deployedAt,
+          deployedBy: input.deployedBy ?? null,
+          branch: input.branch,
+        }).where(eq(deployments.id, existingId));
+        recorded++;
+      } else {
+        const id = `deploy_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+        await db.insert(deployments).values({
+          id,
+          issueId,
+          jiraKey: input.jiraKey,
+          repoId: input.repoId,
+          environment: resolved.environment,
+          siteName: site.siteName,
+          siteLabel: site.siteLabel,
+          branch: input.branch,
+          prNumber: input.prNumber ?? null,
+          prTitle: input.prTitle ?? null,
+          prUrl: input.prUrl ?? null,
+          commitSha: input.commitSha ?? null,
+          deployedBy: input.deployedBy ?? null,
+          githubDeploymentId: input.githubDeploymentId ?? null,
+          isHotfix: hotfix,
+          deployedAt: input.deployedAt,
+        });
+        recorded++;
+      }
+    }
+  } else {
+    // Single site deployment
+    const existingId = await findExistingDeployment(
+      input.jiraKey,
+      resolved.environment,
+      resolved.siteName,
+      input.repoId,
+      input.commitSha ?? null,
+    );
+
+    if (existingId) {
+      await db.update(deployments).set({
+        deployedAt: input.deployedAt,
+        deployedBy: input.deployedBy ?? null,
+        branch: input.branch,
+      }).where(eq(deployments.id, existingId));
+      recorded = 1;
+    } else {
       const id = `deploy_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
       await db.insert(deployments).values({
         id,
@@ -143,8 +195,8 @@ export async function recordDeployment(
         jiraKey: input.jiraKey,
         repoId: input.repoId,
         environment: resolved.environment,
-        siteName: site.siteName,
-        siteLabel: site.siteLabel,
+        siteName: resolved.siteName,
+        siteLabel: resolved.siteLabel,
         branch: input.branch,
         prNumber: input.prNumber ?? null,
         prTitle: input.prTitle ?? null,
@@ -155,39 +207,8 @@ export async function recordDeployment(
         isHotfix: hotfix,
         deployedAt: input.deployedAt,
       });
-      recorded++;
+      recorded = 1;
     }
-  } else {
-    // Single site deployment
-    const dup = await isDuplicate(
-      input.jiraKey,
-      resolved.environment,
-      resolved.siteName,
-      input.repoId,
-      input.commitSha ?? null,
-    );
-    if (dup) return { recorded: 0, skipped: 1, environment: resolved.environment, siteName: resolved.siteName, siteLabel: resolved.siteLabel };
-
-    const id = `deploy_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-    await db.insert(deployments).values({
-      id,
-      issueId,
-      jiraKey: input.jiraKey,
-      repoId: input.repoId,
-      environment: resolved.environment,
-      siteName: resolved.siteName,
-      siteLabel: resolved.siteLabel,
-      branch: input.branch,
-      prNumber: input.prNumber ?? null,
-      prTitle: input.prTitle ?? null,
-      prUrl: input.prUrl ?? null,
-      commitSha: input.commitSha ?? null,
-      deployedBy: input.deployedBy ?? null,
-      githubDeploymentId: input.githubDeploymentId ?? null,
-      isHotfix: hotfix,
-      deployedAt: input.deployedAt,
-    });
-    recorded = 1;
   }
 
   return { recorded, skipped, environment: resolved.environment, siteName: resolved.siteName, siteLabel: resolved.siteLabel };

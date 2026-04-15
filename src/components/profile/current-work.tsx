@@ -4,6 +4,7 @@ import Link from "next/link";
 import { Circle, Inbox } from "lucide-react";
 import { IssueStatusBadge } from "@/components/overview/issue-status-badge";
 import { IssueTypeIcon } from "@/components/shared/issue-type-icon";
+import { DeploymentIndicator } from "@/components/overview/deployment-indicator";
 
 interface EnrichedIssue {
   id: string;
@@ -17,6 +18,7 @@ interface EnrichedIssue {
   storyPoints: number | null;
   boardKey: string;
   boardColor: string;
+  deploymentStatus?: "production" | "staging" | null;
 }
 
 interface CurrentWorkProps {
@@ -56,6 +58,7 @@ function IssueRow({ issue }: { issue: EnrichedIssue }) {
         {issue.title}
       </span>
       <IssueStatusBadge status={issue.status} />
+      <DeploymentIndicator status={issue.deploymentStatus} />
       {issue.dueDate && (
         <span className="text-[10px] text-muted-foreground whitespace-nowrap">
           {formatDate(issue.dueDate)}

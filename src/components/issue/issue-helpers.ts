@@ -20,7 +20,8 @@ export const PRIORITY_ICON_CLASS: Record<string, string> = {
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-export const PKT = "Asia/Karachi";
+import { APP_TIMEZONE } from "@/lib/config";
+export const PKT = APP_TIMEZONE;
 
 export function formatSmartDate(dateStr: string | null | undefined): string {
   if (!dateStr) return "—";
