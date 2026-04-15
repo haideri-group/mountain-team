@@ -355,11 +355,36 @@ export function buildIssueUpsertFields(
  * Uses shared utilities (applyCycleTimeLogic, buildIssueUpsertFields).
  */
 
+// --- GitHub Compare Cache (per-sync, avoids duplicate API calls) ---
+
+const ghCompareCache = new Map<string, { status: string }>();
+
+async function cachedCompare(
+  repoFullName: string,
+  base: string,
+  head: string,
+): Promise<{ status: string } | null> {
+  const key = `${repoFullName}:${base}...${head}`;
+  if (ghCompareCache.has(key)) return ghCompareCache.get(key)!;
+
+  const res = await fetch(
+    `https://api.github.com/repos/${repoFullName}/compare/${base}...${head}`,
+    { headers: { Authorization: `Bearer ${process.env.GITHUB_TOKEN}`, Accept: "application/vnd.github+json" }, cache: "no-store" },
+  );
+  if (!res.ok) return null;
+
+  const data = await res.json();
+  const result = { status: data.status };
+  ghCompareCache.set(key, result);
+  return result;
+}
+
 // --- Deploy Date Lookup Helper ---
 
 /**
  * Find the actual date a commit arrived on a branch by walking merge commits.
  * Returns the merge commit date if found, otherwise the fallback date.
+ * Checks at most 20 recent commits to limit API calls.
  */
 async function findBranchDeployDate(
   repoFullName: string,
@@ -370,7 +395,7 @@ async function findBranchDeployDate(
   try {
     const headers = { Authorization: `Bearer ${process.env.GITHUB_TOKEN}`, Accept: "application/vnd.github+json" };
     const commitsRes = await fetch(
-      `https://api.github.com/repos/${repoFullName}/commits?sha=${branchPattern}&per_page=50`,
+      `https://api.github.com/repos/${repoFullName}/commits?sha=${branchPattern}&per_page=20`,
       { headers, cache: "no-store" },
     );
     if (!commitsRes.ok) return fallbackDate;
@@ -379,15 +404,9 @@ async function findBranchDeployDate(
     for (let ci = branchCommits.length - 1; ci >= 0; ci--) {
       const bc = branchCommits[ci];
       if (bc.parents?.length < 2) continue; // not a merge commit
-      const compareRes = await fetch(
-        `https://api.github.com/repos/${repoFullName}/compare/${commitSha}...${bc.sha}`,
-        { headers, cache: "no-store" },
-      );
-      if (compareRes.ok) {
-        const data = await compareRes.json();
-        if (data.status === "ahead" || data.status === "identical") {
-          return new Date(bc.commit?.committer?.date || fallbackDate);
-        }
+      const data = await cachedCompare(repoFullName, commitSha, bc.sha);
+      if (data && (data.status === "ahead" || data.status === "identical")) {
+        return new Date(bc.commit?.committer?.date || fallbackDate);
       }
     }
   } catch (e) {
@@ -471,6 +490,14 @@ export async function syncSingleIssue(
       if (mergedPRs.length > 0) {
         const allRepos = await db.select().from(githubRepos);
         const repoMap = new Map(allRepos.map((r) => [r.fullName, r.id]));
+        // Pre-load all branch mappings per repo (avoid repeated queries inside loop)
+        const mappingsByRepo = new Map<string, typeof githubBranchMappings.$inferSelect[]>();
+        for (const repo of allRepos) {
+          const mappings = await db.select().from(githubBranchMappings).where(eq(githubBranchMappings.repoId, repo.id));
+          mappingsByRepo.set(repo.id, mappings);
+        }
+        // Clear compare cache for fresh sync
+        ghCompareCache.clear();
 
         for (const { detail, pr } of mergedPRs) {
           const destBranch = pr.destination?.branch;
@@ -524,17 +551,13 @@ export async function syncSingleIssue(
           // Check if this commit has propagated to other deployment branches
           // (e.g., stage → main-tilemtn via bulk merge)
           if (commitSha && !commitSha.startsWith("pr-")) {
-            const allMappings = await db.select().from(githubBranchMappings).where(eq(githubBranchMappings.repoId, repoId));
-            const otherBranches = allMappings.filter((m) => m.branchPattern !== destBranch && !m.isAllSites);
+            const repoMappings = mappingsByRepo.get(repoId) || [];
+            const otherBranches = repoMappings.filter((m) => m.branchPattern !== destBranch && !m.isAllSites);
 
             for (const mapping of otherBranches) {
               try {
-                const compareRes = await fetch(
-                  `https://api.github.com/repos/${repoFullName}/compare/${mapping.branchPattern}...${commitSha}`,
-                  { headers: { Authorization: `Bearer ${process.env.GITHUB_TOKEN}`, Accept: "application/vnd.github+json" }, cache: "no-store" },
-                );
-                if (!compareRes.ok) continue;
-                const compareData = await compareRes.json();
+                const compareData = await cachedCompare(repoFullName, mapping.branchPattern, commitSha);
+                if (!compareData) continue;
                 if (compareData.status !== "behind" && compareData.status !== "identical") continue;
 
                 const branchDeployedAt = await findBranchDeployDate(repoFullName, mapping.branchPattern, commitSha, deployedAt);
@@ -609,16 +632,12 @@ export async function syncSingleIssue(
 
           // Check commit propagation to other branches (with real deploy dates)
           if (commitSha) {
-            const allMappings = await db.select().from(githubBranchMappings).where(eq(githubBranchMappings.repoId, repoId));
-            for (const mapping of allMappings) {
+            const repoMappings = await db.select().from(githubBranchMappings).where(eq(githubBranchMappings.repoId, repoId));
+            for (const mapping of repoMappings) {
               if (mapping.branchPattern === destBranch || mapping.isAllSites) continue;
               try {
-                const compareRes = await fetch(`https://api.github.com/repos/${repo.fullName}/compare/${mapping.branchPattern}...${commitSha}`, {
-                  headers: { Authorization: `Bearer ${process.env.GITHUB_TOKEN}`, Accept: "application/vnd.github+json" },
-                  cache: "no-store",
-                });
-                if (!compareRes.ok) continue;
-                const cmp = await compareRes.json();
+                const cmp = await cachedCompare(repo.fullName, mapping.branchPattern, commitSha);
+                if (!cmp) continue;
                 if (cmp.status !== "behind" && cmp.status !== "identical") continue;
 
                 const branchDeployedAt = await findBranchDeployDate(repo.fullName, mapping.branchPattern, commitSha, deployedAt);
