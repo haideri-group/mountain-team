@@ -537,17 +537,6 @@ export function IssueSidebar({
         </div>
       )}
 
-      {/* Deployment Pipeline Section — only show if loading or has actual deployments */}
-      {(deploymentLoading || (deploymentData?.deployments?.length > 0)) && (
-        <div className="bg-card rounded-xl p-6 shadow-sm">
-          <DeploymentPipeline
-            pipeline={deploymentData?.pipeline ?? []}
-            isHotfix={deploymentData?.isHotfix ?? false}
-            loading={deploymentLoading}
-          />
-        </div>
-      )}
-
       {/* Attachments Section */}
       {(phase2Loading || (phase2 && phase2.attachments.length > 0)) && (
         <div className="bg-card rounded-xl p-6 shadow-sm space-y-4">

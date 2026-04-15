@@ -2,7 +2,7 @@ import { db } from "@/lib/db";
 import { githubRepos, githubBranchMappings } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 import { githubFetch } from "./client";
-import { extractJiraKeys } from "./jira-keys";
+import { extractJiraKeys, extractKeysFromCommits } from "./jira-keys";
 import { recordDeployment } from "./deployments";
 
 interface BackfillResult {
@@ -52,7 +52,7 @@ interface GitHubPR {
 
 /**
  * Backfill deployment records from recently merged PRs to deployment branches.
- * Looks at the last 30 days of merged PRs targeting tracked branches.
+ * Looks at the last 90 days of merged PRs targeting tracked branches.
  */
 export async function backfillDeployments(
   repoId: string,
@@ -133,12 +133,19 @@ export async function backfillDeployments(
           message: `Processing PR #${pr.number}: ${pr.title.substring(0, 50)}...`,
         });
 
-        // Extract JIRA keys
-        const jiraKeys = extractJiraKeys([
+        // Extract JIRA keys from title, branch, body
+        let jiraKeys = extractJiraKeys([
           pr.title,
           pr.head.ref,
           pr.body,
         ]);
+
+        // Fallback: check commit messages (matches webhook behavior)
+        if (jiraKeys.length === 0 && pr.merge_commit_sha) {
+          try {
+            jiraKeys = await extractKeysFromCommits(repo.fullName, pr.merge_commit_sha);
+          } catch { /* non-fatal */ }
+        }
 
         if (jiraKeys.length === 0) continue;
 
