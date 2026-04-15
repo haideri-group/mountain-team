@@ -68,7 +68,7 @@ function formatDateCompact(dateStr: string): string {
  * Returns a full date+time string like "10 Mar at 4:38 PM"
  * for use in expanded per-site rows.
  */
-function formatDateFull(dateStr: string): string {
+function formatDateWithTime(dateStr: string): string {
   const d = new Date(dateStr);
   const now = new Date();
 
@@ -287,7 +287,7 @@ function StageGroup({ stage }: StageGroupProps) {
               {/* Deploy date */}
               {site.deployedAt ? (
                 <span className="text-[10px] font-mono text-muted-foreground/60 shrink-0 whitespace-nowrap">
-                  {formatDateFull(site.deployedAt)}
+                  {formatDateWithTime(site.deployedAt)}
                 </span>
               ) : (
                 <span className="text-[9px] font-mono text-muted-foreground/30 shrink-0 italic">
