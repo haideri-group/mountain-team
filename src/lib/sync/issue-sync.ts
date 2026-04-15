@@ -11,7 +11,7 @@ import {
   buildIncrementalSyncJql,
 } from "@/lib/jira/issues";
 import { normalizeIssue, calculateCycleTime, loadStatusMappingCache, invalidateStatusMappingCache } from "@/lib/jira/normalizer";
-import { getAuthHeader, getBaseUrl } from "@/lib/jira/client";
+import { getAuthHeader, getBaseUrl, sanitizeErrorText } from "@/lib/jira/client";
 import { recordDeployment } from "@/lib/github/deployments";
 import { extractJiraKeys } from "@/lib/github/jira-keys";
 
@@ -411,7 +411,7 @@ async function findBranchDeployDate(
       }
     }
   } catch (e) {
-    console.warn("Deploy date lookup error:", e instanceof Error ? e.message : e);
+    console.warn("Deploy date lookup error:", sanitizeErrorText(e instanceof Error ? e.message : String(e)));
   }
   return fallbackDate;
 }
@@ -530,7 +530,7 @@ export async function syncSingleIssue(
                 commitSha = ghPr.merge_commit_sha || "";
                 if (ghPr.merged_at) deployedAt = new Date(ghPr.merged_at);
               }
-            } catch (e) { console.warn("Deployment propagation error:", e instanceof Error ? e.message : e); }
+            } catch (e) { console.warn("Deployment propagation error:", sanitizeErrorText(e instanceof Error ? e.message : String(e))); }
           }
           if (!commitSha) commitSha = `pr-${prNum}`;
 
@@ -582,7 +582,7 @@ export async function syncSingleIssue(
       }
     }
   } catch (err) {
-    console.warn("JIRA deployment sync failed (non-fatal):", err instanceof Error ? err.message : err);
+    console.warn("JIRA deployment sync failed (non-fatal):", sanitizeErrorText(err instanceof Error ? err.message : String(err)));
   }
 
   // GitHub fallback: if JIRA found no deployments, search GitHub directly for PRs matching the JIRA key
@@ -657,13 +657,13 @@ export async function syncSingleIssue(
                   deployedAt: branchDeployedAt,
                 });
                 deploymentsRecorded += propResult.recorded;
-              } catch (e) { console.warn("Deployment propagation error:", e instanceof Error ? e.message : e); }
+              } catch (e) { console.warn("Deployment propagation error:", sanitizeErrorText(e instanceof Error ? e.message : String(e))); }
             }
           }
         }
       }
     } catch (err) {
-      console.warn("GitHub deployment fallback failed (non-fatal):", err instanceof Error ? err.message : err);
+      console.warn("GitHub deployment fallback failed (non-fatal):", sanitizeErrorText(err instanceof Error ? err.message : String(err)));
     }
   }
 
@@ -740,15 +740,15 @@ export async function syncSingleIssue(
                       deployedBy: ghPr.user?.login || null, deployedAt: branchDeployedAt,
                     });
                     deploymentsRecorded += propResult.recorded;
-                  } catch (e) { console.warn("Deployment propagation error:", e instanceof Error ? e.message : e); }
+                  } catch (e) { console.warn("Deployment propagation error:", sanitizeErrorText(e instanceof Error ? e.message : String(e))); }
                 }
               }
-            } catch (e) { console.warn("PR fetch from comment failed:", e instanceof Error ? e.message : e); }
+            } catch (e) { console.warn("PR fetch from comment failed:", sanitizeErrorText(e instanceof Error ? e.message : String(e))); }
           }
         }
       }
     } catch (err) {
-      console.warn("JIRA comments fallback failed (non-fatal):", err instanceof Error ? err.message : err);
+      console.warn("JIRA comments fallback failed (non-fatal):", sanitizeErrorText(err instanceof Error ? err.message : String(err)));
     }
   }
 
