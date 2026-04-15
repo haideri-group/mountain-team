@@ -10,6 +10,7 @@ import {
   ChevronDown,
   ChevronRight,
   CheckCircle2,
+  ExternalLink,
 } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { APP_TIMEZONE as PKT } from "@/lib/config";
@@ -22,6 +23,8 @@ interface DeploymentSite {
   deployedAt: string | null;
   branch: string | null;
   repoName: string | null;
+  commitSha?: string | null;
+  prUrl?: string | null;
 }
 
 interface PipelineStage {
@@ -277,19 +280,47 @@ function StageGroup({ stage }: StageGroupProps) {
                 {site.siteLabel ?? site.siteName}
               </span>
 
-              {/* Branch — only when it differs meaningfully */}
+              {/* Branch — clickable link to branch on GitHub */}
               {site.branch && (
-                <code className="text-[9px] font-mono text-muted-foreground/50 shrink-0 truncate max-w-[80px]">
-                  {site.branch}
-                </code>
+                site.repoName ? (
+                  <a
+                    href={`https://github.com/${site.repoName}/tree/${site.branch}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-[9px] font-mono text-muted-foreground/50 shrink-0 truncate max-w-[100px] hover:text-primary/70 transition-colors"
+                  >
+                    {site.branch}
+                  </a>
+                ) : (
+                  <code className="text-[9px] font-mono text-muted-foreground/50 shrink-0 truncate max-w-[100px]">
+                    {site.branch}
+                  </code>
+                )
               )}
 
-              {/* Deploy date */}
-              {site.deployedAt ? (
-                <span className="text-[10px] font-mono text-muted-foreground/60 shrink-0 whitespace-nowrap">
-                  {formatDateWithTime(site.deployedAt)}
-                </span>
-              ) : (
+              {/* Deploy date — clickable link to commit or PR on GitHub */}
+              {site.deployedAt ? (() => {
+                const commitUrl = site.commitSha && site.repoName
+                  ? `https://github.com/${site.repoName}/commit/${site.commitSha}`
+                  : null;
+                const linkUrl = commitUrl || site.prUrl || null;
+
+                return linkUrl ? (
+                  <a
+                    href={linkUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1 text-[10px] font-mono text-muted-foreground/60 shrink-0 whitespace-nowrap hover:text-primary transition-colors group/deploy-link"
+                  >
+                    {formatDateWithTime(site.deployedAt)}
+                    <ExternalLink className="h-2.5 w-2.5 opacity-0 group-hover/deploy-link:opacity-100 transition-opacity" />
+                  </a>
+                ) : (
+                  <span className="text-[10px] font-mono text-muted-foreground/60 shrink-0 whitespace-nowrap">
+                    {formatDateWithTime(site.deployedAt)}
+                  </span>
+                );
+              })() : (
                 <span className="text-[9px] font-mono text-muted-foreground/30 shrink-0 italic">
                   pending
                 </span>

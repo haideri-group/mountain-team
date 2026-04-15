@@ -4,6 +4,7 @@ import { team_members, issues, boards, deployments } from "@/lib/db/schema";
 import { eq, and, inArray } from "drizzle-orm";
 import { auth } from "@/auth";
 import { withResolvedAvatar } from "@/lib/db/helpers";
+import { calculateTaskWeight } from "@/lib/workload/snapshots";
 
 export async function GET(
   _request: Request,
@@ -170,24 +171,12 @@ export async function GET(
       )
       .reduce((sum, i) => sum + (i.storyPoints || 0), 0);
 
-    // Workload (weighted formula — same as /api/workload)
+    // Workload: uses shared weighted formula
     const capacity = member.capacity || 15;
     const countedStatuses = ["todo", "in_progress", "in_review"];
     const activePointsForWorkload = enrichedIssues
       .filter((i) => countedStatuses.includes(i.status))
-      .reduce((sum, i) => {
-        if (i.storyPoints && i.storyPoints > 0) return sum + i.storyPoints;
-        let labels: string[] = [];
-        try { labels = i.labels ? JSON.parse(i.labels) : []; } catch { labels = []; }
-        if (labels.some((l: string) => l.toLowerCase() === "webcontent")) return sum + 0.5;
-        if (i.type === "bug") {
-          const rp = (i as { requestPriority?: string | null }).requestPriority;
-          if (rp === "P1") return sum + 3.0;
-          if (rp === "P2") return sum + 2.0;
-          if (rp === "P3") return sum + 1.5;
-        }
-        return sum + 1.0;
-      }, 0);
+      .reduce((sum, i) => sum + calculateTaskWeight(i), 0);
     const workloadPercentage = Math.round(
       (activePointsForWorkload / capacity) * 100,
     );

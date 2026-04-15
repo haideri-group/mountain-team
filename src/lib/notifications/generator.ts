@@ -182,7 +182,7 @@ export async function generateNotificationsFromSync(): Promise<{
   // --- Capacity Detection ---
   for (const member of allMembers) {
     const memberIssues = allIssues.filter(
-      (i) => i.assigneeId === member.id,
+      (i) => i.assigneeId === member.id && i.type !== "story", // story = parent-level, excluded from workload
     );
     const activePoints = memberIssues.reduce(
       (sum, i) => sum + (i.storyPoints || 1),

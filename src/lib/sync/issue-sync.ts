@@ -13,6 +13,7 @@ import {
 import { normalizeIssue, calculateCycleTime, loadStatusMappingCache, invalidateStatusMappingCache } from "@/lib/jira/normalizer";
 import { getAuthHeader, getBaseUrl } from "@/lib/jira/client";
 import { recordDeployment } from "@/lib/github/deployments";
+import { extractJiraKeys } from "@/lib/github/jira-keys";
 
 // --- Types ---
 
@@ -610,6 +611,10 @@ export async function syncSingleIssue(
 
           if (!ghPr.merged || !ghPr.base?.ref) continue;
 
+          // Validate the JIRA key actually appears in this PR (GitHub search is full-text, returns false positives)
+          const prKeys = extractJiraKeys([ghPr.title, ghPr.head?.ref, ghPr.body]);
+          if (!prKeys.includes(jiraKey)) continue;
+
           const commitSha = ghPr.merge_commit_sha || "";
           const deployedAt = new Date(ghPr.merged_at || Date.now());
           const destBranch = ghPr.base.ref;
@@ -659,6 +664,90 @@ export async function syncSingleIssue(
       }
     } catch (err) {
       console.warn("GitHub deployment fallback failed (non-fatal):", err instanceof Error ? err.message : err);
+    }
+  }
+
+  // JIRA comments fallback: scan comments for GitHub PR URLs when no deployments found
+  if (deploymentsRecorded === 0 && process.env.GITHUB_TOKEN) {
+    try {
+      const commentsUrl = `${getBaseUrl()}/rest/api/3/issue/${jiraKey}/comment?maxResults=20`;
+      const commentsRes = await fetch(commentsUrl, {
+        headers: { Authorization: getAuthHeader(), Accept: "application/json" },
+        cache: "no-store",
+      });
+
+      if (commentsRes.ok) {
+        const commentsData = await commentsRes.json();
+        const allRepos = await db.select().from(githubRepos);
+        const repoMap = new Map(allRepos.map((r) => [r.fullName, r.id]));
+
+        // Extract GitHub PR URLs from comment bodies (ADF JSON)
+        const prUrlRegex = /https:\/\/github\.com\/([^/]+\/[^/]+)\/pull\/(\d+)/g;
+        const seenPrUrls = new Set<string>();
+
+        for (const comment of commentsData.comments || []) {
+          const bodyStr = JSON.stringify(comment.body || "");
+          let match;
+          while ((match = prUrlRegex.exec(bodyStr)) !== null) {
+            const repoFullName = match[1];
+            const prNumber = parseInt(match[2], 10);
+            const prUrl = match[0];
+            if (seenPrUrls.has(prUrl)) continue;
+            seenPrUrls.add(prUrl);
+
+            const repoId = repoMap.get(repoFullName);
+            if (!repoId) continue;
+
+            // Fetch PR details from GitHub
+            try {
+              const prRes = await fetch(`https://api.github.com/repos/${repoFullName}/pulls/${prNumber}`, {
+                headers: { Authorization: `Bearer ${process.env.GITHUB_TOKEN}`, Accept: "application/vnd.github+json" },
+                cache: "no-store",
+              });
+              if (!prRes.ok) continue;
+              const ghPr = await prRes.json();
+              if (!ghPr.merged || !ghPr.base?.ref) continue;
+
+              const commitSha = ghPr.merge_commit_sha || "";
+              const deployedAt = new Date(ghPr.merged_at || Date.now());
+
+              const result = await recordDeployment({
+                jiraKey,
+                repoId,
+                branch: ghPr.base.ref,
+                prNumber,
+                prTitle: ghPr.title || null,
+                prUrl,
+                commitSha,
+                deployedBy: ghPr.user?.login || null,
+                deployedAt,
+              });
+              deploymentsRecorded += result.recorded;
+
+              // Check commit propagation
+              if (commitSha) {
+                const repoMappings = await db.select().from(githubBranchMappings).where(eq(githubBranchMappings.repoId, repoId));
+                for (const mapping of repoMappings) {
+                  if (mapping.branchPattern === ghPr.base.ref || mapping.isAllSites) continue;
+                  try {
+                    const cmp = await cachedCompare(repoFullName, mapping.branchPattern, commitSha);
+                    if (!cmp || (cmp.status !== "behind" && cmp.status !== "identical")) continue;
+                    const branchDeployedAt = await findBranchDeployDate(repoFullName, mapping.branchPattern, commitSha, deployedAt);
+                    const propResult = await recordDeployment({
+                      jiraKey, repoId, branch: mapping.branchPattern,
+                      prNumber, prTitle: ghPr.title || null, prUrl, commitSha,
+                      deployedBy: ghPr.user?.login || null, deployedAt: branchDeployedAt,
+                    });
+                    deploymentsRecorded += propResult.recorded;
+                  } catch (e) { console.warn("Deployment propagation error:", e instanceof Error ? e.message : e); }
+                }
+              }
+            } catch (e) { console.warn("PR fetch from comment failed:", e instanceof Error ? e.message : e); }
+          }
+        }
+      }
+    } catch (err) {
+      console.warn("JIRA comments fallback failed (non-fatal):", err instanceof Error ? err.message : err);
     }
   }
 
