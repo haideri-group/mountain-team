@@ -416,6 +416,62 @@ async function findBranchDeployDate(
   return fallbackDate;
 }
 
+// --- Commit Propagation Helper ---
+
+/**
+ * Check if a commit has propagated to other deployment branches and record
+ * deployments with real deploy dates for each. Returns the count of new
+ * deployments recorded.
+ */
+async function propagateDeploymentToOtherBranches(params: {
+  jiraKey: string;
+  repoId: string;
+  repoFullName: string;
+  commitSha: string;
+  sourceBranch: string;
+  prNumber: number | null;
+  prTitle: string | null;
+  prUrl: string | null;
+  deployedBy: string | null;
+  baseDeployedAt: Date;
+  branchMappings?: typeof githubBranchMappings.$inferSelect[];
+}): Promise<number> {
+  // Skip synthetic placeholder SHAs (e.g., "pr-6483") — not real commits
+  if (params.commitSha.startsWith("pr-")) return 0;
+
+  let recorded = 0;
+  const mappings = params.branchMappings
+    || await db.select().from(githubBranchMappings).where(eq(githubBranchMappings.repoId, params.repoId));
+  const otherBranches = mappings.filter((m) => m.branchPattern !== params.sourceBranch && !m.isAllSites);
+
+  for (const mapping of otherBranches) {
+    try {
+      const cmp = await cachedCompare(params.repoFullName, mapping.branchPattern, params.commitSha);
+      if (!cmp || (cmp.status !== "behind" && cmp.status !== "identical")) continue;
+
+      const branchDeployedAt = await findBranchDeployDate(
+        params.repoFullName, mapping.branchPattern, params.commitSha, params.baseDeployedAt,
+      );
+
+      const result = await recordDeployment({
+        jiraKey: params.jiraKey,
+        repoId: params.repoId,
+        branch: mapping.branchPattern,
+        prNumber: params.prNumber,
+        prTitle: params.prTitle,
+        prUrl: params.prUrl,
+        commitSha: params.commitSha,
+        deployedBy: params.deployedBy,
+        deployedAt: branchDeployedAt,
+      });
+      recorded += result.recorded;
+    } catch (e) {
+      console.warn("Deployment propagation error:", sanitizeErrorText(e instanceof Error ? e.message : String(e)));
+    }
+  }
+  return recorded;
+}
+
 export async function syncSingleIssue(
   jiraKey: string,
 ): Promise<{ success: boolean; message: string }> {
@@ -548,35 +604,13 @@ export async function syncSingleIssue(
           deploymentsRecorded += result.recorded;
 
           // Check if this commit has propagated to other deployment branches
-          // (e.g., stage → main-tilemtn via bulk merge)
-          if (commitSha && !commitSha.startsWith("pr-")) {
-            const repoMappings = mappingsByRepo.get(repoId) || [];
-            const otherBranches = repoMappings.filter((m) => m.branchPattern !== destBranch && !m.isAllSites);
-
-            for (const mapping of otherBranches) {
-              try {
-                const compareData = await cachedCompare(repoFullName, mapping.branchPattern, commitSha);
-                if (!compareData) continue;
-                if (compareData.status !== "behind" && compareData.status !== "identical") continue;
-
-                const branchDeployedAt = await findBranchDeployDate(repoFullName, mapping.branchPattern, commitSha, deployedAt);
-
-                const propagateResult = await recordDeployment({
-                  jiraKey: normalized.jiraKey,
-                  repoId,
-                  branch: mapping.branchPattern,
-                  prNumber: prNum || null,
-                  prTitle: pr.name || null,
-                  prUrl: pr.url || null,
-                  commitSha,
-                  deployedBy: pr.author?.name || null,
-                  deployedAt: branchDeployedAt,
-                });
-                deploymentsRecorded += propagateResult.recorded;
-              } catch {
-                // Non-fatal — skip this branch check
-              }
-            }
+          if (commitSha) {
+            deploymentsRecorded += await propagateDeploymentToOtherBranches({
+              jiraKey: normalized.jiraKey, repoId, repoFullName, commitSha,
+              sourceBranch: destBranch, prNumber: prNum || null, prTitle: pr.name || null,
+              prUrl: pr.url || null, deployedBy: pr.author?.name || null,
+              baseDeployedAt: deployedAt, branchMappings: mappingsByRepo.get(repoId),
+            });
           }
         }
       }
@@ -633,32 +667,14 @@ export async function syncSingleIssue(
           });
           deploymentsRecorded += result.recorded;
 
-          // Check commit propagation to other branches (with real deploy dates)
+          // Check commit propagation to other branches
           if (commitSha) {
-            const repoMappings = await db.select().from(githubBranchMappings).where(eq(githubBranchMappings.repoId, repoId));
-            for (const mapping of repoMappings) {
-              if (mapping.branchPattern === destBranch || mapping.isAllSites) continue;
-              try {
-                const cmp = await cachedCompare(repo.fullName, mapping.branchPattern, commitSha);
-                if (!cmp) continue;
-                if (cmp.status !== "behind" && cmp.status !== "identical") continue;
-
-                const branchDeployedAt = await findBranchDeployDate(repo.fullName, mapping.branchPattern, commitSha, deployedAt);
-
-                const propResult = await recordDeployment({
-                  jiraKey,
-                  repoId,
-                  branch: mapping.branchPattern,
-                  prNumber: ghPr.number,
-                  prTitle: ghPr.title || null,
-                  prUrl: ghPr.html_url || null,
-                  commitSha,
-                  deployedBy: ghPr.user?.login || null,
-                  deployedAt: branchDeployedAt,
-                });
-                deploymentsRecorded += propResult.recorded;
-              } catch (e) { console.warn("Deployment propagation error:", sanitizeErrorText(e instanceof Error ? e.message : String(e))); }
-            }
+            deploymentsRecorded += await propagateDeploymentToOtherBranches({
+              jiraKey, repoId, repoFullName: repo.fullName, commitSha,
+              sourceBranch: destBranch, prNumber: ghPr.number, prTitle: ghPr.title || null,
+              prUrl: ghPr.html_url || null, deployedBy: ghPr.user?.login || null,
+              baseDeployedAt: deployedAt,
+            });
           }
         }
       }
@@ -727,21 +743,11 @@ export async function syncSingleIssue(
 
               // Check commit propagation
               if (commitSha) {
-                const repoMappings = await db.select().from(githubBranchMappings).where(eq(githubBranchMappings.repoId, repoId));
-                for (const mapping of repoMappings) {
-                  if (mapping.branchPattern === ghPr.base.ref || mapping.isAllSites) continue;
-                  try {
-                    const cmp = await cachedCompare(repoFullName, mapping.branchPattern, commitSha);
-                    if (!cmp || (cmp.status !== "behind" && cmp.status !== "identical")) continue;
-                    const branchDeployedAt = await findBranchDeployDate(repoFullName, mapping.branchPattern, commitSha, deployedAt);
-                    const propResult = await recordDeployment({
-                      jiraKey, repoId, branch: mapping.branchPattern,
-                      prNumber, prTitle: ghPr.title || null, prUrl, commitSha,
-                      deployedBy: ghPr.user?.login || null, deployedAt: branchDeployedAt,
-                    });
-                    deploymentsRecorded += propResult.recorded;
-                  } catch (e) { console.warn("Deployment propagation error:", sanitizeErrorText(e instanceof Error ? e.message : String(e))); }
-                }
+                deploymentsRecorded += await propagateDeploymentToOtherBranches({
+                  jiraKey, repoId, repoFullName, commitSha,
+                  sourceBranch: ghPr.base.ref, prNumber, prTitle: ghPr.title || null,
+                  prUrl, deployedBy: ghPr.user?.login || null, baseDeployedAt: deployedAt,
+                });
               }
             } catch (e) { console.warn("PR fetch from comment failed:", sanitizeErrorText(e instanceof Error ? e.message : String(e))); }
           }
