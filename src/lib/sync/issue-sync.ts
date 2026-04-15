@@ -436,6 +436,9 @@ async function propagateDeploymentToOtherBranches(params: {
   baseDeployedAt: Date;
   branchMappings?: typeof githubBranchMappings.$inferSelect[];
 }): Promise<number> {
+  // Skip synthetic placeholder SHAs (e.g., "pr-6483") — not real commits
+  if (params.commitSha.startsWith("pr-")) return 0;
+
   let recorded = 0;
   const mappings = params.branchMappings
     || await db.select().from(githubBranchMappings).where(eq(githubBranchMappings.repoId, params.repoId));
@@ -601,7 +604,7 @@ export async function syncSingleIssue(
           deploymentsRecorded += result.recorded;
 
           // Check if this commit has propagated to other deployment branches
-          if (commitSha && !commitSha.startsWith("pr-")) {
+          if (commitSha) {
             deploymentsRecorded += await propagateDeploymentToOtherBranches({
               jiraKey: normalized.jiraKey, repoId, repoFullName, commitSha,
               sourceBranch: destBranch, prNumber: prNum || null, prTitle: pr.name || null,
