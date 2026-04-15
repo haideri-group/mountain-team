@@ -7,7 +7,6 @@ import {
   Globe,
   GitBranch,
   AlertTriangle,
-  Loader2,
   ChevronDown,
   ChevronRight,
   CheckCircle2,
@@ -418,9 +417,6 @@ export function DeploymentPipeline({
             <AlertTriangle className="h-2.5 w-2.5" />
             HOTFIX
           </span>
-        )}
-        {loading && (
-          <Loader2 className="h-3 w-3 animate-spin text-muted-foreground ml-auto" />
         )}
       </div>
 
