@@ -48,6 +48,8 @@ export interface DeploymentSummary {
       deployedAt: string | null;
       branch: string | null;
       repoName: string | null;
+      commitSha: string | null;
+      prUrl: string | null;
     }>;
   }>;
   deployments: DeploymentRecord[];
@@ -286,6 +288,8 @@ export async function getDeploymentsForIssue(
       deployedAt: string | null;
       branch: string | null;
       repoName: string | null;
+      commitSha: string | null;
+      prUrl: string | null;
     }>();
 
     for (const r of envRecords) {
@@ -297,6 +301,8 @@ export async function getDeploymentsForIssue(
           deployedAt: r.deployedAt?.toISOString() ?? null,
           branch: r.branch,
           repoName: repoMap.get(r.repoId) ?? null,
+          commitSha: r.commitSha?.startsWith("pr-") ? null : r.commitSha,
+          prUrl: r.prUrl,
         });
       }
     }

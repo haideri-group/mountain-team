@@ -17,6 +17,9 @@ function getCurrentWeekStart(): string {
   return monday.toISOString().split("T")[0];
 }
 
+/** Issue types excluded from workload — parent-level items where devs work on sub-tasks */
+export const WORKLOAD_EXCLUDED_TYPES = ["story"] as const;
+
 // Calculate task weight based on type, priority, labels, and story points
 export function calculateTaskWeight(issue: {
   storyPoints: number | null;
@@ -24,6 +27,9 @@ export function calculateTaskWeight(issue: {
   requestPriority: string | null;
   labels: string | null;
 }): number {
+  // Parent-level types excluded from workload
+  if (issue.type && (WORKLOAD_EXCLUDED_TYPES as readonly string[]).includes(issue.type)) return 0;
+
   // Story points always override if set
   if (issue.storyPoints && issue.storyPoints > 0) {
     return issue.storyPoints;
