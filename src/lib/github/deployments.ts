@@ -62,30 +62,46 @@ async function findExistingDeployment(
   siteName: string | null,
   repoId: string,
   commitSha: string | null,
+  prNumber?: number | null,
 ): Promise<string | null> {
-  if (!commitSha) return null;
+  const envCast = environment as "staging" | "production" | "canonical";
+  const siteCondition = siteName ? eq(deployments.siteName, siteName) : isNull(deployments.siteName);
 
-  const conditions = [
-    eq(deployments.jiraKey, jiraKey),
-    eq(deployments.environment, environment as "staging" | "production" | "canonical"),
-    eq(deployments.repoId, repoId),
-    eq(deployments.commitSha, commitSha),
-  ];
+  // Primary dedup: by commitSha (most reliable)
+  if (commitSha) {
+    const existing = await db
+      .select({ id: deployments.id })
+      .from(deployments)
+      .where(and(
+        eq(deployments.jiraKey, jiraKey),
+        eq(deployments.environment, envCast),
+        eq(deployments.repoId, repoId),
+        eq(deployments.commitSha, commitSha),
+        siteCondition,
+      ))
+      .limit(1);
 
-  // Properly handle NULL siteName with IS NULL
-  if (siteName) {
-    conditions.push(eq(deployments.siteName, siteName));
-  } else {
-    conditions.push(isNull(deployments.siteName));
+    if (existing.length > 0) return existing[0].id;
   }
 
-  const existing = await db
-    .select({ id: deployments.id })
-    .from(deployments)
-    .where(and(...conditions))
-    .limit(1);
+  // Fallback dedup: by prNumber when commitSha is missing
+  if (!commitSha && prNumber) {
+    const existing = await db
+      .select({ id: deployments.id })
+      .from(deployments)
+      .where(and(
+        eq(deployments.jiraKey, jiraKey),
+        eq(deployments.environment, envCast),
+        eq(deployments.repoId, repoId),
+        eq(deployments.prNumber, prNumber),
+        siteCondition,
+      ))
+      .limit(1);
 
-  return existing.length > 0 ? existing[0].id : null;
+    if (existing.length > 0) return existing[0].id;
+  }
+
+  return null;
 }
 
 // --- Record Deployment ---
@@ -137,6 +153,7 @@ export async function recordDeployment(
         site.siteName,
         input.repoId,
         input.commitSha ?? null,
+        input.prNumber,
       );
 
       if (existingId) {
@@ -178,6 +195,7 @@ export async function recordDeployment(
       resolved.siteName,
       input.repoId,
       input.commitSha ?? null,
+      input.prNumber,
     );
 
     if (existingId) {
