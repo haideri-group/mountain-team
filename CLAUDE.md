@@ -70,14 +70,14 @@ All request-time APIs are **async** and must be awaited:
 
 **Route structure:**
 - `(auth)/login` — Public login page (no sidebar)
-- `(dashboard)/overview` — Team overview with developer cards + team switcher
-- `(dashboard)/calendar` — Monthly task calendar (placeholder)
-- `(dashboard)/workload` — Capacity distribution (placeholder)
+- `(dashboard)/overview` — Team overview with developer cards + team switcher + deployment indicators
+- `(dashboard)/calendar` — Monthly task calendar
+- `(dashboard)/workload` — Capacity distribution dashboard with burnout detection
 - `(dashboard)/members` — Team roster with server-side pagination
-- `(dashboard)/members/[id]` — Developer profile (active or departed)
-- `(dashboard)/reports` — Analytics with 12 chart sections (placeholder)
+- `(dashboard)/members/[id]` — Developer profile with task history, date range filter, deployment indicators
+- `(dashboard)/reports` — Analytics with 12 chart sections + pending releases
 - `(dashboard)/users` — Admin-only: user listing, role management, account deactivation
-- `(dashboard)/settings` — Admin-only: team sync, issue sync, board management
+- `(dashboard)/settings` — Admin-only: team sync, issue sync, board management, GitHub repos, status mappings
 
 Route groups `(auth)` and `(dashboard)` use separate layouts. Dashboard layout includes sidebar (280px dark navy) + topbar (64px).
 
@@ -90,7 +90,7 @@ Route groups `(auth)` and `(dashboard)` use separate layouts. Dashboard layout i
 ## Security
 
 - **All API routes require authentication.** GET endpoints check `session?.user`, mutation endpoints (POST/PATCH/DELETE) check `session?.user?.role === "admin"`.
-- **Error sanitization:** `sanitizeErrorText()` in `src/lib/jira/client.ts` redacts tokens from error messages before logging/throwing.
+- **Error sanitization:** `sanitizeErrorText()` in `src/lib/jira/client.ts` redacts Basic/Bearer tokens and API keys from error messages before logging/throwing. Used in all sync catch blocks.
 - **No hardcoded credentials.** The seed script uses bcrypt-hashed passwords. No fallback logins in code.
 - **Cron endpoints** use `SYNC_SECRET` / `CRON_SECRET` bearer token auth.
 - **Webhook endpoint** uses optional `x-webhook-secret` header verification.
@@ -144,7 +144,9 @@ Team members are **not manually managed** — they are auto-synced from the Atla
 - Each member is tagged with their `teamId` and `teamName` from the Atlassian team
 - **In team = `active`**, **removed from team = `departed`**, **rejoining = re-activated**
 - New members are auto-created with auto-assigned colors from palette
-- `displayName`, `email`, `avatarUrl` are updated from JIRA/Google on each sync
+- `displayName`, `email` are updated from JIRA on each sync
+- **Avatar priority:** Google photos preferred over JIRA/Gravatar defaults. JIRA avatar only used when member has no avatar at all — existing R2 paths and Google photos are never overwritten by JIRA sync.
+- **Google OAuth token auto-refresh:** JWT callback refreshes expired Google access tokens using the stored refresh token (tokens expire after 1 hour).
 - Admin-managed fields (`capacity`, `role`, `color`) are never overwritten by sync
 - `on_leave` status is admin-managed, not affected by sync (unless member leaves the org)
 - Admin (Syed Haider Hassan) is excluded from sync via `/rest/api/3/myself`
@@ -157,7 +159,7 @@ Team members are **not manually managed** — they are auto-synced from the Atla
 - Inline email edit on Members page has autocomplete dropdown from Google Directory (300ms debounce, min 3 chars)
 
 **Sync triggers:**
-- Daily cron at 06:00 UTC (`/api/cron/sync-teams`)
+- Daily cron at 01:00 UTC / 06:00 PKT (`/api/cron/sync-teams`) — via Cronicle (`cron.appz.cc`)
 - Manual "Sync Now" button in Settings (admin only)
 
 ## JIRA Issue Sync
@@ -174,7 +176,11 @@ Issues are synced from JIRA into the `issues` table using JQL queries.
 - Issues from untracked boards are skipped (admin must add board in Settings first)
 - Unassigned issues synced with `assigneeId = null`
 - Stores `jiraCreatedAt` and `jiraUpdatedAt` from JIRA for accurate sorting
+- `completedDate` fallback chain: `resolutiondate` → `statuscategorychangedate` → `updated` (fixes kanban boards where resolutiondate is null)
+- `description` stored as rendered HTML from JIRA `renderedFields` (via `expand=renderedFields` on search). Phase 1 renders from DB cache; Phase 2 writes-through on live JIRA fetch.
+- `website` and `brands` custom fields synced from JIRA (`customfield_10734`, `customfield_10805`)
 - Live progress tracking polled by UI every 1 second during sync
+- Sync progress persists across page navigation (mount-time active sync detection with 500ms delayed first poll to avoid race condition)
 
 **JQL filtering:** Issues are synced if they match EITHER condition:
 - Assigned to any active team member (by JIRA accountId), OR
@@ -187,8 +193,8 @@ This ensures all team member work is captured regardless of labels, plus any Fro
 - **Manual:** Triggered by admin via Settings UI (full sync or per-board)
 
 **Sync triggers:**
-- Daily cron at 06:05 UTC (`/api/cron/sync-issues`) — auto-detects full vs incremental
-- Manual "Sync Issues" button in Settings (admin only)
+- Daily cron at 01:05 UTC / 06:05 PKT (`/api/cron/sync-issues`) — via Cronicle, auto-detects full vs incremental
+- Manual "Sync Issues" button in Settings (admin only, fire-and-forget POST)
 - Per-board sync button on each tracked board card
 
 **JIRA Webhook** (`/api/webhooks/jira`):
@@ -197,43 +203,59 @@ This ensures all team member work is captured regardless of labels, plus any Fro
 - Normalizes and upserts single issue per event
 - Setup guide: `docs/JIRA_WEBHOOK_SETUP.md`
 
-## GitHub Deployment Tracking (Phase 10.6 — in progress)
+## GitHub Deployment Tracking (Phase 10.6)
 
 Tracks which JIRA tasks are deployed to staging/production across multiple sites.
 
 **Architecture:** 3 DB tables (`github_repos`, `github_branch_mappings`, `deployments`) + GitHub webhook + backfill service.
 
 **Tracked repos:**
-- Frontend: `tilemountainuk/tile-mountain-sdk` — 6 live sites, 6 staging, shared `stage`, canonical `main`
-- Backend: `tilemountainuk/tilemountain2` — 4 live sites, 4 staging, canonical `master`
+- Frontend: `tilemountainuk/tile-mountain-sdk` — 6 live sites, 6 staging, shared `stage`, canonical `main` (webhook active)
+- Backend: `tilemountainuk/tilemountain2` — 4 live sites, 4 staging, canonical `master` (webhook not set)
 
-**Branch → environment mapping:** Database-driven via `github_branch_mappings`. Configured per-repo in Settings.
+**Branch → environment mapping:** Database-driven via `github_branch_mappings`. Configured per-repo in Settings with Add Repo form (Detect Branches + auto-classify + preset quick-fill).
 - `isAllSites = true` expands single deployment into per-site records (e.g., `stage` → all staging sites)
 - `skip:{siteName}` PR labels exclude specific sites from shared-branch deployments
 - Hotfix branches (`hotfix/*`, `hotfix_*`) bypass staging, deploy directly to production
 
-**Data sources:**
-- GitHub webhook (`/api/webhooks/github`) — real-time on PR merge + deployment_status events
-- Backfill service — scans last 90 days of merged PRs for historical deployments
-- JIRA dev-status API (existing) — branches, PRs, commits per issue
+**Per-issue sync** (sync button on issue detail page) — Three-layer fallback:
+1. **JIRA dev-status** (primary) — finds linked PRs from JIRA's GitHub integration. Repo name extracted from PR URL (not dev-status response which returns empty).
+2. **GitHub search** (fallback) — searches `repo:owner/name is:pr is:merged JIRA-KEY`. Results validated with `extractJiraKeys()` to prevent false positives from full-text search.
+3. **JIRA comments** (last resort) — scans comment ADF bodies for `github.com/owner/repo/pull/N` URLs. Handles cases where dev works on a different branch but posts PR link in comment.
 
-**JIRA key detection:** Regex `/[A-Z]{2,}-\d+/gi` on branch names, PR titles, commit messages. Fallback: fetches commit messages from GitHub API.
+**Commit propagation:** After recording a PR's direct deployment, checks if the commit exists on all other tracked branches using GitHub compare API. Finds real deploy date per branch by walking merge commit history. Uses `propagateDeploymentToOtherBranches()` shared helper. Cached compare results (`ghCompareCache`) to avoid duplicate API calls.
 
-**Pipeline visualization:** `deployment-pipeline.tsx` on issue detail page — Staging → Production → Main with per-site status.
+**Deployment recording:** Uses upsert pattern (not skip). Existing records updated with correct `deployedAt`/`deployedBy`/`branch` on re-sync. Two-tier dedup: commitSha (primary) → prNumber (fallback when SHA missing). Synthetic `pr-` prefixed SHAs normalized to null in pipeline output.
 
-**Remaining:** Proper Add Repo form UI, deployment notifications, pending releases report
+**Pipeline visualization:** `deployment-pipeline.tsx` in left column of issue detail page.
+- Collapsible stage groups — collapsed when all sites deployed same day, expanded when dates differ
+- Clickable dates → link to GitHub commit page (`/commit/{sha}`) or PR URL as fallback
+- Clickable branch names → link to branch on GitHub (`/tree/{branch}`)
+- Proper date formatting: "6 Mar 2026 at 2:13 PM" (PKT timezone via `APP_TIMEZONE` from `src/lib/config.ts`)
+
+**Deployment indicators:** Green rocket (production) / amber server (staging) icons shown on:
+- Overview dev cards (current, queued, recent done issues)
+- Member profile: current work + task history table
+
+**Backfill:** Scans last 90 days of merged PRs. Falls back to `extractKeysFromCommits()` when no JIRA keys in title/branch/body. Progress bar with polling in Settings UI.
+
+**Notifications:** `generateDeploymentNotification()` called from GitHub webhook after `recordDeployment()`. Rocket icon + "Deployed" filter tab in notifications dropdown.
+
+**Pending releases:** `GET /api/github/pending-releases` — tasks staged but not yet on production. Table component on Reports page with days-pending color coding.
 
 ## Cloudflare R2 Avatar Caching (Phase 10.7)
 
 Caches team member avatars to R2 to avoid Google/Gravatar rate limits (429 errors with ~14 concurrent avatar loads).
 
 **How it works:**
-- Downloads avatars from source (Gravatar, Google, Atlassian) in 2 sizes: 96x96 (small) and 256x256 (large)
+- Downloads avatars from source (Google preferred, Gravatar/Atlassian fallback) in 2 sizes: 96x96 (small) and 256x256 (large)
 - Uploads to R2 bucket at `avatars/{memberId}/sm.{ext}` and `lg.{ext}`
+- **Stores paths only** in DB (`avatars/tm_123/sm.png?v=123`), not full URLs. `resolveAvatarUrl()` in `src/lib/r2/client.ts` prepends `CLOUDFLARE_R2_PUBLIC_URL` at runtime. Changing CDN domain = one env var change, zero DB updates.
 - MD5 hash comparison (`team_members.avatarHash`) to skip re-uploads when unchanged
-- Serves via CDN: `cdn-teamflow.appz.cc`
+- Serves via CDN: `cdn-teamflow.appz.cc` (TLS 1.3 disabled on Cloudflare to prevent QUIC protocol errors with R2 custom domains; `alt-svc: clear` transform rule also applied)
+- `withResolvedAvatar()`/`withResolvedAvatars()` helpers in `src/lib/db/helpers.ts` applied to all API routes returning member data
 - Runs after team sync if R2 is configured; falls back to external URLs if not
-- `scripts/cache-avatars.ts` for manual bulk caching
+- `scripts/cache-avatars.ts` for manual bulk caching (uses `sourceAvatarUrl` as download source)
 
 **Env vars:** `CLOUDFLARE_R2_ACCOUNT_ID`, `CLOUDFLARE_R2_ACCESS_KEY_ID`, `CLOUDFLARE_R2_SECRET_ACCESS_KEY`, `CLOUDFLARE_R2_BUCKET_NAME`, `CLOUDFLARE_R2_PUBLIC_URL`
 
@@ -278,6 +300,8 @@ GET    /api/sync/team-members            → Last team sync status
 POST   /api/sync/issues                  → Manual issue sync (admin only)
 GET    /api/sync/issues                  → Last issue sync status + live progress
 GET    /api/sync/issues?progress=1       → Live progress only (polled during sync)
+POST   /api/sync/board?key=GOLC          → Sync single board (admin only)
+POST   /api/issues/:key/sync             → Per-issue sync with deployment tracking
 
 GET    /api/cron/sync-teams              → Daily team sync (SYNC_SECRET auth)
 GET    /api/cron/sync-issues             → Daily issue sync (SYNC_SECRET auth)
@@ -290,7 +314,14 @@ POST   /api/github/repos                → Add tracked repo (admin only)
 PATCH  /api/github/repos/:id            → Update repo config (admin only)
 DELETE /api/github/repos/:id            → Remove tracked repo (admin only)
 POST   /api/github/repos/:id/backfill   → Backfill deployments from merged PRs (admin only)
+GET    /api/github/repos/:id/backfill   → Backfill progress (polled during backfill)
+GET    /api/github/repos/branches       → Fetch branches from GitHub (admin only)
+GET    /api/github/pending-releases     → Tasks staged but not on production (auth required)
 GET    /api/webhooks/logs                → Recent webhook events (admin only)
+
+GET    /api/status-mappings              → List JIRA → workflow status mappings (admin only)
+PATCH  /api/status-mappings              → Update a mapping's workflow stage (admin only)
+POST   /api/status-mappings/apply        → Apply mapping to existing issues + clear Auto badge (admin only)
 
 GET    /api/jira/projects                → Browse JIRA projects (admin only)
 GET    /api/google/directory-search      → Google Workspace people search (admin only)
@@ -321,8 +352,9 @@ Copy `.env.example` to `.env.local`. Required for full functionality:
 
 **Public (read-only, no login required):**
 - `/overview` — team overview with developer cards
-- `/issue/[key]` — full issue detail with description, comments, GitHub data
-- APIs: `GET /api/overview`, `GET /api/issues/*`, `GET /api/calendar`
+- `/issue/[key]` — full issue detail with description, comments, GitHub data, deployments
+- `/workload` — capacity distribution dashboard
+- APIs: `GET /api/overview`, `GET /api/issues/*`, `GET /api/calendar`, `GET /api/workload`, `GET /api/reports`
 
 **Protected (login required):**
 - All other pages (Calendar, Members, Reports, Settings)
@@ -333,34 +365,70 @@ Guest users see no sidebar, no search/notifications/profile — just a "Sign In"
 
 ## Issue Detail Page (`/issue/[key]`)
 
-Two-phase + GitHub loading:
-1. **Phase 1 (instant):** DB data — issue fields, board/assignee context, cycle time percentile
-2. **Phase 2 (background):** JIRA live — description (HTML), subtasks, attachments, linked issues, time tracking, worklogs
+**Component architecture** — Split into 5 focused files:
+- `issue-detail.tsx` — Orchestrator: data fetching, layout, header, left column (title, description, linked issues, deployments, subtasks)
+- `issue-sidebar.tsx` — Right column: status, assignee, details, time tracking, GitHub, attachments
+- `issue-activity.tsx` — Activity tabs: threaded comments, history, pagination
+- `issue-types.ts` — All shared TypeScript interfaces
+- `issue-helpers.ts` — Constants + date formatting utilities (imports `APP_TIMEZONE` from `src/lib/config.ts`)
+
+**Four-phase loading:**
+1. **Phase 1 (instant):** DB data — issue fields, description (cached HTML), board/assignee context, cycle time percentile
+2. **Phase 2 (background):** JIRA live — description (HTML, writes-through to DB), subtasks, attachments, linked issues, time tracking, worklogs
 3. **Phase 3 (background):** GitHub — branches, PRs (via JIRA dev-status API), commits
+4. **Phase 4 (background):** Deployments — pipeline stages with per-site status
+
+**Left column order:** Title → Description → Linked Issues → Deployments → Sub-tasks → Activity Tabs
+
+**Per-issue sync button:** Phase-aware status messages ("Syncing from JIRA..." → "Refreshing page data..." → "Synced + 13 deployment(s)"). Fire-and-forget POST, blue during sync, green on success.
+
+**Description:** Stored in DB as rendered HTML. Renders instantly from Phase 1 (no skeleton). Phase 2 writes-through if different. Styled with `@tailwindcss/typography` + `.jira-description` CSS (tables, code blocks, panels, mentions, images).
 
 **Comments:** Server-side paginated via `/api/issues/{key}/comments` (10 per page, sort asc/desc). Threaded display — replies detected by `@mention` at comment start, indented under parent. Comment deep links to JIRA via `focusedCommentId`.
 
-**Issue Type Icons:** Exact JIRA SVGs (Bug=red insect, Story=green bookmark, Task=blue checkbox, Sub-task=blue puzzle, Epic=purple lightning). Shown next to issue keys across all pages.
+**Search:** JIRA URL detection — paste `https://tilemountain.atlassian.net/browse/PROD-5849` → extracts key → navigates directly. Also detects bare keys. Dropdown hint with "Open PROD-5849" + Enter. Issue type icons in search results. Recent searches (localStorage, max 5).
 
-**Time Tracking:** Progress bar when original estimate exists, text-only "Logged" when not. Per-person worklog breakdown from JIRA `/worklog` API.
+**Date/Time:** Pakistan timezone via `APP_TIMEZONE` in `src/lib/config.ts` (single source of truth). 12h AM/PM. "Today at 4:38 PM" / "Yesterday at 11:00 AM" / "25 Mar 2026 at 4:38 PM".
 
-**Date/Time:** Pakistan timezone (Asia/Karachi), 12h AM/PM. "Today at 4:38 PM" / "Yesterday at 11:00 AM" / "25 Mar 2026 at 4:38 PM".
+## Workload Dashboard (`/workload`)
+
+**Weighted workload formula** (`calculateTaskWeight` in `src/lib/workload/snapshots.ts`):
+- **Excluded types:** `WORKLOAD_EXCLUDED_TYPES` = `["story"]` — stories/epics are parent-level, return 0 weight
+- Bug + P1 (Critical): 3.0 | Bug + P2 (Highest): 2.0 | Bug + P3 (High): 1.5
+- WebContent label: 0.5 | All other tasks: 1.0 | Story points set: use story points
+- **Single source of truth** — used by workload API, overview, profile, and notification capacity alerts
+- **Capacity:** Default 15 per member (admin-adjustable)
+- **Counted statuses:** `todo`, `in_progress`, `in_review`
+
+## Cron Jobs
+
+Managed via **Cronicle** at `cron.appz.cc`. No `vercel.json` — app is on Railway.
+
+| Job | Schedule | Endpoint |
+|-----|----------|----------|
+| TeamFlow: Team Sync | 01:00 UTC (06:00 PKT) | `GET /api/cron/sync-teams` |
+| TeamFlow: Issue Sync | 01:05 UTC (06:05 PKT) | `GET /api/cron/sync-issues` |
+
+Both require `Authorization: Bearer {SYNC_SECRET}` header. Cronicle uses HTTP Request plugin (`urlplug`).
 
 ## Implementation Status
 
 1. ~~Project Scaffolding~~ (complete)
 2. ~~Design System + Layout~~ (complete)
 3. ~~Database Schema + MySQL~~ (complete)
-4. ~~Auth System~~ (complete — Google OAuth + Credentials with bcrypt)
+4. ~~Auth System~~ (complete — Google OAuth + Credentials with bcrypt, Google token auto-refresh)
 5. ~~Mock Data Layer~~ (complete — superseded by live JIRA sync)
 6. ~~Dashboard Screens~~ — Overview + Profile + Calendar (complete)
 7. ~~Management Screens~~ — Members + Settings + Workload (complete)
-8. ~~Reports Page~~ (complete — 12 chart components with Recharts, interactive donut, heatmap slide-over, drill-downs)
-9. ~~Interactive Features~~ (complete — Notifications, Profile dropdown, Global search Cmd+K, dynamic topbar)
-10. ~~JIRA Issue Sync~~ (complete — assignee+label JQL, full/incremental + per-board + webhooks + progress)
-10.5. ~~Team Member Sync~~ (complete — Atlassian Teams API + Google Directory)
-- ~~Issue Detail Page~~ (`/issue/[key]`) — refactored into 5 components, three-phase + GitHub + deployment loading
-- ~~Workload Dashboard~~ (`/workload`) — capacity bars, weighted formula, burnout detection, trend sparklines
-10.6. **GitHub Deployment Tracking** (in progress — core infrastructure + Settings UI + pipeline built, notifications + pending releases remaining)
-10.7. ~~Cloudflare R2 Avatar Caching~~ (complete — cache to cdn-teamflow.appz.cc, hash-based change detection)
-11. **Polish + Deploy** — Error boundaries, loading skeletons, empty states, performance, Railway deployment
+8. ~~Reports Page~~ (complete — 12 chart components with Recharts, interactive donut, heatmap slide-over, drill-downs, pending releases)
+9. ~~Interactive Features~~ (complete — Notifications with deployed type, Profile dropdown, Global search with JIRA URL detection + recent searches, dynamic topbar)
+10. ~~JIRA Issue Sync~~ (complete — assignee+label JQL, full/incremental + per-board + webhooks + progress, description storage)
+10.5. ~~Team Member Sync~~ (complete — Atlassian Teams API + Google Directory, Google photo preference)
+- ~~Issue Detail Page~~ (`/issue/[key]`) — 5 components, four-phase loading, per-issue sync with deployment propagation, clickable deploy links
+- ~~Workload Dashboard~~ (`/workload`) — capacity bars, weighted formula (story-excluded), burnout detection, trend sparklines
+10.6. ~~GitHub Deployment Tracking~~ (complete — Settings UI, backfill progress, per-issue sync with 3-layer fallback, commit propagation, clickable pipeline, deployment indicators on profile)
+10.7. ~~Cloudflare R2 Avatar Caching~~ (complete — R2 paths in DB, runtime URL resolution, cdn-teamflow.appz.cc, TLS 1.3 disabled for QUIC fix)
+10.8. **Team Sync Progress Tracking** (planned — live progress bar for team sync)
+10.9. ~~Users Management Page~~ (complete — role toggle, deactivation, super-admin, auth provider icons)
+10.10. ~~Dynamic Status Management~~ (complete — DB-driven status mappings, Settings UI with Apply + Auto badge)
+11. **Polish + Deploy** — Error boundaries, loading skeletons, empty states, performance
