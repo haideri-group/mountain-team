@@ -7,6 +7,7 @@ import {
   dashboardConfig,
 } from "@/lib/db/schema";
 import { eq, and, ne, lt, inArray } from "drizzle-orm";
+import { calculateTaskWeight } from "@/lib/workload/snapshots";
 
 // --- Helpers ---
 
@@ -182,10 +183,10 @@ export async function generateNotificationsFromSync(): Promise<{
   // --- Capacity Detection ---
   for (const member of allMembers) {
     const memberIssues = allIssues.filter(
-      (i) => i.assigneeId === member.id && i.type !== "story", // story = parent-level, excluded from workload
+      (i) => i.assigneeId === member.id,
     );
     const activePoints = memberIssues.reduce(
-      (sum, i) => sum + (i.storyPoints || 1),
+      (sum, i) => sum + calculateTaskWeight(i),
       0,
     );
     const capacity = member.capacity || 10;
