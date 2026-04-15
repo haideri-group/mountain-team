@@ -469,6 +469,7 @@ export async function syncSingleIssue(
 
   // Sync deployments from JIRA dev-status (merged PRs → deployment branches)
   let deploymentsRecorded = 0;
+  ghCompareCache.clear();
   try {
     const issueId = encodeURIComponent(raw.id);
     const devStatusUrl = `${getBaseUrl()}/rest/dev-status/latest/issue/detail?issueId=${issueId}&applicationType=GitHub&dataType=pullrequest`;
@@ -496,9 +497,6 @@ export async function syncSingleIssue(
           const mappings = await db.select().from(githubBranchMappings).where(eq(githubBranchMappings.repoId, repo.id));
           mappingsByRepo.set(repo.id, mappings);
         }
-        // Clear compare cache for fresh sync
-        ghCompareCache.clear();
-
         for (const { detail, pr } of mergedPRs) {
           const destBranch = pr.destination?.branch;
           // Extract repo full name from PR URL (e.g., https://github.com/owner/repo/pull/123)
