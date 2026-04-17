@@ -14,7 +14,7 @@ interface ChartGuide {
   tip?: string;
 }
 
-const CHART_GUIDES: Record<string, ChartGuide> = {
+const CHART_GUIDES = {
   velocity: {
     title: "Velocity Trend",
     description:
@@ -149,7 +149,7 @@ const CHART_GUIDES: Record<string, ChartGuide> = {
     ],
     tip: "Click 'Deadlines Missed' to see the full list of overdue tasks.",
   },
-};
+} satisfies Record<string, ChartGuide>;
 
 // ─── Dialog Component ────────────────────────────────────────────────────────
 
@@ -187,7 +187,7 @@ function InfoDialog({
         aria-modal="true"
         aria-label={guide.title}
         className={cn(
-          "relative z-10 w-[90vw] max-w-md",
+          "relative z-10 w-[90vw] max-w-md max-h-[calc(100dvh-2rem)] overflow-y-auto overscroll-contain",
           "bg-popover/95 backdrop-blur-xl rounded-xl",
           "ring-1 ring-foreground/10 shadow-2xl",
           "animate-in fade-in-0 zoom-in-95 duration-150",
