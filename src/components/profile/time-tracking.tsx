@@ -207,9 +207,9 @@ export function TimeTracking({ memberId, isAdmin = false }: { memberId: string; 
   // Chart data
   const chartData = dailyBreakdown.map((d) => ({
     ...d,
-    jiraHours: +(d.jiraSeconds / 3600).toFixed(1),
-    otherHours: +(d.otherSeconds / 3600).toFixed(1),
-    totalHours: +(d.totalSeconds / 3600).toFixed(1),
+    jiraHours: d.jiraSeconds / 3600,
+    otherHours: d.otherSeconds / 3600,
+    totalHours: d.totalSeconds / 3600,
   }));
   const maxHours = Math.max(...chartData.map((d) => d.jiraHours + d.otherHours), 1);
 

@@ -138,9 +138,9 @@ export function TeamTimeTracking({ team }: { team?: string }) {
   // Chart data
   const chartData = data.members.map((m) => ({
     ...m,
-    jiraHours: +(m.jiraSeconds / 3600).toFixed(1),
-    otherHours: +(m.otherSeconds / 3600).toFixed(1),
-    totalHours: +(m.totalSeconds / 3600).toFixed(1),
+    jiraHours: m.jiraSeconds / 3600,
+    otherHours: m.otherSeconds / 3600,
+    totalHours: m.totalSeconds / 3600,
     name: m.displayName.split(" ")[0],
   }));
   const maxHours = Math.max(...chartData.map((d) => d.jiraHours + d.otherHours), 1);
