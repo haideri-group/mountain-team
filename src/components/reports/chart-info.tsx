@@ -205,6 +205,7 @@ function InfoDialog({
             </h3>
           </div>
           <button
+            type="button"
             ref={closeRef}
             onClick={onClose}
             aria-label="Close"
@@ -266,6 +267,7 @@ export function ChartInfo({ chartId }: { chartId: ChartId }) {
   return (
     <>
       <button
+        type="button"
         ref={triggerRef}
         onClick={() => setIsOpen(true)}
         className="p-0.5 rounded-md hover:bg-muted/30 transition-colors text-muted-foreground/40 hover:text-muted-foreground"
