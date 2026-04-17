@@ -11,6 +11,13 @@
  * Both are included so deployment matching works across repos.
  */
 
+/**
+ * Maps JIRA brand names to production site codes.
+ *
+ * IMPORTANT: This map and SITE_LABELS below must be updated together
+ * when brands or sites change. Duplicate entries (e.g., "Bathroom Mountain"
+ * and "Bath Mountain") exist because JIRA uses inconsistent naming.
+ */
 const BRAND_SITE_MAP: Record<string, string[]> = {
   "Tile Mountain": ["tilemtn", "tm"],
   "Bathroom Mountain": ["bathmtn", "bm"],
@@ -101,7 +108,8 @@ export function getDeploymentCompleteness(
 }
 
 /**
- * Returns human-readable label for a site code.
+ * Maps site codes to human-readable labels for UI display.
+ * Must be kept in sync with BRAND_SITE_MAP above.
  */
 const SITE_LABELS: Record<string, string> = {
   tilemtn: "Tile Mountain",
