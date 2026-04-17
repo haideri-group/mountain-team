@@ -317,8 +317,10 @@ export async function GET(request: Request) {
     });
 
     // ── Site overview (latest per site per environment) ─────────────────
+    // Only show sites that have deployments matching current filters
+    const activeSiteNames = [...new Set(allDeployments.filter((d) => d.siteName).map((d) => d.siteName!))].sort();
     const siteOverview: SiteStatus[] = [];
-    for (const siteName of siteNames) {
+    for (const siteName of activeSiteNames) {
       const siteDeployments = allDeployments.filter((d) => d.siteName === siteName);
       const latestStaging = siteDeployments.find((d) => d.environment === "staging");
       const latestProd = siteDeployments.find((d) => d.environment === "production");
