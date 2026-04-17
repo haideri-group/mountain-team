@@ -8,12 +8,14 @@ import { StatsStrip } from "./stats-strip";
 import { CurrentWork } from "./current-work";
 import { MonthlyChart } from "./monthly-chart";
 import { TaskHistoryTable } from "./task-history-table";
+import { TimeTracking } from "./time-tracking";
 
 interface MemberProfileProps {
   memberId: string;
+  isAdmin?: boolean;
 }
 
-export function MemberProfile({ memberId }: MemberProfileProps) {
+export function MemberProfile({ memberId, isAdmin = false }: MemberProfileProps) {
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -81,6 +83,9 @@ export function MemberProfile({ memberId }: MemberProfileProps) {
 
       {/* Stats Strip */}
       <StatsStrip stats={stats} isDeparted={isDeparted} />
+
+      {/* Time Tracking (hidden for departed members) */}
+      {!isDeparted && <TimeTracking memberId={memberId} isAdmin={isAdmin} />}
 
       {/* Current Work + Monthly Chart (side by side on large screens) */}
       {!isDeparted && (

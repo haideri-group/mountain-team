@@ -30,6 +30,7 @@ export const team_members = mysqlTable("team_members", {
   color: varchar("color", { length: 50 }),
   teamId: varchar("teamId", { length: 191 }),
   teamName: varchar("teamName", { length: 255 }),
+  tdUserId: varchar("tdUserId", { length: 50 }).unique(),
   createdAt: timestamp("createdAt").defaultNow(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow(),
 });
@@ -72,7 +73,7 @@ export const issues = mysqlTable("issues", {
 
 export const syncLogs = mysqlTable("sync_logs", {
   id: varchar("id", { length: 191 }).primaryKey(),
-  type: mysqlEnum("type", ["full", "incremental", "manual", "team_sync"]).notNull(),
+  type: mysqlEnum("type", ["full", "incremental", "manual", "team_sync", "worklog_sync", "timedoctor_sync"]).notNull(),
   status: mysqlEnum("status", ["running", "completed", "failed"]).notNull(),
   startedAt: timestamp("startedAt").defaultNow(),
   completedAt: timestamp("completedAt"),
@@ -162,6 +163,44 @@ export const deployments = mysqlTable("deployments", {
   createdAt: timestamp("createdAt").defaultNow(),
 }, (table) => [
   index("idx_deployments_jirakey_env").on(table.jiraKey, table.environment),
+]);
+
+// --- Time Doctor Entries ---
+
+export const timedoctorEntries = mysqlTable("timedoctor_entries", {
+  id: varchar("id", { length: 191 }).primaryKey(),
+  tdWorklogId: varchar("tdWorklogId", { length: 100 }).unique().notNull(),
+  memberId: varchar("memberId", { length: 191 }).references(() => team_members.id),
+  tdUserId: varchar("tdUserId", { length: 50 }).notNull(),
+  taskName: varchar("taskName", { length: 500 }),
+  projectName: varchar("projectName", { length: 255 }),
+  started: timestamp("started").notNull(),
+  durationSeconds: int("durationSeconds").notNull(),
+  createdAt: timestamp("createdAt").defaultNow(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow(),
+}, (table) => [
+  index("idx_td_member_started").on(table.memberId, table.started),
+]);
+
+// --- JIRA Worklogs ---
+
+export const worklogs = mysqlTable("worklogs", {
+  id: varchar("id", { length: 191 }).primaryKey(),
+  jiraWorklogId: varchar("jiraWorklogId", { length: 50 }).unique().notNull(),
+  jiraKey: varchar("jiraKey", { length: 50 }).notNull(),
+  authorAccountId: varchar("authorAccountId", { length: 191 }).notNull(),
+  memberId: varchar("memberId", { length: 191 }).references(() => team_members.id),
+  authorName: varchar("authorName", { length: 255 }).notNull(),
+  started: timestamp("started").notNull(),
+  timeSpentSeconds: int("timeSpentSeconds").notNull(),
+  comment: text("comment"),
+  jiraCreatedAt: timestamp("jiraCreatedAt"),
+  jiraUpdatedAt: timestamp("jiraUpdatedAt"),
+  createdAt: timestamp("createdAt").defaultNow(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow(),
+}, (table) => [
+  index("idx_worklogs_member_started").on(table.memberId, table.started),
+  index("idx_worklogs_jirakey").on(table.jiraKey),
 ]);
 
 // --- Workload Tracking ---

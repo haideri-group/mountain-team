@@ -7,6 +7,7 @@ import {
   discoverCustomFieldIds,
   fetchIssuesByJql,
   fetchSingleIssue,
+  fetchWithRetry,
   buildFullSyncJql,
   buildIncrementalSyncJql,
 } from "@/lib/jira/issues";
@@ -14,6 +15,7 @@ import { normalizeIssue, calculateCycleTime, loadStatusMappingCache, invalidateS
 import { getAuthHeader, getBaseUrl, sanitizeErrorText } from "@/lib/jira/client";
 import { recordDeployment } from "@/lib/github/deployments";
 import { extractJiraKeys } from "@/lib/github/jira-keys";
+import { upsertWorklogs, fetchIssueWorklogs } from "@/lib/sync/worklog-sync";
 
 // --- Types ---
 
@@ -524,6 +526,21 @@ export async function syncSingleIssue(
     .values({ id, jiraKey: normalized.jiraKey, ...fields })
     .onDuplicateKeyUpdate({ set: fields });
 
+  // Sync worklogs for this issue (reuses paginated fetcher from worklog-sync)
+  let worklogsRecorded = 0;
+  try {
+    const rawWorklogs = await fetchIssueWorklogs(jiraKey);
+    if (rawWorklogs.length > 0) {
+      const allMembers = await db
+        .select({ id: team_members.id, jiraAccountId: team_members.jiraAccountId })
+        .from(team_members);
+      const accountIdToMemberId = new Map(allMembers.map((m) => [m.jiraAccountId, m.id]));
+      worklogsRecorded = await upsertWorklogs(jiraKey, rawWorklogs, accountIdToMemberId);
+    }
+  } catch (err) {
+    console.warn("Worklog sync failed (non-fatal):", err instanceof Error ? err.message : String(err));
+  }
+
   // Sync deployments from JIRA dev-status (merged PRs → deployment branches)
   let deploymentsRecorded = 0;
   ghCompareCache.clear();
@@ -759,9 +776,10 @@ export async function syncSingleIssue(
   }
 
   const deploymentMsg = deploymentsRecorded > 0 ? `, ${deploymentsRecorded} deployment(s) recorded` : "";
+  const worklogMsg = worklogsRecorded > 0 ? `, ${worklogsRecorded} worklog(s) synced` : "";
 
   return {
     success: true,
-    message: `Synced ${jiraKey} from JIRA (status: ${normalized.jiraStatusName || normalized.status})${deploymentMsg}`,
+    message: `Synced ${jiraKey} from JIRA (status: ${normalized.jiraStatusName || normalized.status})${deploymentMsg}${worklogMsg}`,
   };
 }
