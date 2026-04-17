@@ -82,7 +82,7 @@ const CHART_GUIDES: Record<string, ChartGuide> = {
     description:
       "Tasks created vs tasks completed each week over the last 6 weeks.",
     bullets: [
-      "Green bars show completed tasks. Gray bars show newly created tasks.",
+      "Orange bars show completed tasks. Blue bars show newly created tasks.",
       "When completed exceeds created, the team is reducing its backlog.",
       "When created exceeds completed, the backlog is growing — capacity may be strained.",
     ],
@@ -174,14 +174,12 @@ function InfoDialog({
   }, [onClose]);
 
   return createPortal(
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-4"
-      onClick={(e) => {
-        if (e.target === e.currentTarget) onClose();
-      }}
-    >
-      {/* Backdrop */}
-      <div className="absolute inset-0 bg-black/30 backdrop-blur-sm animate-in fade-in-0 duration-150" />
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      {/* Backdrop — click to dismiss */}
+      <div
+        className="absolute inset-0 bg-black/30 backdrop-blur-sm animate-in fade-in-0 duration-150"
+        onClick={onClose}
+      />
 
       {/* Dialog */}
       <div
