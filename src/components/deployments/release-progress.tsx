@@ -216,6 +216,9 @@ function ReleaseCard({ release }: { release: Release }) {
 
 // ─── Release Progress Section ────────────────────────────────────────────────
 
+type ReleaseFilter = "unreleased" | "released" | "all";
+type ReleaseSort = "date" | "progress" | "issues";
+
 export function ReleaseProgress({
   upcoming,
   recent,
@@ -223,32 +226,94 @@ export function ReleaseProgress({
   upcoming: Release[];
   recent: Release[];
 }) {
-  const hasData = upcoming.length > 0 || recent.length > 0;
+  const [filter, setFilter] = useState<ReleaseFilter>("unreleased");
+  const [sort, setSort] = useState<ReleaseSort>("date");
 
-  if (!hasData) return null;
+  const allReleases = [...upcoming, ...recent];
+  if (allReleases.length === 0) return null;
+
+  // Filter
+  const filtered = allReleases.filter((r) => {
+    if (filter === "unreleased") return !r.released;
+    if (filter === "released") return r.released;
+    return true;
+  });
+
+  // Sort
+  const sorted = [...filtered].sort((a, b) => {
+    if (sort === "progress") {
+      const aPct = a.issuesTotal > 0 ? a.issuesDone / a.issuesTotal : 0;
+      const bPct = b.issuesTotal > 0 ? b.issuesDone / b.issuesTotal : 0;
+      return bPct - aPct;
+    }
+    if (sort === "issues") return b.issuesTotal - a.issuesTotal;
+    // Default: date (newest first, unreleased with dates first)
+    const aDate = a.releaseDate || "9999";
+    const bDate = b.releaseDate || "9999";
+    if (!a.released && !b.released) return aDate.localeCompare(bDate); // upcoming: soonest first
+    return bDate.localeCompare(aDate); // released: newest first
+  });
 
   return (
-    <div className="space-y-4">
-      {/* Upcoming Releases */}
-      {upcoming.length > 0 && (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-          {upcoming.map((release) => (
-            <ReleaseCard key={release.id} release={release} />
+    <div className="space-y-3">
+      {/* Filter + Sort controls */}
+      <div className="flex items-center justify-between flex-wrap gap-2">
+        <div className="flex items-center gap-0 rounded-full bg-muted/30 p-0.5">
+          {([
+            { key: "unreleased" as const, label: "Unreleased" },
+            { key: "released" as const, label: "Released" },
+            { key: "all" as const, label: "All" },
+          ]).map((opt) => (
+            <button
+              type="button"
+              key={opt.key}
+              onClick={() => setFilter(opt.key)}
+              className={cn(
+                "px-3 py-1 rounded-full text-[10px] font-bold font-mono uppercase tracking-wider transition-all",
+                filter === opt.key
+                  ? "bg-card text-foreground shadow-sm"
+                  : "text-muted-foreground hover:text-foreground",
+              )}
+            >
+              {opt.label}
+            </button>
           ))}
         </div>
-      )}
 
-      {/* Recently Released */}
-      {recent.length > 0 && (
-        <div>
-          <p className="text-[10px] font-bold font-mono uppercase tracking-wider text-muted-foreground mb-3">
-            Recently Released
-          </p>
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-            {recent.map((release) => (
-              <ReleaseCard key={release.id} release={release} />
-            ))}
-          </div>
+        <div className="flex items-center gap-1.5 text-[9px] font-mono text-muted-foreground">
+          <span>Sort:</span>
+          {([
+            { key: "date" as const, label: "Date" },
+            { key: "progress" as const, label: "Progress" },
+            { key: "issues" as const, label: "Issues" },
+          ]).map((opt) => (
+            <button
+              type="button"
+              key={opt.key}
+              onClick={() => setSort(opt.key)}
+              className={cn(
+                "px-2 py-0.5 rounded transition-colors",
+                sort === opt.key
+                  ? "bg-muted/40 text-foreground font-semibold"
+                  : "hover:text-foreground",
+              )}
+            >
+              {opt.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Release cards */}
+      {sorted.length === 0 ? (
+        <div className="bg-card rounded-xl p-8 text-center">
+          <p className="text-sm text-muted-foreground">No {filter === "all" ? "" : filter} releases found</p>
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          {sorted.map((release) => (
+            <ReleaseCard key={release.id} release={release} />
+          ))}
         </div>
       )}
     </div>
