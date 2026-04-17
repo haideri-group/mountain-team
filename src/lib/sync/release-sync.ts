@@ -8,7 +8,7 @@
 
 import { db } from "@/lib/db";
 import { jiraReleases, boards, syncLogs } from "@/lib/db/schema";
-import { eq } from "drizzle-orm";
+import { eq, inArray } from "drizzle-orm";
 import { getAuthHeader, getBaseUrl, sanitizeErrorText } from "@/lib/jira/client";
 import { fetchWithRetry } from "@/lib/jira/issues";
 import crypto from "crypto";
@@ -188,5 +188,91 @@ export async function runReleaseSync(): Promise<{ logId: string; result: Release
       .where(eq(syncLogs.id, logId));
 
     throw err;
+  }
+}
+
+// ─── Auto-discover unknown releases from issue fixVersions ───────────────────
+
+/**
+ * Called after an issue is synced (e.g., via webhook). Checks if any of the
+ * issue's fixVersion names are unknown to our jira_releases table, and if so,
+ * fetches the project's versions from JIRA to discover the new release.
+ *
+ * This ensures that when a product owner creates a new release and assigns a
+ * task to it, our app auto-discovers the release on the next webhook event.
+ */
+export async function ensureReleasesExist(
+  fixVersionsJson: string | null,
+  projectKey: string,
+): Promise<void> {
+  if (!fixVersionsJson) return;
+
+  let versionNames: string[];
+  try {
+    versionNames = JSON.parse(fixVersionsJson);
+  } catch {
+    return;
+  }
+
+  if (!Array.isArray(versionNames) || versionNames.length === 0) return;
+
+  // Check which versions are already known
+  const existing = await db
+    .select({ name: jiraReleases.name })
+    .from(jiraReleases)
+    .where(inArray(jiraReleases.name, versionNames));
+
+  const knownNames = new Set(existing.map((r) => r.name));
+  const unknown = versionNames.filter((n) => !knownNames.has(n));
+
+  if (unknown.length === 0) return;
+
+  // Fetch versions for this project to discover the new ones
+  try {
+    const versions = await fetchProjectVersions(projectKey);
+
+    for (const v of versions) {
+      if (!unknown.includes(v.name)) continue;
+      if (v.archived) continue;
+
+      const issueStatus = v.issuesStatusForFixVersion || {};
+      const done = issueStatus.done || 0;
+      const inProgress = issueStatus.inProgress || 0;
+      const toDo = issueStatus.toDo || 0;
+      const total = done + inProgress + toDo + (issueStatus.unmapped || 0);
+
+      await db
+        .insert(jiraReleases)
+        .values({
+          id: crypto.randomUUID(),
+          jiraVersionId: String(v.id),
+          projectKey,
+          name: v.name,
+          description: v.description || null,
+          startDate: v.startDate || null,
+          releaseDate: v.releaseDate || null,
+          released: v.released,
+          archived: v.archived,
+          overdue: v.overdue || false,
+          issuesDone: done,
+          issuesInProgress: inProgress,
+          issuesToDo: toDo,
+          issuesTotal: total,
+        })
+        .onDuplicateKeyUpdate({
+          set: {
+            name: v.name,
+            releaseDate: v.releaseDate || null,
+            released: v.released,
+            overdue: v.overdue || false,
+            issuesDone: done,
+            issuesInProgress: inProgress,
+            issuesToDo: toDo,
+            issuesTotal: total,
+          },
+        });
+    }
+  } catch {
+    // Non-fatal — release will be discovered on next full sync
   }
 }
