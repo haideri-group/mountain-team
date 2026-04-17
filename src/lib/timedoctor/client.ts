@@ -13,14 +13,15 @@ export function isTimeDoctorConfigured(): boolean {
   );
 }
 
-function getCompanyId(): string {
-  return process.env.TIMEDOCTOR_COMPANY_ID || "";
-}
-
-// ─── JWT Token Cache ─────────────────────────────────────────────────────────
+// ─── JWT Token + Company Cache ───────────────────────────────────────────────
 
 let cachedToken: string | null = null;
+let cachedCompanyId: string | null = null;
 let tokenExpiry = 0;
+
+function getCompanyId(): string {
+  return process.env.TIMEDOCTOR_COMPANY_ID || cachedCompanyId || "";
+}
 
 async function login(): Promise<{ token: string; companyId: string }> {
   const res = await fetch(`${TD_BASE}/authorization/login`, {
@@ -59,9 +60,9 @@ export async function getTDToken(): Promise<{ token: string; companyId: string }
   // Cache for 24h (actual token valid 6 months, but re-auth daily is safer)
   tokenExpiry = now + 24 * 60 * 60 * 1000;
 
-  // Store companyId if discovered
-  if (result.companyId && !process.env.TIMEDOCTOR_COMPANY_ID) {
-    process.env.TIMEDOCTOR_COMPANY_ID = result.companyId;
+  // Cache discovered companyId for subsequent calls
+  if (result.companyId && !cachedCompanyId) {
+    cachedCompanyId = result.companyId;
   }
 
   return result;
