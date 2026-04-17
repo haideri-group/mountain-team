@@ -7,7 +7,7 @@ import { withResolvedAvatars } from "@/lib/db/helpers";
 import { sanitizeErrorText } from "@/lib/jira/client";
 import type { Mismatch, PendingRelease, SiteStatus } from "@/components/deployments/types";
 import { APP_TIMEZONE } from "@/lib/config";
-import { getExpectedSites, getDeploymentCompleteness } from "@/lib/deployments/brand-resolver";
+import { getExpectedSites, getDeploymentCompleteness, getSiteLabel } from "@/lib/deployments/brand-resolver";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -89,7 +89,17 @@ export async function GET(request: Request) {
     // Apply filters
     if (envFilter) allDeployments = allDeployments.filter((d) => d.environment === envFilter);
     if (repoFilter) allDeployments = allDeployments.filter((d) => repoMap.get(d.repoId)?.fullName === repoFilter);
-    if (siteFilter) allDeployments = allDeployments.filter((d) => d.siteName === siteFilter);
+    if (siteFilter) {
+      // siteFilter is a label (e.g., "Tile Mountain") — match all site codes for that brand
+      const matchingCodes = siteNames.filter((s) => getSiteLabel(s) === siteFilter);
+      if (matchingCodes.length > 0) {
+        const codeSet = new Set(matchingCodes);
+        allDeployments = allDeployments.filter((d) => d.siteName && codeSet.has(d.siteName));
+      } else {
+        // Fallback: treat as raw site code
+        allDeployments = allDeployments.filter((d) => d.siteName === siteFilter);
+      }
+    }
     if (boardFilter) allDeployments = allDeployments.filter((d) => d.jiraKey.startsWith(boardFilter + "-"));
 
     // ── Fetch issues for context ───────────────────────────────────────
@@ -385,22 +395,27 @@ export async function GET(request: Request) {
       };
     });
 
-    // ── Site overview (latest per site per environment) ─────────────────
-    // Only show sites that have deployments matching current filters
-    const activeSiteNames = [...new Set(allDeployments.filter((d) => d.siteName).map((d) => d.siteName!))].sort();
+    // ── Site overview (grouped by brand label, not raw site codes) ──────
+    // Group active site codes by their label to avoid duplicates (tm + tilemtn = both "Tile Mountain")
+    const activeSiteCodes = [...new Set(allDeployments.filter((d) => d.siteName).map((d) => d.siteName!))];
+    const labelToSites = new Map<string, string[]>();
+    for (const code of activeSiteCodes) {
+      const label = getSiteLabel(code);
+      const existing = labelToSites.get(label) || [];
+      if (!existing.includes(code)) existing.push(code);
+      labelToSites.set(label, existing);
+    }
+
     const siteOverview: SiteStatus[] = [];
-    for (const siteName of activeSiteNames) {
-      const siteDeployments = allDeployments.filter((d) => d.siteName === siteName);
+    for (const [label, codes] of [...labelToSites.entries()].sort((a, b) => a[0].localeCompare(b[0]))) {
+      const siteDeployments = allDeployments.filter((d) => d.siteName && codes.includes(d.siteName));
       const latestStaging = siteDeployments.find((d) => d.environment === "staging");
       const latestProd = siteDeployments.find((d) => d.environment === "production");
       const lastDeploy = siteDeployments[0];
 
-      // Find site label from mappings
-      const mapping = allMappings.find((m) => m.siteName === siteName);
-
       siteOverview.push({
-        siteName,
-        siteLabel: mapping?.siteLabel || null,
+        siteName: codes[0],
+        siteLabel: label,
         latestStaging: latestStaging ? {
           jiraKey: latestStaging.jiraKey,
           deployedAt: latestStaging.deployedAt.toISOString(),
@@ -520,7 +535,7 @@ export async function GET(request: Request) {
         recent: recentReleases,
       },
       repos: allRepos.map((r) => ({ id: r.id, fullName: r.fullName })),
-      sites: siteNames,
+      sites: [...new Set(siteNames.map((s) => getSiteLabel(s)))].sort(),
       boards: allBoards.map((b) => ({ jiraKey: b.jiraKey, name: b.name, color: b.color })),
     });
   } catch (error) {
