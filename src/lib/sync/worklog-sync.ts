@@ -101,7 +101,7 @@ export async function upsertWorklogs(
       const accountId = wl.author?.accountId;
       const seconds = wl.timeSpentSeconds || 0;
       const started = wl.started ? new Date(wl.started) : null;
-      if (!accountId || !started || seconds <= 0) return null;
+      if (!accountId || !started || isNaN(started.getTime()) || seconds <= 0) return null;
       if (sinceDate && started < sinceDate) return null;
       const memberId = accountIdToMemberId.get(accountId);
       if (!memberId) return null;
