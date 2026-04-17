@@ -226,6 +226,7 @@ export async function GET(
 
     const recentWorklogs = [...recentMap.values()]
       .sort((a, b) => b.date.localeCompare(a.date) || b.seconds - a.seconds)
+      .slice(0, 20)
       .map((r) => {
         const info = issueInfo.get(r.jiraKey);
         return {

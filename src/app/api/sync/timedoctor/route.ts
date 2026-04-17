@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/auth";
 import { runTimeDoctorSync } from "@/lib/sync/timedoctor-sync";
+import { isTimeDoctorConfigured } from "@/lib/timedoctor/client";
 
 export async function POST(request: Request) {
   try {
@@ -9,8 +10,12 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
+    if (!isTimeDoctorConfigured()) {
+      return NextResponse.json({ success: true, skipped: true, reason: "Time Doctor not configured" });
+    }
+
     const url = new URL(request.url);
-    const days = Math.min(parseInt(url.searchParams.get("days") || "7", 10) || 7, 90);
+    const days = Math.max(1, Math.min(parseInt(url.searchParams.get("days") || "7", 10) || 7, 90));
 
     const { logId, result } = await runTimeDoctorSync(days);
 

@@ -88,57 +88,55 @@ export async function upsertWorklogs(
   accountIdToMemberId: Map<string, string>,
   sinceDate?: Date,
 ): Promise<number> {
-  let upserted = 0;
+  // Pre-filter and build upsert payloads
+  const rows = rawWorklogs
+    .map((wl) => {
+      const accountId = wl.author?.accountId;
+      const seconds = wl.timeSpentSeconds || 0;
+      const started = wl.started ? new Date(wl.started) : null;
+      if (!accountId || !started || seconds <= 0) return null;
+      if (sinceDate && started < sinceDate) return null;
+      const memberId = accountIdToMemberId.get(accountId);
+      if (!memberId) return null;
 
-  for (const wl of rawWorklogs) {
-    const accountId = wl.author?.accountId;
-    const authorName = wl.author?.displayName || "Unknown";
-    const seconds = wl.timeSpentSeconds || 0;
-    const started = wl.started ? new Date(wl.started) : null;
-
-    if (!accountId || !started || seconds <= 0) continue;
-
-    // Filter by date if provided
-    if (sinceDate && started < sinceDate) continue;
-
-    // Only store worklogs from team members
-    const memberId = accountIdToMemberId.get(accountId);
-    if (!memberId) continue;
-
-    const jiraWorklogId = String(wl.id);
-    const comment = parseComment(wl.comment);
-    const jiraCreatedAt = wl.created ? new Date(wl.created) : null;
-    const jiraUpdatedAt = wl.updated ? new Date(wl.updated) : null;
-
-    await db
-      .insert(worklogs)
-      .values({
+      return {
         id: crypto.randomUUID(),
-        jiraWorklogId,
+        jiraWorklogId: String(wl.id),
         jiraKey,
         authorAccountId: accountId,
         memberId,
-        authorName,
+        authorName: wl.author?.displayName || "Unknown",
         started,
         timeSpentSeconds: seconds,
-        comment,
-        jiraCreatedAt,
-        jiraUpdatedAt,
-      })
-      .onDuplicateKeyUpdate({
-        set: {
-          timeSpentSeconds: seconds,
-          authorName,
-          comment,
-          started,
-          jiraUpdatedAt,
-        },
-      });
+        comment: parseComment(wl.comment),
+        jiraCreatedAt: wl.created ? new Date(wl.created) : null,
+        jiraUpdatedAt: wl.updated ? new Date(wl.updated) : null,
+      };
+    })
+    .filter((r): r is NonNullable<typeof r> => r !== null);
 
-    upserted++;
+  // Batch upserts in chunks of 50
+  const BATCH = 50;
+  for (let i = 0; i < rows.length; i += BATCH) {
+    await Promise.all(
+      rows.slice(i, i + BATCH).map((row) =>
+        db
+          .insert(worklogs)
+          .values(row)
+          .onDuplicateKeyUpdate({
+            set: {
+              timeSpentSeconds: row.timeSpentSeconds,
+              authorName: row.authorName,
+              comment: row.comment,
+              started: row.started,
+              jiraUpdatedAt: row.jiraUpdatedAt,
+            },
+          }),
+      ),
+    );
   }
 
-  return upserted;
+  return rows.length;
 }
 
 // ─── Core sync: bulk worklog fetch via JQL ───────────────────────────────────

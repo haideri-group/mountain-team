@@ -1,5 +1,7 @@
 // ─── Time Doctor 2 API Client ────────────────────────────────────────────────
 
+import { sanitizeErrorText } from "@/lib/jira/client";
+
 const TD_BASE = "https://api2.timedoctor.com/api/1.0";
 
 // ─── Config ──────────────────────────────────────────────────────────────────
@@ -33,7 +35,7 @@ async function login(): Promise<{ token: string; companyId: string }> {
 
   if (!res.ok) {
     const text = await res.text().catch(() => "");
-    throw new Error(`Time Doctor login failed (${res.status}): ${text.substring(0, 200)}`);
+    throw new Error(`Time Doctor login failed (${res.status}): ${sanitizeErrorText(text)}`);
   }
 
   const data = await res.json();
@@ -104,7 +106,7 @@ export async function tdFetch<T>(
 
     if (!retryRes.ok) {
       const text = await retryRes.text().catch(() => "");
-      throw new Error(`Time Doctor API error (${retryRes.status}): ${text.substring(0, 200)}`);
+      throw new Error(`Time Doctor API error (${retryRes.status}): ${sanitizeErrorText(text)}`);
     }
 
     return retryRes.json();
@@ -112,7 +114,7 @@ export async function tdFetch<T>(
 
   if (!res.ok) {
     const text = await res.text().catch(() => "");
-    throw new Error(`Time Doctor API error (${res.status}): ${text.substring(0, 200)}`);
+    throw new Error(`Time Doctor API error (${res.status}): ${sanitizeErrorText(text)}`);
   }
 
   return res.json();

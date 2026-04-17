@@ -10,7 +10,7 @@ export async function POST(request: Request) {
     }
 
     const url = new URL(request.url);
-    const days = Math.min(parseInt(url.searchParams.get("days") || "7", 10) || 7, 90);
+    const days = Math.max(1, Math.min(parseInt(url.searchParams.get("days") || "7", 10) || 7, 90));
 
     const { logId, result } = await runWorklogSync(days);
 

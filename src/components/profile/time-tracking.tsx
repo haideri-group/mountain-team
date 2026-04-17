@@ -56,17 +56,9 @@ interface TimeTrackingData {
   lastSyncedAt: string | null;
 }
 
-// ─── Helpers ─────────────────────────────────────────────────────────────────
+import { formatDuration as formatTime } from "@/lib/utils";
 
-function formatTime(seconds: number): string {
-  if (seconds === 0) return "0h";
-  const totalMinutes = Math.round(seconds / 60);
-  const h = Math.floor(totalMinutes / 60);
-  const m = totalMinutes % 60;
-  if (h === 0) return `${m}m`;
-  if (m === 0) return `${h}h`;
-  return `${h}h ${m}m`;
-}
+// ─── Helpers ─────────────────────────────────────────────────────────────────
 
 function formatDateLabel(dateStr: string): string {
   const today = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Karachi" });
@@ -116,17 +108,23 @@ function ChartTooltip({ active, payload }: any) {
 
 // ─── Component ───────────────────────────────────────────────────────────────
 
-export function TimeTracking({ memberId }: { memberId: string }) {
+export function TimeTracking({ memberId, isAdmin = false }: { memberId: string; isAdmin?: boolean }) {
   const [data, setData] = useState<TimeTrackingData | null>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
 
   const fetchData = useCallback(async () => {
     try {
+      setError(false);
       const res = await fetch(`/api/team/${memberId}/time-tracking`);
-      if (res.ok) setData(await res.json());
+      if (res.ok) {
+        setData(await res.json());
+      } else if (res.status !== 401) {
+        setError(true);
+      }
     } catch {
-      // Silent fail
+      setError(true);
     } finally {
       setLoading(false);
     }
@@ -139,14 +137,14 @@ export function TimeTracking({ memberId }: { memberId: string }) {
   const handleRefresh = async () => {
     setRefreshing(true);
     try {
-      // Sync both JIRA worklogs and Time Doctor in parallel
+      // Sync both JIRA worklogs and Time Doctor in parallel (admin-only endpoints)
       await Promise.all([
         fetch("/api/sync/worklogs?days=3", { method: "POST" }),
         fetch("/api/sync/timedoctor?days=3", { method: "POST" }).catch(() => {}),
       ]);
       await fetchData();
     } catch {
-      // Silent fail
+      // Silent fail — sync is best-effort
     } finally {
       setRefreshing(false);
     }
@@ -162,6 +160,22 @@ export function TimeTracking({ memberId }: { memberId: string }) {
           ))}
         </div>
         <div className="h-36 bg-muted/50 rounded-xl" />
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="bg-card rounded-xl p-5">
+        <div className="flex items-center gap-2 mb-4">
+          <Clock className="h-4 w-4 text-muted-foreground" />
+          <span className="text-[10px] font-bold font-mono uppercase tracking-wider text-muted-foreground">
+            Time Tracking
+          </span>
+        </div>
+        <p className="text-sm text-muted-foreground text-center py-6">
+          Failed to load time tracking data
+        </p>
       </div>
     );
   }
@@ -203,14 +217,16 @@ export function TimeTracking({ memberId }: { memberId: string }) {
               Synced {timeAgo(lastSyncedAt)}
             </span>
           )}
-          <button
-            onClick={handleRefresh}
-            disabled={refreshing}
-            className="p-1.5 rounded-md hover:bg-muted/30 transition-colors disabled:opacity-50"
-            title="Refresh time tracking data"
-          >
-            <RefreshCw className={`h-3.5 w-3.5 text-muted-foreground ${refreshing ? "animate-spin" : ""}`} />
-          </button>
+          {isAdmin && (
+            <button
+              onClick={handleRefresh}
+              disabled={refreshing}
+              className="p-1.5 rounded-md hover:bg-muted/30 transition-colors disabled:opacity-50"
+              aria-label="Refresh time tracking data"
+            >
+              <RefreshCw className={`h-3.5 w-3.5 text-muted-foreground ${refreshing ? "animate-spin" : ""}`} />
+            </button>
+          )}
         </div>
       </div>
 

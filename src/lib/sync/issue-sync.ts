@@ -7,6 +7,7 @@ import {
   discoverCustomFieldIds,
   fetchIssuesByJql,
   fetchSingleIssue,
+  fetchWithRetry,
   buildFullSyncJql,
   buildIncrementalSyncJql,
 } from "@/lib/jira/issues";
@@ -525,11 +526,11 @@ export async function syncSingleIssue(
     .values({ id, jiraKey: normalized.jiraKey, ...fields })
     .onDuplicateKeyUpdate({ set: fields });
 
-  // Sync worklogs for this issue
+  // Sync worklogs for this issue (reuse member data from assignee resolution)
   let worklogsRecorded = 0;
   try {
     const wlUrl = `${getBaseUrl()}/rest/api/3/issue/${encodeURIComponent(jiraKey)}/worklog`;
-    const wlRes = await fetch(wlUrl, {
+    const wlRes = await fetchWithRetry(wlUrl, {
       headers: { Authorization: getAuthHeader(), Accept: "application/json" },
       cache: "no-store",
     });
@@ -537,7 +538,6 @@ export async function syncSingleIssue(
       const wlData = await wlRes.json();
       const rawWorklogs = wlData.worklogs || [];
       if (rawWorklogs.length > 0) {
-        // Build accountId → memberId map for team members
         const allMembers = await db
           .select({ id: team_members.id, jiraAccountId: team_members.jiraAccountId })
           .from(team_members);
@@ -545,8 +545,8 @@ export async function syncSingleIssue(
         worklogsRecorded = await upsertWorklogs(jiraKey, rawWorklogs, accountIdToMemberId);
       }
     }
-  } catch {
-    // Non-fatal — worklog sync is best-effort
+  } catch (err) {
+    console.warn("Worklog sync failed (non-fatal):", err instanceof Error ? err.message : String(err));
   }
 
   // Sync deployments from JIRA dev-status (merged PRs → deployment branches)
