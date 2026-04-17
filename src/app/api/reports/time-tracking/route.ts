@@ -27,12 +27,19 @@ function getStartOfMonthPKT(now: Date): Date {
 }
 
 function countWorkingDays(start: Date, end: Date): number {
+  // Convert both bounds to PKT calendar dates, then iterate with UTC methods
+  // to avoid host-timezone skew (Railway runs UTC)
+  const startStr = getPKTDateString(start);
+  const endStr = getPKTDateString(end);
+  const [sy, sm, sd] = startStr.split("-").map(Number);
+  const [ey, em, ed] = endStr.split("-").map(Number);
+  const d = new Date(Date.UTC(sy, sm - 1, sd));
+  const endUtc = new Date(Date.UTC(ey, em - 1, ed));
   let count = 0;
-  const d = new Date(start);
-  while (d <= end) {
-    const day = d.getDay();
+  while (d <= endUtc) {
+    const day = d.getUTCDay();
     if (day !== 0 && day !== 6) count++;
-    d.setDate(d.getDate() + 1);
+    d.setUTCDate(d.getUTCDate() + 1);
   }
   return Math.max(count, 1);
 }
