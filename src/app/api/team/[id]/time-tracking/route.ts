@@ -164,7 +164,7 @@ export async function GET(
 
       // Recent non-JIRA work for breakdown
       if (entry.started >= sevenDaysAgo && entry.taskName) {
-        const key = `${entry.taskName}::${entryDate}`;
+        const key = `${entry.taskName}::${entry.projectName || "_"}::${entryDate}`;
         const existing = recentOtherMap.get(key);
         if (existing) existing.seconds += s;
         else recentOtherMap.set(key, {
