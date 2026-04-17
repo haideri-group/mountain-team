@@ -15,6 +15,7 @@ import { CmsVsDev } from "./cms-vs-dev";
 import { DeveloperHeatmap } from "./developer-heatmap";
 import { BoardHealth } from "./board-health";
 import { PendingReleases } from "./pending-releases";
+import { TeamTimeTracking } from "./team-time-tracking";
 
 // ---- Types ----
 
@@ -337,6 +338,14 @@ export function ReportsDashboard() {
         <SectionLabel>Developer Performance</SectionLabel>
         <div className="mt-4">
           <DeveloperRanking data={data.developerRanking} />
+        </div>
+      </div>
+
+      {/* ── Team Time Tracking ── */}
+      <div>
+        <SectionLabel>Time Tracking</SectionLabel>
+        <div className="mt-4">
+          <TeamTimeTracking team={selectedTeam || undefined} />
         </div>
       </div>
 

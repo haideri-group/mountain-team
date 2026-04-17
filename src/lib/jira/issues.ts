@@ -59,7 +59,7 @@ const BASE_ISSUE_FIELDS = [
 
 // --- Retry-aware fetch ---
 
-async function fetchWithRetry(
+export async function fetchWithRetry(
   url: string,
   options: RequestInit,
   maxRetries = 3,
