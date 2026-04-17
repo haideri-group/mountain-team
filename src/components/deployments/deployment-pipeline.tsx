@@ -30,11 +30,11 @@ function PipelineColumn({
           {tasks.length}
         </span>
       </div>
-      <div className="flex-1 bg-muted/10 rounded-b-lg p-2 space-y-1.5 min-h-[100px]">
+      <div className="flex-1 bg-muted/10 rounded-b-lg p-2 space-y-1.5 min-h-[100px] max-h-[500px] overflow-y-auto overscroll-contain">
         {tasks.length === 0 ? (
           <p className="text-[10px] text-muted-foreground/50 text-center py-4">No tasks</p>
         ) : (
-          tasks.slice(0, 8).map((task) => (
+          tasks.map((task) => (
             <Link
               key={task.jiraKey}
               href={`/issue/${task.jiraKey}`}
@@ -78,9 +78,6 @@ function PipelineColumn({
               )}
             </Link>
           ))
-        )}
-        {tasks.length > 8 && (
-          <p className="text-[9px] text-muted-foreground text-center">+{tasks.length - 8} more</p>
         )}
       </div>
     </div>
