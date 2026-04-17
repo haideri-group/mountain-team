@@ -54,7 +54,7 @@ const CACHE_TTL = 24 * 60 * 60 * 1000; // 24 hours
 const BASE_ISSUE_FIELDS = [
   "summary", "status", "priority", "issuetype", "assignee", "project",
   "labels", "description", "duedate", "created", "updated", "resolutiondate",
-  "statuscategorychangedate",
+  "statuscategorychangedate", "fixVersions",
 ];
 
 // --- Retry-aware fetch ---

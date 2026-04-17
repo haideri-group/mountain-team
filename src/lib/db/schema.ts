@@ -65,6 +65,7 @@ export const issues = mysqlTable("issues", {
   requestPriority: varchar("requestPriority", { length: 10 }),
   website: varchar("website", { length: 255 }),
   brands: text("brands"),
+  fixVersions: text("fixVersions"),
   jiraCreatedAt: varchar("jiraCreatedAt", { length: 50 }),
   jiraUpdatedAt: varchar("jiraUpdatedAt", { length: 50 }),
   createdAt: timestamp("createdAt").defaultNow(),
@@ -73,7 +74,7 @@ export const issues = mysqlTable("issues", {
 
 export const syncLogs = mysqlTable("sync_logs", {
   id: varchar("id", { length: 191 }).primaryKey(),
-  type: mysqlEnum("type", ["full", "incremental", "manual", "team_sync", "worklog_sync", "timedoctor_sync"]).notNull(),
+  type: mysqlEnum("type", ["full", "incremental", "manual", "team_sync", "worklog_sync", "timedoctor_sync", "release_sync"]).notNull(),
   status: mysqlEnum("status", ["running", "completed", "failed"]).notNull(),
   startedAt: timestamp("startedAt").defaultNow(),
   completedAt: timestamp("completedAt"),
@@ -164,6 +165,27 @@ export const deployments = mysqlTable("deployments", {
 }, (table) => [
   index("idx_deployments_jirakey_env").on(table.jiraKey, table.environment),
 ]);
+
+// --- JIRA Releases ---
+
+export const jiraReleases = mysqlTable("jira_releases", {
+  id: varchar("id", { length: 191 }).primaryKey(),
+  jiraVersionId: varchar("jiraVersionId", { length: 50 }).unique().notNull(),
+  projectKey: varchar("projectKey", { length: 50 }).notNull(),
+  name: varchar("name", { length: 255 }).notNull(),
+  description: text("description"),
+  startDate: varchar("startDate", { length: 50 }),
+  releaseDate: varchar("releaseDate", { length: 50 }),
+  released: boolean("released").default(false).notNull(),
+  archived: boolean("archived").default(false).notNull(),
+  overdue: boolean("overdue").default(false).notNull(),
+  issuesDone: int("issuesDone").default(0),
+  issuesInProgress: int("issuesInProgress").default(0),
+  issuesToDo: int("issuesToDo").default(0),
+  issuesTotal: int("issuesTotal").default(0),
+  createdAt: timestamp("createdAt").defaultNow(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow(),
+});
 
 // --- Time Doctor Entries ---
 

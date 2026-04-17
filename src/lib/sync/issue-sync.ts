@@ -345,6 +345,7 @@ export function buildIssueUpsertFields(
     requestPriority: normalized.requestPriority,
     website: normalized.website,
     brands: normalized.brands,
+    fixVersions: normalized.fixVersions,
     jiraCreatedAt: normalized.jiraCreatedAt,
     jiraUpdatedAt: normalized.jiraUpdatedAt,
   };
