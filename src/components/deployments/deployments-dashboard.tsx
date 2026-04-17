@@ -126,10 +126,12 @@ function SectionLabel({ children, icon: Icon, count }: {
 export function DeploymentsDashboard() {
   const [data, setData] = useState<DeploymentsData | null>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
   const [filters, setFilters] = useState({ environment: "", repo: "", site: "", board: "" });
 
   const fetchData = useCallback(async () => {
     setLoading(true);
+    setError(false);
     try {
       const params = new URLSearchParams();
       if (filters.environment) params.set("environment", filters.environment);
@@ -138,9 +140,13 @@ export function DeploymentsDashboard() {
       if (filters.board) params.set("board", filters.board);
 
       const res = await fetch(`/api/deployments?${params}`);
-      if (res.ok) setData(await res.json());
+      if (res.ok) {
+        setData(await res.json());
+      } else if (res.status !== 401) {
+        setError(true);
+      }
     } catch {
-      // Silent fail
+      setError(true);
     } finally {
       setLoading(false);
     }
@@ -155,6 +161,17 @@ export function DeploymentsDashboard() {
       <div className="flex items-center justify-center py-32">
         <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
         <span className="ml-3 text-sm text-muted-foreground">Loading deployments...</span>
+      </div>
+    );
+  }
+
+  if (error && !data) {
+    return (
+      <div className="flex flex-col items-center justify-center py-32 gap-3">
+        <p className="text-sm text-destructive">Failed to load deployment data</p>
+        <button type="button" onClick={fetchData} className="text-sm text-primary font-semibold hover:underline">
+          Retry
+        </button>
       </div>
     );
   }

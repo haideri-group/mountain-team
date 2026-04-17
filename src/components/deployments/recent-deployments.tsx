@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { Rocket, Server, Globe, GitBranch, ExternalLink } from "lucide-react";
+import { IssueTypeIcon } from "@/components/shared/issue-type-icon";
 import type { RecentDeployment } from "./types";
 
 function timeAgo(dateStr: string): string {
@@ -24,7 +25,7 @@ export function RecentDeploymentsFeed({ deployments }: { deployments: RecentDepl
 
   return (
     <div className="bg-card rounded-xl divide-y divide-foreground/5">
-      {deployments.slice(0, 20).map((d) => (
+      {deployments.map((d) => (
         <div key={d.id} className="flex items-center gap-3 px-4 py-3 hover:bg-muted/10 transition-colors">
           {d.environment === "production" ? (
             <Globe className="h-4 w-4 text-emerald-500 shrink-0" />
@@ -39,6 +40,7 @@ export function RecentDeploymentsFeed({ deployments }: { deployments: RecentDepl
             className="text-xs font-bold font-mono shrink-0 hover:underline inline-flex items-center gap-1"
             style={{ color: d.boardColor }}
           >
+            <IssueTypeIcon type={d.issueType} size={12} />
             {d.jiraKey}
           </Link>
 

@@ -7,7 +7,8 @@ import { DeploymentIndicator } from "@/components/overview/deployment-indicator"
 import type { PipelineTask } from "./types";
 
 function getInitials(name: string): string {
-  return name.split(" ").map((n) => n[0]).join("").substring(0, 2).toUpperCase();
+  if (!name) return "?";
+  return name.split(" ").filter(Boolean).map((n) => n[0]).join("").substring(0, 2).toUpperCase() || "?";
 }
 
 function PipelineColumn({

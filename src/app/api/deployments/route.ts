@@ -126,7 +126,7 @@ export async function GET(request: Request) {
     const seenMismatchKeys = new Set<string>();
 
     for (const d of allDeployments) {
-      if (d.environment !== "production") continue;
+      if (d.environment !== "production" && d.environment !== "canonical") continue;
       const issue = issueMap.get(d.jiraKey);
       if (!issue) continue;
       if (EXPECTED_POST_DEPLOY.includes(issue.status)) continue;
@@ -259,7 +259,7 @@ export async function GET(request: Request) {
     const deployStatusMap = new Map<string, "production" | "staging" | null>();
     for (const d of pipelineDeployments) {
       const current = deployStatusMap.get(d.jiraKey);
-      if (d.environment === "production") deployStatusMap.set(d.jiraKey, "production");
+      if (d.environment === "production" || d.environment === "canonical") deployStatusMap.set(d.jiraKey, "production");
       else if (d.environment === "staging" && current !== "production") deployStatusMap.set(d.jiraKey, "staging");
     }
 
@@ -301,6 +301,7 @@ export async function GET(request: Request) {
         id: d.id,
         jiraKey: d.jiraKey,
         issueTitle: issue?.title || d.prTitle || null,
+        issueType: issue?.type || null,
         environment: d.environment,
         siteName: d.siteName,
         siteLabel: d.siteLabel,

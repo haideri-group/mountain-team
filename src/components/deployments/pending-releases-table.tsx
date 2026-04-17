@@ -16,9 +16,9 @@ function formatDate(dateStr: string): string {
   const yesterdayStr = yesterday.toLocaleDateString("en-CA", { timeZone: APP_TIMEZONE });
   const timePart = d.toLocaleTimeString("en-US", { timeZone: APP_TIMEZONE, hour: "numeric", minute: "2-digit", hour12: true });
 
-  if (dateOnlyStr === todayStr) return `Today ${timePart}`;
-  if (dateOnlyStr === yesterdayStr) return `Yesterday ${timePart}`;
-  return d.toLocaleDateString("en-GB", { timeZone: APP_TIMEZONE, day: "numeric", month: "short" }) + ` ${timePart}`;
+  if (dateOnlyStr === todayStr) return `Today at ${timePart}`;
+  if (dateOnlyStr === yesterdayStr) return `Yesterday at ${timePart}`;
+  return d.toLocaleDateString("en-GB", { timeZone: APP_TIMEZONE, day: "numeric", month: "short" }) + ` at ${timePart}`;
 }
 
 export function PendingReleasesTable({ releases }: { releases: PendingRelease[] }) {

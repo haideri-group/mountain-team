@@ -55,6 +55,7 @@ export interface RecentDeployment {
   id: string;
   jiraKey: string;
   issueTitle: string | null;
+  issueType: string | null;
   environment: string;
   siteName: string | null;
   siteLabel: string | null;
