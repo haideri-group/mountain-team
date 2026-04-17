@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { Search, Loader2, ShieldCheck, UserX, UserCheck, Users, Shield } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { FilterSelect } from "@/components/shared/filter-select";
 
 interface AppUser {
   id: string;
@@ -190,36 +191,28 @@ export function UsersTable({ currentUserId }: UsersTableProps) {
             </div>
 
             {/* Role filter */}
-            <select
+            <FilterSelect
               value={roleFilter}
-              onChange={(e) => { setRoleFilter(e.target.value); setPage(1); }}
-              className="h-9 px-3 rounded-lg bg-muted/30 text-sm font-mono appearance-none cursor-pointer focus:outline-none pr-8"
-              style={{
-                backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%236b7280' stroke-width='2'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E")`,
-                backgroundRepeat: "no-repeat",
-                backgroundPosition: "right 8px center",
-              }}
-            >
-              <option value="all">All Roles</option>
-              <option value="admin">Admin</option>
-              <option value="user">User</option>
-            </select>
+              onChange={(v) => { setRoleFilter(v); setPage(1); }}
+              align="right"
+              options={[
+                { value: "all", label: "All Roles" },
+                { value: "admin", label: "Admin" },
+                { value: "user", label: "User" },
+              ]}
+            />
 
             {/* Status filter */}
-            <select
+            <FilterSelect
               value={statusFilter}
-              onChange={(e) => { setStatusFilter(e.target.value); setPage(1); }}
-              className="h-9 px-3 rounded-lg bg-muted/30 text-sm font-mono appearance-none cursor-pointer focus:outline-none pr-8"
-              style={{
-                backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%236b7280' stroke-width='2'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E")`,
-                backgroundRepeat: "no-repeat",
-                backgroundPosition: "right 8px center",
-              }}
-            >
-              <option value="all">All Status</option>
-              <option value="active">Active</option>
-              <option value="deactivated">Deactivated</option>
-            </select>
+              onChange={(v) => { setStatusFilter(v); setPage(1); }}
+              align="right"
+              options={[
+                { value: "all", label: "All Status" },
+                { value: "active", label: "Active" },
+                { value: "deactivated", label: "Deactivated" },
+              ]}
+            />
           </div>
         </div>
 

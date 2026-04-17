@@ -3,6 +3,7 @@
 import { useState, useRef, useCallback, useEffect } from "react";
 import { Search, RefreshCw, Loader2, Pencil, Check, X } from "lucide-react";
 import { StatusBadge } from "@/components/shared/status-badge";
+import { FilterSelect } from "@/components/shared/filter-select";
 import {
   MembersTablePagination,
   type PageSize,
@@ -288,27 +289,25 @@ export function MembersTable({ isAdmin }: MembersTableProps) {
                 className="w-full h-9 pl-9 pr-4 rounded-full bg-muted/30 border-transparent text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 transition-all"
               />
             </div>
-            <select
+            <FilterSelect
               value={statusFilter}
-              onChange={(e) => handleStatusFilterChange(e.target.value)}
-              className="h-9 px-3 rounded-full bg-muted/30 border-transparent text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 transition-all appearance-none"
-            >
-              <option value="all">All Status</option>
-              <option value="active">Active</option>
-              <option value="on_leave">On Leave</option>
-              <option value="departed">Departed</option>
-            </select>
+              onChange={handleStatusFilterChange}
+              options={[
+                { value: "all", label: "All Status" },
+                { value: "active", label: "Active" },
+                { value: "on_leave", label: "On Leave" },
+                { value: "departed", label: "Departed" },
+              ]}
+            />
             {teamOptions.length > 0 && (
-              <select
+              <FilterSelect
                 value={teamFilter}
-                onChange={(e) => handleTeamFilterChange(e.target.value)}
-                className="h-9 px-3 rounded-full bg-muted/30 border-transparent text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 transition-all appearance-none"
-              >
-                <option value="all">All Teams</option>
-                {teamOptions.map((t) => (
-                  <option key={t} value={t}>{t}</option>
-                ))}
-              </select>
+                onChange={handleTeamFilterChange}
+                options={[
+                  { value: "all", label: "All Teams" },
+                  ...teamOptions.map((t) => ({ value: t, label: t })),
+                ]}
+              />
             )}
           </div>
 
