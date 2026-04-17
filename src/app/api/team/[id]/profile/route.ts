@@ -4,7 +4,7 @@ import { team_members, issues, boards, deployments } from "@/lib/db/schema";
 import { eq, and, inArray } from "drizzle-orm";
 import { auth } from "@/auth";
 import { withResolvedAvatar } from "@/lib/db/helpers";
-import { calculateTaskWeight } from "@/lib/workload/snapshots";
+import { calculateTaskWeight, WORKLOAD_COUNTED_STATUSES } from "@/lib/workload/snapshots";
 
 export async function GET(
   _request: Request,
@@ -173,7 +173,7 @@ export async function GET(
 
     // Workload: uses shared weighted formula
     const capacity = member.capacity || 15;
-    const countedStatuses = ["todo", "in_progress", "in_review"];
+    const countedStatuses: readonly string[] = WORKLOAD_COUNTED_STATUSES;
     const activePointsForWorkload = enrichedIssues
       .filter((i) => countedStatuses.includes(i.status))
       .reduce((sum, i) => sum + calculateTaskWeight(i), 0);

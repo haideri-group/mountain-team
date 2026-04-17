@@ -72,13 +72,12 @@ function getWorkloadLabel(pct: number): string {
 export function DevCard({ member }: { member: DevCardMember }) {
   const router = useRouter();
   const isIdle = !member.currentIssue && member.queuedIssues.length === 0;
-
   return (
     <div
       onClick={() => router.push(`/members/${member.id}`)}
       className={`bg-card rounded-xl overflow-hidden flex flex-col cursor-pointer hover:ring-2 hover:ring-primary/20 transition-all ${
         member.status === "departed" ? "opacity-50" : ""
-      }`}
+      } ${isIdle && member.status === "active" ? "ring-2 ring-red-400" : ""}`}
     >
       {/* Header */}
       <div className="px-5 pt-5 pb-3 flex items-center gap-3">
