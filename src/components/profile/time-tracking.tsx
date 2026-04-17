@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from "react";
 import Link from "next/link";
 import { Clock, RefreshCw } from "lucide-react";
+import { IssueTypeIcon } from "@/components/shared/issue-type-icon";
 import {
   BarChart,
   Bar,
@@ -10,8 +11,9 @@ import {
   YAxis,
   Tooltip,
   ResponsiveContainer,
-  Legend,
+  type TooltipContentProps,
 } from "recharts";
+import type { ValueType, NameType } from "recharts/types/component/DefaultTooltipContent";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -41,6 +43,7 @@ interface TimeTrackingData {
   recentWorklogs: {
     jiraKey: string;
     issueTitle: string;
+    issueType: string | null;
     boardKey: string;
     boardColor: string;
     date: string;
@@ -79,9 +82,18 @@ function timeAgo(dateStr: string): string {
 
 // ─── Custom Tooltip ──────────────────────────────────────────────────────────
 
-function ChartTooltip({ active, payload }: any) {
+interface DailyChartData {
+  date: string;
+  jiraSeconds: number;
+  otherSeconds: number;
+  totalSeconds: number;
+  jiraHours: number;
+  otherHours: number;
+}
+
+function ChartTooltip({ active, payload }: TooltipContentProps<ValueType, NameType>) {
   if (!active || !payload?.length) return null;
-  const data = payload[0]?.payload;
+  const data = payload[0]?.payload as DailyChartData | undefined;
   if (!data) return null;
 
   return (
@@ -299,7 +311,7 @@ export function TimeTracking({ memberId, isAdmin = false }: { memberId: string; 
                     domain={[0, Math.ceil(maxHours)]}
                     tickFormatter={(v) => `${v}h`}
                   />
-                  <Tooltip content={<ChartTooltip />} cursor={false} />
+                  <Tooltip content={(props) => <ChartTooltip {...props} />} cursor={false} />
                   <Bar
                     dataKey="jiraHours"
                     stackId="time"
@@ -332,9 +344,10 @@ export function TimeTracking({ memberId, isAdmin = false }: { memberId: string; 
                   <div key={`${wl.jiraKey}-${wl.date}-${idx}`} className="flex items-center gap-3 py-1.5">
                     <Link
                       href={`/issue/${wl.jiraKey}`}
-                      className="text-xs font-bold font-mono shrink-0 hover:underline"
+                      className="text-xs font-bold font-mono shrink-0 hover:underline inline-flex items-center gap-1"
                       style={{ color: wl.boardColor }}
                     >
+                      <IssueTypeIcon type={wl.issueType} size={12} />
                       {wl.jiraKey}
                     </Link>
                     <span className="text-xs text-muted-foreground truncate flex-1">

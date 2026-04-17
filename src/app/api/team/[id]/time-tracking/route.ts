@@ -202,11 +202,11 @@ export async function GET(
 
     // Enrich JIRA recent worklogs
     const recentKeys = [...new Set([...recentMap.values()].map((r) => r.jiraKey))];
-    const issueInfo = new Map<string, { title: string; boardKey: string; boardColor: string }>();
+    const issueInfo = new Map<string, { title: string; type: string | null; boardKey: string; boardColor: string }>();
 
     if (recentKeys.length > 0) {
       const allIssueRows = await db
-        .select({ jiraKey: issues.jiraKey, title: issues.title, boardId: issues.boardId })
+        .select({ jiraKey: issues.jiraKey, title: issues.title, type: issues.type, boardId: issues.boardId })
         .from(issues)
         .where(inArray(issues.jiraKey, recentKeys));
 
@@ -220,6 +220,7 @@ export async function GET(
         const board = boardMap.get(row.boardId);
         issueInfo.set(row.jiraKey, {
           title: row.title,
+          type: row.type,
           boardKey: board?.jiraKey || "",
           boardColor: board?.color || "#6b7280",
         });
@@ -234,6 +235,7 @@ export async function GET(
         return {
           jiraKey: r.jiraKey,
           issueTitle: info?.title || "Unknown",
+          issueType: info?.type || null,
           boardKey: info?.boardKey || "",
           boardColor: info?.boardColor || "#6b7280",
           date: r.date,

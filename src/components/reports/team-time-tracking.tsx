@@ -10,7 +10,9 @@ import {
   YAxis,
   Tooltip,
   ResponsiveContainer,
+  type TooltipContentProps,
 } from "recharts";
+import type { ValueType, NameType } from "recharts/types/component/DefaultTooltipContent";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -49,9 +51,9 @@ function getInitials(name: string): string {
 
 // ─── Custom Tooltip ──────────────────────────────────────────────────────────
 
-function ChartTooltip({ active, payload }: any) {
+function ChartTooltip({ active, payload }: TooltipContentProps<ValueType, NameType>) {
   if (!active || !payload?.length) return null;
-  const data = payload[0]?.payload;
+  const data = payload[0]?.payload as MemberTime & { jiraHours: number; otherHours: number } | undefined;
   if (!data) return null;
 
   return (
@@ -206,7 +208,7 @@ export function TeamTimeTracking({ team }: { team?: string }) {
               axisLine={false}
               width={70}
             />
-            <Tooltip content={<ChartTooltip />} cursor={{ fill: "var(--color-muted)", opacity: 0.2 }} />
+            <Tooltip content={(props) => <ChartTooltip {...props} />} cursor={{ fill: "var(--color-muted)", opacity: 0.2 }} />
             <Bar
               dataKey="jiraHours"
               stackId="time"
