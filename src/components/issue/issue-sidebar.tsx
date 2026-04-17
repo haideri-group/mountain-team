@@ -22,6 +22,27 @@ import {
   formatFileSize,
 } from "./issue-helpers";
 
+// ─── Label Colors (hash-based, consistent per label name) ────────────────────
+
+const LABEL_PALETTE = [
+  { bg: "#deebff", text: "#0747a6" }, // blue
+  { bg: "#e3fcef", text: "#006644" }, // green
+  { bg: "#fff0b3", text: "#172b4d" }, // yellow
+  { bg: "#eae6ff", text: "#403294" }, // purple
+  { bg: "#ffebe6", text: "#bf2600" }, // red
+  { bg: "#e6fcff", text: "#006b77" }, // teal
+  { bg: "#fff1e6", text: "#974f0c" }, // orange
+  { bg: "#f0e6ff", text: "#5243aa" }, // violet
+];
+
+function getLabelColor(label: string): { bg: string; text: string } {
+  let hash = 0;
+  for (let i = 0; i < label.length; i++) {
+    hash = ((hash << 5) - hash + label.charCodeAt(i)) | 0;
+  }
+  return LABEL_PALETTE[Math.abs(hash) % LABEL_PALETTE.length];
+}
+
 // ─── Mini Cycle Time Bar Chart ────────────────────────────────────────────────
 
 function CycleTimeChart({ currentCycleTime }: { currentCycleTime: number | null }) {
@@ -203,14 +224,18 @@ export function IssueSidebar({
             </p>
             {issue.labels.length > 0 ? (
               <div className="flex flex-wrap gap-1">
-                {issue.labels.map((lbl) => (
-                  <span
-                    key={lbl}
-                    className="inline-flex items-center px-1.5 py-0.5 bg-muted/30 text-[9px] font-bold font-mono rounded uppercase tracking-wide text-muted-foreground"
-                  >
-                    {lbl}
-                  </span>
-                ))}
+                {issue.labels.map((lbl) => {
+                  const color = getLabelColor(lbl);
+                  return (
+                    <span
+                      key={lbl}
+                      className="inline-flex items-center px-1.5 py-0.5 text-[9px] font-bold font-mono rounded uppercase tracking-wide"
+                      style={{ backgroundColor: color.bg, color: color.text }}
+                    >
+                      {lbl}
+                    </span>
+                  );
+                })}
               </div>
             ) : (
               <span className="text-[11px] text-muted-foreground/50">—</span>
