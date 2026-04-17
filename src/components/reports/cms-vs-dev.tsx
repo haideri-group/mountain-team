@@ -1,5 +1,6 @@
 "use client";
 
+import { ChartInfo } from "./chart-info";
 import {
   ResponsiveContainer,
   BarChart,
@@ -56,9 +57,12 @@ export function CmsVsDev({ data }: CmsVsDevProps) {
   if (!data || data.length === 0) {
     return (
       <div className="bg-card rounded-xl p-6">
-        <h3 className="text-base font-bold font-mono uppercase tracking-wider mb-4">
-          CMS vs Development
-        </h3>
+        <div className="flex items-center gap-2 mb-4">
+          <h3 className="text-base font-bold font-mono uppercase tracking-wider">
+            CMS vs Development
+          </h3>
+          <ChartInfo chartId="cmsVsDev" />
+        </div>
         <div className="h-[260px] flex items-center justify-center">
           <p className="text-sm text-muted-foreground">No data available</p>
         </div>
@@ -69,9 +73,12 @@ export function CmsVsDev({ data }: CmsVsDevProps) {
   return (
     <div className="bg-card rounded-xl p-6">
       <div className="flex items-center justify-between mb-4">
-        <h3 className="text-base font-bold font-mono uppercase tracking-wider">
-          CMS vs Development
-        </h3>
+        <div className="flex items-center gap-2">
+          <h3 className="text-base font-bold font-mono uppercase tracking-wider">
+            CMS vs Development
+          </h3>
+          <ChartInfo chartId="cmsVsDev" />
+        </div>
         <span className="text-xs font-mono text-muted-foreground">
           by task type
         </span>

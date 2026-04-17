@@ -1,5 +1,7 @@
 "use client";
 
+import { ChartInfo } from "./chart-info";
+
 interface TaskType {
   type: string;
   count: number;
@@ -15,9 +17,12 @@ export function TaskTypeBreakdown({ data }: TaskTypeBreakdownProps) {
   if (!data || data.length === 0) {
     return (
       <div className="bg-card rounded-xl p-6">
-        <h3 className="text-base font-bold font-mono uppercase tracking-wider mb-4">
-          Task Type Breakdown
-        </h3>
+        <div className="flex items-center gap-2 mb-4">
+          <h3 className="text-base font-bold font-mono uppercase tracking-wider">
+            Task Type Breakdown
+          </h3>
+          <ChartInfo chartId="taskTypes" />
+        </div>
         <div className="flex items-center justify-center py-12">
           <p className="text-sm text-muted-foreground">No data available</p>
         </div>
@@ -30,9 +35,12 @@ export function TaskTypeBreakdown({ data }: TaskTypeBreakdownProps) {
   return (
     <div className="bg-card rounded-xl p-6">
       <div className="flex items-center justify-between mb-5">
-        <h3 className="text-base font-bold font-mono uppercase tracking-wider">
-          Task Type Breakdown
-        </h3>
+        <div className="flex items-center gap-2">
+          <h3 className="text-base font-bold font-mono uppercase tracking-wider">
+            Task Type Breakdown
+          </h3>
+          <ChartInfo chartId="taskTypes" />
+        </div>
         <span className="text-xs font-mono text-muted-foreground">
           {data.reduce((s, d) => s + d.count, 0)} total
         </span>

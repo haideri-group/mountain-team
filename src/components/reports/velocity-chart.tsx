@@ -1,5 +1,6 @@
 "use client";
 
+import { ChartInfo } from "./chart-info";
 import {
   ResponsiveContainer,
   BarChart,
@@ -71,9 +72,12 @@ export function VelocityChart({ data }: VelocityChartProps) {
   return (
     <div className="bg-card rounded-xl p-6">
       <div className="flex items-center justify-between mb-4">
-        <h3 className="text-base font-bold font-mono uppercase tracking-wider">
-          Velocity Trend
-        </h3>
+        <div className="flex items-center gap-2">
+          <h3 className="text-base font-bold font-mono uppercase tracking-wider">
+            Velocity Trend
+          </h3>
+          <ChartInfo chartId="velocity" />
+        </div>
         <span className="text-xs font-mono text-muted-foreground">
           tasks / month
         </span>

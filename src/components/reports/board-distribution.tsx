@@ -1,5 +1,6 @@
 "use client";
 
+import { ChartInfo } from "./chart-info";
 import { useState, useCallback } from "react";
 import { PieChart, Pie, Cell, Sector, ResponsiveContainer, type PieSectorDataItem } from "recharts";
 import { cn } from "@/lib/utils";
@@ -120,9 +121,12 @@ export function BoardDistribution({ data }: BoardDistributionProps) {
   if (!data || data.length === 0) {
     return (
       <div className="bg-card rounded-xl p-6">
-        <h3 className="text-base font-bold font-mono uppercase tracking-wider mb-4">
-          Board Distribution
-        </h3>
+        <div className="flex items-center gap-2 mb-4">
+          <h3 className="text-base font-bold font-mono uppercase tracking-wider">
+            Board Distribution
+          </h3>
+          <ChartInfo chartId="boardDistribution" />
+        </div>
         <div className="h-[300px] flex items-center justify-center">
           <p className="text-sm text-muted-foreground">No data available</p>
         </div>
@@ -135,9 +139,12 @@ export function BoardDistribution({ data }: BoardDistributionProps) {
 
   return (
     <div className="bg-card rounded-xl p-6">
-      <h3 className="text-base font-bold font-mono uppercase tracking-wider mb-2">
-        Board Distribution
-      </h3>
+      <div className="flex items-center gap-2 mb-2">
+        <h3 className="text-base font-bold font-mono uppercase tracking-wider">
+          Board Distribution
+        </h3>
+        <ChartInfo chartId="boardDistribution" />
+      </div>
 
       <div className="relative">
         <ResponsiveContainer width="100%" height={220}>
