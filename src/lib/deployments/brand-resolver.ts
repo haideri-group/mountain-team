@@ -124,6 +124,31 @@ const SITE_LABELS: Record<string, string> = {
   splendourtiles: "Splendour Tiles",
 };
 
+/**
+ * Maps brand names to their primary website URLs.
+ * Derived from actual JIRA issue data (brands + website fields).
+ * Must be kept in sync with BRAND_SITE_MAP above.
+ */
+const BRAND_WEBSITES: Record<string, string> = {
+  "Tile Mountain": "www.tilemountain.co.uk",
+  "Bathroom Mountain": "bathroommountain.co.uk",
+  "Bath Mountain": "bathroommountain.co.uk",
+  "Walls and Floors": "www.wallsandfloors.co.uk",
+  "Tile Mountain AE": "www.tilemountain.ae",
+  "TM Dubai": "www.tilemountain.ae",
+  "Trade by Walls and Floors": "trade.wallsandfloors.co.uk",
+  "WAF Trade": "trade.wallsandfloors.co.uk",
+  "Splendour": "www.splendourtiles.co.uk",
+  "Splendour Tiles": "www.splendourtiles.co.uk",
+};
+
+/**
+ * Returns the website URL for a brand name, or null if unknown.
+ */
+export function getBrandWebsite(brand: string): string | null {
+  return BRAND_WEBSITES[brand] || null;
+}
+
 export function getSiteLabel(siteName: string): string {
   return SITE_LABELS[siteName] || siteName;
 }
