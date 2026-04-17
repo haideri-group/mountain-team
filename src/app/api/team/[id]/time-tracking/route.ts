@@ -17,11 +17,13 @@ function getPKTDayLabel(date: Date): string {
 
 function getStartOfWeekPKT(now: Date): Date {
   const dateStr = getPKTDateString(now);
-  const d = new Date(`${dateStr}T00:00:00+05:00`);
-  const day = d.getDay();
+  const [y, m, d] = dateStr.split("-").map(Number);
+  const utc = new Date(Date.UTC(y, m - 1, d));
+  const day = utc.getUTCDay();
   const diff = day === 0 ? 6 : day - 1;
-  d.setDate(d.getDate() - diff);
-  return d;
+  utc.setUTCDate(utc.getUTCDate() - diff);
+  const mondayStr = utc.toISOString().split("T")[0];
+  return new Date(`${mondayStr}T00:00:00+05:00`);
 }
 
 function getStartOfMonthPKT(now: Date): Date {
