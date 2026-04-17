@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
+import { ChartInfo } from "./chart-info";
 import { TrendingUp, TrendingDown, Minus, ChevronUp, ChevronDown, ChevronsUpDown } from "lucide-react";
 
 interface DeveloperRankRow {
@@ -57,9 +58,12 @@ export function DeveloperRanking({ data }: DeveloperRankingProps) {
     return (
       <div className="bg-card rounded-xl overflow-hidden">
         <div className="p-6">
-          <h3 className="text-base font-bold font-mono uppercase tracking-wider">
-            Developer Ranking
-          </h3>
+          <div className="flex items-center gap-2">
+            <h3 className="text-base font-bold font-mono uppercase tracking-wider">
+              Developer Ranking
+            </h3>
+            <ChartInfo chartId="developerRanking" />
+          </div>
         </div>
         <div className="flex items-center justify-center py-12">
           <p className="text-sm text-muted-foreground">No data available</p>
@@ -91,9 +95,12 @@ export function DeveloperRanking({ data }: DeveloperRankingProps) {
   return (
     <div className="bg-card rounded-xl overflow-hidden">
       <div className="px-6 py-4 flex items-center justify-between">
-        <h3 className="text-base font-bold font-mono uppercase tracking-wider">
-          Developer Ranking
-        </h3>
+        <div className="flex items-center gap-2">
+          <h3 className="text-base font-bold font-mono uppercase tracking-wider">
+            Developer Ranking
+          </h3>
+          <ChartInfo chartId="developerRanking" />
+        </div>
         <span className="text-xs font-mono text-muted-foreground">
           {data.length} developers
         </span>

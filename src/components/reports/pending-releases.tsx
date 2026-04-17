@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { ChartInfo } from "./chart-info";
 import { Rocket, Loader2 } from "lucide-react";
 import Link from "next/link";
 import { IssueTypeIcon } from "@/components/shared/issue-type-icon";
@@ -74,6 +75,7 @@ export function PendingReleases() {
           <h3 className="text-base font-bold font-mono uppercase tracking-wider">
             Pending Releases
           </h3>
+          <ChartInfo chartId="pendingReleases" />
           {!loading && releases.length > 0 && (
             <span className="text-xs font-mono font-semibold px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 dark:bg-amber-950 dark:text-amber-400">
               {releases.length}

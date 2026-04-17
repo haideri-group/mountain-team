@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { ChartInfo } from "./chart-info";
 import { X } from "lucide-react";
 import Link from "next/link";
 import { IssueStatusBadge } from "@/components/overview/issue-status-badge";
@@ -99,9 +100,12 @@ export function DeveloperHeatmap({ data }: DeveloperHeatmapProps) {
   if (!data || !data.members?.length || !data.months?.length) {
     return (
       <div className="bg-card rounded-xl p-6">
-        <h3 className="text-base font-bold font-mono uppercase tracking-wider mb-4">
-          Developer Activity Heatmap
-        </h3>
+        <div className="flex items-center gap-2 mb-4">
+          <h3 className="text-base font-bold font-mono uppercase tracking-wider">
+            Developer Activity Heatmap
+          </h3>
+          <ChartInfo chartId="heatmap" />
+        </div>
         <div className="flex items-center justify-center py-12">
           <p className="text-sm text-muted-foreground">No data available</p>
         </div>
@@ -118,9 +122,12 @@ export function DeveloperHeatmap({ data }: DeveloperHeatmapProps) {
   return (
     <div className="bg-card rounded-xl p-6">
       <div className="flex items-center justify-between mb-5">
-        <h3 className="text-base font-bold font-mono uppercase tracking-wider">
-          Developer Activity Heatmap
-        </h3>
+        <div className="flex items-center gap-2">
+          <h3 className="text-base font-bold font-mono uppercase tracking-wider">
+            Developer Activity Heatmap
+          </h3>
+          <ChartInfo chartId="heatmap" />
+        </div>
         {/* Legend */}
         <div className="flex items-center gap-3">
           <span className="text-xs font-mono text-muted-foreground">Less</span>

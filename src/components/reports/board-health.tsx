@@ -1,5 +1,6 @@
 "use client";
 
+import { ChartInfo } from "./chart-info";
 import { ExternalLink } from "lucide-react";
 
 interface BoardHealthRow {
@@ -21,9 +22,12 @@ export function BoardHealth({ data }: BoardHealthProps) {
     return (
       <div className="bg-card rounded-xl overflow-hidden">
         <div className="px-6 py-4">
-          <h3 className="text-base font-bold font-mono uppercase tracking-wider">
-            Board Health
-          </h3>
+          <div className="flex items-center gap-2">
+            <h3 className="text-base font-bold font-mono uppercase tracking-wider">
+              Board Health
+            </h3>
+            <ChartInfo chartId="boardHealth" />
+          </div>
         </div>
         <div className="flex items-center justify-center py-12">
           <p className="text-sm text-muted-foreground">No data available</p>
@@ -38,9 +42,12 @@ export function BoardHealth({ data }: BoardHealthProps) {
   return (
     <div className="bg-card rounded-xl overflow-hidden">
       <div className="px-6 py-4 flex items-center justify-between">
-        <h3 className="text-base font-bold font-mono uppercase tracking-wider">
-          Board Health
-        </h3>
+        <div className="flex items-center gap-2">
+          <h3 className="text-base font-bold font-mono uppercase tracking-wider">
+            Board Health
+          </h3>
+          <ChartInfo chartId="boardHealth" />
+        </div>
         <span className="text-xs font-mono text-muted-foreground">
           {data.length} boards
         </span>

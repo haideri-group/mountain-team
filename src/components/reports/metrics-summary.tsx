@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { ChartInfo } from "./chart-info";
 import {
   TrendingUp,
   TrendingDown,
@@ -134,6 +135,12 @@ export function MetricsSummary({ metrics, missedDeadlineTasks = [] }: MetricsSum
 
   return (
     <>
+      <div className="flex items-center gap-2 mb-4">
+        <h3 className="text-base font-bold font-mono uppercase tracking-wider">
+          Key Metrics
+        </h3>
+        <ChartInfo chartId="metricsSummary" />
+      </div>
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         {cards.map((card) => {
           const Icon = card.icon;
