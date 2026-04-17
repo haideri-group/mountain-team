@@ -13,12 +13,14 @@ import {
   ChevronDown,
   Check,
   GitBranch,
+  Package,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { StatusMismatches } from "./status-mismatches";
 import { DeploymentPipelineView } from "./deployment-pipeline";
 import { PendingReleasesTable } from "./pending-releases-table";
 import { RecentDeploymentsFeed } from "./recent-deployments";
+import { ReleaseProgress } from "./release-progress";
 import { SiteOverviewTable } from "./site-overview";
 import type { DeploymentsData } from "./types";
 
@@ -262,6 +264,16 @@ export function DeploymentsDashboard() {
           </div>
         ))}
       </div>
+
+      {/* Releases */}
+      {(data.releases.upcoming.length > 0 || data.releases.recent.length > 0) && (
+        <div>
+          <SectionLabel icon={Package} count={data.releases.upcoming.length}>
+            Releases
+          </SectionLabel>
+          <ReleaseProgress upcoming={data.releases.upcoming} recent={data.releases.recent} />
+        </div>
+      )}
 
       {/* Attention Required */}
       <div>

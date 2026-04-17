@@ -258,6 +258,7 @@ export interface NormalizedIssue {
   description: string | null;
   website: string | null;
   brands: string | null;
+  fixVersions: string | null;
   jiraCreatedAt: string | null;
   jiraUpdatedAt: string | null;
 }
@@ -325,6 +326,9 @@ export async function normalizeIssue(
     requestPriority: (raw.fields.customfield_10795 as { value?: string } | null)?.value || null,
     website: extractFieldValue(raw.fields.customfield_10734),
     brands: extractFieldValue(raw.fields.customfield_10805),
+    fixVersions: JSON.stringify(
+      (raw.fields.fixVersions as { name?: string }[] | null)?.map((v) => v.name).filter(Boolean) || [],
+    ),
     jiraCreatedAt: raw.fields.created || null,
     jiraUpdatedAt: raw.fields.updated || null,
   };
