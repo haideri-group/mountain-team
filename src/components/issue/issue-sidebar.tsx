@@ -275,6 +275,49 @@ export function IssueSidebar({
               </span>
             </div>
           )}
+
+          {/* Brands */}
+          {issue.brands && (
+            <div className="space-y-1">
+              <p className="text-[9px] font-bold font-mono uppercase tracking-widest text-muted-foreground/60">
+                Brands
+              </p>
+              <div className="flex flex-wrap gap-1">
+                {issue.brands.split(",").map((b) => b.trim()).filter(Boolean).map((brand) => (
+                  <span
+                    key={brand}
+                    className="inline-flex items-center px-1.5 py-0.5 bg-primary/8 text-[9px] font-bold font-mono rounded text-primary/80"
+                  >
+                    {brand}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Website */}
+          {issue.website && (
+            <div className="space-y-1">
+              <p className="text-[9px] font-bold font-mono uppercase tracking-widest text-muted-foreground/60">
+                Website
+              </p>
+              <span className="text-[11px] font-mono text-foreground">
+                {issue.website}
+              </span>
+            </div>
+          )}
+
+          {/* Request Priority */}
+          {issue.requestPriority && (
+            <div className="space-y-1">
+              <p className="text-[9px] font-bold font-mono uppercase tracking-widest text-muted-foreground/60">
+                Request Priority
+              </p>
+              <span className="text-[11px] font-mono font-semibold text-foreground">
+                {issue.requestPriority}
+              </span>
+            </div>
+          )}
         </div>
 
         {/* Time Tracking — only shown if data exists */}

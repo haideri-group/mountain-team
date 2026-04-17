@@ -28,6 +28,9 @@ export interface Phase1Data {
     teamName: string | null;
     isOverdue: boolean;
     isOnTime: boolean | null;
+    brands: string | null;
+    website: string | null;
+    requestPriority: string | null;
   };
   context: {
     assigneeStats: {
