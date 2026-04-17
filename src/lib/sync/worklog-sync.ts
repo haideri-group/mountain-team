@@ -215,7 +215,7 @@ export async function syncWorklogs(sinceDays = 7): Promise<WorklogSyncResult> {
       nextPageToken = data.nextPageToken;
     }
   } catch (err) {
-    result.errors.push(`JQL search error: ${err instanceof Error ? err.message : String(err)}`);
+    result.errors.push(`JQL search error: ${sanitizeErrorText(err instanceof Error ? err.message : String(err))}`);
     return result;
   }
 
@@ -231,7 +231,7 @@ export async function syncWorklogs(sinceDays = 7): Promise<WorklogSyncResult> {
           const rawWorklogs = await fetchIssueWorklogs(key);
           return await upsertWorklogs(key, rawWorklogs, accountIdToMemberId, sinceDate);
         } catch (err) {
-          result.errors.push(`${key}: ${err instanceof Error ? err.message : String(err)}`);
+          result.errors.push(`${key}: ${sanitizeErrorText(err instanceof Error ? err.message : String(err))}`);
           return 0;
         }
       }),
