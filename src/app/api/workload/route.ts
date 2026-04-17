@@ -8,7 +8,7 @@ import {
   workloadSnapshots,
 } from "@/lib/db/schema";
 import { eq, and, ne, gte, inArray, desc } from "drizzle-orm";
-import { calculateTaskWeight } from "@/lib/workload/snapshots";
+import { calculateTaskWeight, WORKLOAD_COUNTED_STATUSES } from "@/lib/workload/snapshots";
 import { withResolvedAvatars } from "@/lib/db/helpers";
 
 // --- Helpers ---
@@ -91,7 +91,7 @@ export async function GET(request: NextRequest) {
     sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
     const sevenDaysAgoStr = sevenDaysAgo.toISOString().split("T")[0];
 
-    const countedStatuses = ["todo", "in_progress", "in_review"] as const;
+    const countedStatuses = WORKLOAD_COUNTED_STATUSES;
 
     const [activeIssues, doneIssues, memberSnapshots] = await Promise.all([
       // Active issues assigned to team members only

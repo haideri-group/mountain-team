@@ -20,50 +20,58 @@ function getCurrentWeekStart(): string {
 /** Issue types excluded from workload — parent-level items where devs work on sub-tasks */
 export const WORKLOAD_EXCLUDED_TYPES = ["story"] as const;
 
-// Calculate task weight based on type, priority, labels, and story points
+/** Statuses counted toward workload (includes reduced-weight statuses) */
+export const WORKLOAD_COUNTED_STATUSES = ["todo", "in_progress", "in_review", "ready_for_testing"] as const;
+
+/** Statuses where dev's active work is done — counted at 10% weight for potential support */
+export const WORKLOAD_REDUCED_STATUSES = ["in_review", "ready_for_testing"] as const;
+const REDUCED_WEIGHT_MULTIPLIER = 0.1;
+
+// Calculate task weight based on type, priority, labels, story points, and status
 export function calculateTaskWeight(issue: {
   storyPoints: number | null;
   type: string | null;
+  status?: string | null;
   requestPriority: string | null;
   labels: string | null;
 }): number {
   // Parent-level types excluded from workload
   if (issue.type && (WORKLOAD_EXCLUDED_TYPES as readonly string[]).includes(issue.type)) return 0;
 
-  // Story points always override if set
+  // Calculate base weight
+  let weight = 1.0;
+
   if (issue.storyPoints && issue.storyPoints > 0) {
-    return issue.storyPoints;
-  }
+    // Story points always override
+    weight = issue.storyPoints;
+  } else {
+    // Parse labels
+    let labelsList: string[] = [];
+    try {
+      labelsList = issue.labels ? JSON.parse(issue.labels) : [];
+    } catch {
+      labelsList = [];
+    }
 
-  // Parse labels
-  let labelsList: string[] = [];
-  try {
-    labelsList = issue.labels ? JSON.parse(issue.labels) : [];
-  } catch {
-    labelsList = [];
-  }
-
-  // WebContent label = 0.5 weight
-  if (labelsList.some((l) => l.toLowerCase() === "webcontent")) {
-    return 0.5;
-  }
-
-  // Bug weight based on Request Priority
-  if (issue.type === "bug") {
-    switch (issue.requestPriority) {
-      case "P1":
-        return 3.0;
-      case "P2":
-        return 2.0;
-      case "P3":
-        return 1.5;
-      default:
-        return 1.0; // P4 or no priority
+    if (labelsList.some((l) => l.toLowerCase() === "webcontent")) {
+      weight = 0.5;
+    } else if (issue.type === "bug") {
+      // Bug weight based on Request Priority
+      switch (issue.requestPriority) {
+        case "P1": weight = 3.0; break;
+        case "P2": weight = 2.0; break;
+        case "P3": weight = 1.5; break;
+        default: weight = 1.0;
+      }
     }
   }
 
-  // Default weight
-  return 1.0;
+  // Reduced weight for statuses where dev's active work is done
+  if (issue.status && (WORKLOAD_REDUCED_STATUSES as readonly string[]).includes(issue.status)) {
+    weight *= REDUCED_WEIGHT_MULTIPLIER;
+  }
+
+  return Math.round(weight * 100) / 100; // Avoid floating point noise
 }
 
 // Record workload snapshots for all active members
@@ -86,14 +94,13 @@ export async function recordWorkloadSnapshots(): Promise<number> {
   if (trackedBoardIds.length === 0) return 0;
 
   // Fetch all active issues (counted statuses only)
-  const countedStatuses = ["todo", "in_progress", "in_review"] as const;
   const activeIssues = await db
     .select()
     .from(issues)
     .where(
       and(
         inArray(issues.boardId, trackedBoardIds),
-        inArray(issues.status, [...countedStatuses]),
+        inArray(issues.status, [...WORKLOAD_COUNTED_STATUSES]),
       ),
     );
 

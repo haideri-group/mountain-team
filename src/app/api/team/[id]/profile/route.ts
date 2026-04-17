@@ -4,7 +4,7 @@ import { team_members, issues, boards, deployments } from "@/lib/db/schema";
 import { eq, and, inArray } from "drizzle-orm";
 import { auth } from "@/auth";
 import { withResolvedAvatar } from "@/lib/db/helpers";
-import { calculateTaskWeight } from "@/lib/workload/snapshots";
+import { calculateTaskWeight, WORKLOAD_COUNTED_STATUSES } from "@/lib/workload/snapshots";
 
 export async function GET(
   _request: Request,
@@ -158,28 +158,15 @@ export async function GET(
           ) / 10
         : 0;
 
-    // Active story points (for "this sprint")
-    const activePoints = enrichedIssues
-      .filter((i) =>
-        [
-          "todo",
-          "in_progress",
-          "in_review",
-          "ready_for_testing",
-          "ready_for_live",
-        ].includes(i.status),
-      )
-      .reduce((sum, i) => sum + (i.storyPoints || 0), 0);
-
-    // Workload: uses shared weighted formula
+    // Active points using shared weighted formula
     const capacity = member.capacity || 15;
-    const countedStatuses = ["todo", "in_progress", "in_review"];
-    const activePointsForWorkload = enrichedIssues
-      .filter((i) => countedStatuses.includes(i.status))
-      .reduce((sum, i) => sum + calculateTaskWeight(i), 0);
-    const workloadPercentage = Math.round(
-      (activePointsForWorkload / capacity) * 100,
-    );
+    const countedStatuses: readonly string[] = WORKLOAD_COUNTED_STATUSES;
+    const activePoints = Math.round(
+      enrichedIssues
+        .filter((i) => countedStatuses.includes(i.status))
+        .reduce((sum, i) => sum + calculateTaskWeight(i), 0) * 10,
+    ) / 10;
+    const workloadPercentage = Math.round((activePoints / capacity) * 100);
 
     // Overdue count
     const overdueCount = enrichedIssues.filter(
@@ -230,7 +217,6 @@ export async function GET(
         totalClosed,
         onTimePercentage,
         avgCycleTime,
-        activePoints,
         deadlinesMet: onTime,
         deadlinesTotal: doneWithDue.length,
         workloadPercentage,
