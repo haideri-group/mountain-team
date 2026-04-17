@@ -17,6 +17,7 @@ export async function Sidebar() {
     { href: "/calendar", icon: "Calendar", label: "Calendar" },
     { href: "/members", icon: "UserCircle", label: "Members" },
     { href: "/workload", icon: "BarChart3", label: "Workload" },
+    { href: "/deployments", icon: "Rocket", label: "Deployments" },
     { href: "/reports", icon: "PieChart", label: "Reports" },
   ];
 

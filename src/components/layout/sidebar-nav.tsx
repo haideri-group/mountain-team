@@ -9,6 +9,7 @@ import {
   PieChart,
   Settings,
   BarChart3,
+  Rocket,
   ShieldCheck,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -16,6 +17,7 @@ import { cn } from "@/lib/utils";
 const iconMap: Record<string, React.ElementType> = {
   LayoutDashboard,
   BarChart3,
+  Rocket,
   Calendar,
   UserCircle,
   PieChart,

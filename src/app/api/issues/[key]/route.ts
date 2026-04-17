@@ -192,6 +192,9 @@ export async function GET(
         teamName: assignee?.teamName || null,
         isOverdue,
         isOnTime,
+        brands: issue.brands || null,
+        website: issue.website || null,
+        requestPriority: issue.requestPriority || null,
       },
       context: {
         assigneeStats,
