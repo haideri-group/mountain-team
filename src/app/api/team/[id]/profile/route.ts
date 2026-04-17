@@ -158,28 +158,15 @@ export async function GET(
           ) / 10
         : 0;
 
-    // Active story points (for "this sprint")
-    const activePoints = enrichedIssues
-      .filter((i) =>
-        [
-          "todo",
-          "in_progress",
-          "in_review",
-          "ready_for_testing",
-          "ready_for_live",
-        ].includes(i.status),
-      )
-      .reduce((sum, i) => sum + (i.storyPoints || 0), 0);
-
-    // Workload: uses shared weighted formula
+    // Active points using shared weighted formula
     const capacity = member.capacity || 15;
     const countedStatuses: readonly string[] = WORKLOAD_COUNTED_STATUSES;
-    const activePointsForWorkload = enrichedIssues
-      .filter((i) => countedStatuses.includes(i.status))
-      .reduce((sum, i) => sum + calculateTaskWeight(i), 0);
-    const workloadPercentage = Math.round(
-      (activePointsForWorkload / capacity) * 100,
-    );
+    const activePoints = Math.round(
+      enrichedIssues
+        .filter((i) => countedStatuses.includes(i.status))
+        .reduce((sum, i) => sum + calculateTaskWeight(i), 0) * 10,
+    ) / 10;
+    const workloadPercentage = Math.round((activePoints / capacity) * 100);
 
     // Overdue count
     const overdueCount = enrichedIssues.filter(
