@@ -114,7 +114,7 @@ export async function GET(request: Request) {
     for (const d of allDeployments) {
       const key = `${d.jiraKey}:${d.siteName || "_"}`;
       if (d.environment === "staging") stagingKeys.add(key);
-      if (d.environment === "production") productionKeys.add(key);
+      if (d.environment === "production" || d.environment === "canonical") productionKeys.add(key);
     }
     const pendingKeys = [...stagingKeys].filter((k) => !productionKeys.has(k));
 
