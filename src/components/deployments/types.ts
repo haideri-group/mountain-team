@@ -20,7 +20,11 @@ export interface Mismatch {
   siteLabel: string | null;
   deployedAt: string;
   daysSinceDeployment: number;
-  type: "production_not_updated" | "staging_status_behind" | "stuck_rollout";
+  type: "production_not_updated" | "staging_status_behind" | "partial_rollout";
+  brands: string | null;
+  deployedSites: string[];
+  expectedSites: string[] | null;
+  missingSites: string[];
 }
 
 export interface PipelineTask {
@@ -35,6 +39,9 @@ export interface PipelineTask {
   boardColor: string;
   deploymentStatus: "production" | "staging" | null;
   daysInStatus: number;
+  brands: string | null;
+  deployedSites: string[];
+  expectedSites: string[] | null;
 }
 
 export interface PendingRelease {

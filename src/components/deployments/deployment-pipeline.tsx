@@ -51,6 +51,19 @@ function PipelineColumn({
                 )}
               </div>
               <p className="text-[10px] text-muted-foreground leading-snug line-clamp-2">{task.title}</p>
+              {task.expectedSites && task.expectedSites.length > 0 && task.deployedSites.length > 0 && (
+                <div className="flex items-center gap-1.5">
+                  <div className="flex-1 h-1.5 rounded-full bg-muted/30 overflow-hidden">
+                    <div
+                      className="h-full rounded-full bg-emerald-500 transition-all"
+                      style={{ width: `${Math.round((task.deployedSites.length / task.expectedSites.length) * 100)}%` }}
+                    />
+                  </div>
+                  <span className="text-[8px] font-mono text-muted-foreground shrink-0">
+                    {task.deployedSites.length}/{task.expectedSites.length}
+                  </span>
+                </div>
+              )}
               {task.assigneeName && (
                 <div className="flex items-center gap-1.5">
                   {task.assigneeAvatar ? (
