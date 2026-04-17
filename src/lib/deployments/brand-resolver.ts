@@ -20,15 +20,14 @@
  */
 const BRAND_SITE_MAP: Record<string, string[]> = {
   "Tile Mountain": ["tilemtn", "tm"],
-  "Bathroom Mountain": ["bathmtn", "bm"],
-  "Bath Mountain": ["bathmtn", "bm"],
+  "Bathroom Mountain": ["bathmtn", "bm"],  // site label shortened to "Bath Mountain"
   "Walls and Floors": ["wallsandfloors", "waf"],
   "Tile Mountain AE": ["tilemtnae", "tmdubai"],
-  "TM Dubai": ["tilemtnae", "tmdubai"],
+  "TM Dubai": ["tilemtnae", "tmdubai"],    // alias used in site labels
   "Trade by Walls and Floors": ["waftrd"],
-  "WAF Trade": ["waftrd"],
+  "WAF Trade": ["waftrd"],                 // alias used in site labels
   "Splendour": ["splendourtiles"],
-  "Splendour Tiles": ["splendourtiles"],
+  "Splendour Tiles": ["splendourtiles"],   // alias used in site labels
   "Wholesale": [],
 };
 
@@ -132,7 +131,6 @@ const SITE_LABELS: Record<string, string> = {
 const BRAND_WEBSITES: Record<string, string> = {
   "Tile Mountain": "www.tilemountain.co.uk",
   "Bathroom Mountain": "bathroommountain.co.uk",
-  "Bath Mountain": "bathroommountain.co.uk",
   "Walls and Floors": "www.wallsandfloors.co.uk",
   "Tile Mountain AE": "www.tilemountain.ae",
   "TM Dubai": "www.tilemountain.ae",
