@@ -1,0 +1,95 @@
+export interface DeploymentMetrics {
+  deploymentsThisWeek: number;
+  pendingReleases: number;
+  statusMismatches: number;
+  avgDaysInStaging: number;
+}
+
+export interface Mismatch {
+  jiraKey: string;
+  title: string;
+  status: string;
+  jiraStatusName: string | null;
+  issueType: string | null;
+  assigneeName: string | null;
+  assigneeAvatar: string | null;
+  boardKey: string;
+  boardColor: string;
+  environment: string;
+  siteName: string | null;
+  siteLabel: string | null;
+  deployedAt: string;
+  daysSinceDeployment: number;
+  type: "production_not_updated" | "staging_status_behind" | "stuck_rollout";
+}
+
+export interface PipelineTask {
+  jiraKey: string;
+  title: string;
+  status: string;
+  jiraStatusName: string | null;
+  issueType: string | null;
+  assigneeName: string | null;
+  assigneeAvatar: string | null;
+  boardKey: string;
+  boardColor: string;
+  deploymentStatus: "production" | "staging" | null;
+  daysInStatus: number;
+}
+
+export interface PendingRelease {
+  jiraKey: string;
+  title: string;
+  issueType: string | null;
+  assigneeName: string | null;
+  assigneeAvatar: string | null;
+  boardKey: string;
+  boardColor: string;
+  siteName: string | null;
+  siteLabel: string | null;
+  stagedAt: string;
+  daysPending: number;
+}
+
+export interface RecentDeployment {
+  id: string;
+  jiraKey: string;
+  issueTitle: string | null;
+  environment: string;
+  siteName: string | null;
+  siteLabel: string | null;
+  branch: string;
+  prUrl: string | null;
+  commitSha: string | null;
+  deployedBy: string | null;
+  deployedAt: string;
+  isHotfix: boolean;
+  repoName: string;
+  boardKey: string;
+  boardColor: string;
+}
+
+export interface SiteStatus {
+  siteName: string;
+  siteLabel: string | null;
+  latestStaging: { jiraKey: string; deployedAt: string; branch: string } | null;
+  latestProduction: { jiraKey: string; deployedAt: string; branch: string } | null;
+  lastDeployAt: string | null;
+}
+
+export interface DeploymentsData {
+  metrics: DeploymentMetrics;
+  mismatches: Mismatch[];
+  pipeline: {
+    readyForTesting: PipelineTask[];
+    readyForLive: PipelineTask[];
+    rollingOut: PipelineTask[];
+    postLiveTesting: PipelineTask[];
+  };
+  pendingReleases: PendingRelease[];
+  recentDeployments: RecentDeployment[];
+  siteOverview: SiteStatus[];
+  repos: { id: string; fullName: string }[];
+  sites: string[];
+  boards: { jiraKey: string; name: string; color: string | null }[];
+}

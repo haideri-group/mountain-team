@@ -1,165 +1,28 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef } from "react";
-import Link from "next/link";
 import {
   Rocket,
   Server,
   Globe,
   AlertTriangle,
-  CheckCircle2,
   Clock,
   Loader2,
   SlidersHorizontal,
   X,
   ChevronDown,
   Check,
-  ExternalLink,
   GitBranch,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { formatDuration } from "@/lib/utils";
-import { IssueTypeIcon } from "@/components/shared/issue-type-icon";
-import { DeploymentIndicator } from "@/components/overview/deployment-indicator";
+import { StatusMismatches } from "./status-mismatches";
+import { DeploymentPipelineView } from "./deployment-pipeline";
+import { PendingReleasesTable } from "./pending-releases-table";
+import { RecentDeploymentsFeed } from "./recent-deployments";
+import { SiteOverviewTable } from "./site-overview";
+import type { DeploymentsData } from "./types";
 
-// ─── Types ───────────────────────────────────────────────────────────────────
-
-interface Metrics {
-  deploymentsThisWeek: number;
-  pendingReleases: number;
-  statusMismatches: number;
-  avgDaysInStaging: number;
-}
-
-interface Mismatch {
-  jiraKey: string;
-  title: string;
-  status: string;
-  jiraStatusName: string | null;
-  issueType: string | null;
-  assigneeName: string | null;
-  assigneeAvatar: string | null;
-  boardKey: string;
-  boardColor: string;
-  environment: string;
-  siteName: string | null;
-  siteLabel: string | null;
-  deployedAt: string;
-  daysSinceDeployment: number;
-  type: "production_not_updated" | "staging_status_behind" | "stuck_rollout";
-}
-
-interface PipelineTask {
-  jiraKey: string;
-  title: string;
-  status: string;
-  jiraStatusName: string | null;
-  issueType: string | null;
-  assigneeName: string | null;
-  assigneeAvatar: string | null;
-  boardKey: string;
-  boardColor: string;
-  deploymentStatus: "production" | "staging" | null;
-  daysInStatus: number;
-}
-
-interface PendingRelease {
-  jiraKey: string;
-  title: string;
-  issueType: string | null;
-  assigneeName: string | null;
-  assigneeAvatar: string | null;
-  boardKey: string;
-  boardColor: string;
-  siteName: string | null;
-  siteLabel: string | null;
-  stagedAt: string;
-  daysPending: number;
-}
-
-interface RecentDeployment {
-  id: string;
-  jiraKey: string;
-  issueTitle: string | null;
-  environment: string;
-  siteName: string | null;
-  siteLabel: string | null;
-  branch: string;
-  prUrl: string | null;
-  commitSha: string | null;
-  deployedBy: string | null;
-  deployedAt: string;
-  isHotfix: boolean;
-  repoName: string;
-  boardKey: string;
-  boardColor: string;
-}
-
-interface SiteStatus {
-  siteName: string;
-  siteLabel: string | null;
-  latestStaging: { jiraKey: string; deployedAt: string; branch: string } | null;
-  latestProduction: { jiraKey: string; deployedAt: string; branch: string } | null;
-  lastDeployAt: string | null;
-}
-
-interface DeploymentsData {
-  metrics: Metrics;
-  mismatches: Mismatch[];
-  pipeline: {
-    readyForTesting: PipelineTask[];
-    readyForLive: PipelineTask[];
-    rollingOut: PipelineTask[];
-    postLiveTesting: PipelineTask[];
-  };
-  pendingReleases: PendingRelease[];
-  recentDeployments: RecentDeployment[];
-  siteOverview: SiteStatus[];
-  repos: { id: string; fullName: string }[];
-  sites: string[];
-  boards: { jiraKey: string; name: string; color: string | null }[];
-}
-
-// ─── Helpers ─────────────────────────────────────────────────────────────────
-
-function timeAgo(dateStr: string): string {
-  const diff = Math.floor((Date.now() - new Date(dateStr).getTime()) / 1000);
-  if (diff < 60) return "just now";
-  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
-  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
-  return `${Math.floor(diff / 86400)}d ago`;
-}
-
-function formatDate(dateStr: string): string {
-  const d = new Date(dateStr);
-  const now = new Date();
-  const todayStr = now.toLocaleDateString("en-CA", { timeZone: "Asia/Karachi" });
-  const dateOnlyStr = d.toLocaleDateString("en-CA", { timeZone: "Asia/Karachi" });
-  const yesterday = new Date(now);
-  yesterday.setDate(yesterday.getDate() - 1);
-  const yesterdayStr = yesterday.toLocaleDateString("en-CA", { timeZone: "Asia/Karachi" });
-
-  const timePart = d.toLocaleTimeString("en-US", {
-    timeZone: "Asia/Karachi",
-    hour: "numeric",
-    minute: "2-digit",
-    hour12: true,
-  });
-
-  if (dateOnlyStr === todayStr) return `Today ${timePart}`;
-  if (dateOnlyStr === yesterdayStr) return `Yesterday ${timePart}`;
-  return d.toLocaleDateString("en-GB", {
-    timeZone: "Asia/Karachi",
-    day: "numeric",
-    month: "short",
-  }) + ` ${timePart}`;
-}
-
-function getInitials(name: string): string {
-  return name.split(" ").map((n) => n[0]).join("").substring(0, 2).toUpperCase();
-}
-
-// ─── Filter Dropdown (reused pattern) ────────────────────────────────────────
+// ─── Filter Dropdown ─────────────────────────────────────────────────────────
 
 function FilterSelect({
   value,
@@ -258,72 +121,7 @@ function SectionLabel({ children, icon: Icon, count }: {
   );
 }
 
-// ─── Pipeline Column ─────────────────────────────────────────────────────────
-
-function PipelineColumn({
-  title,
-  tasks,
-  color,
-}: {
-  title: string;
-  tasks: PipelineTask[];
-  color: string;
-}) {
-  return (
-    <div className="flex flex-col min-w-[220px]">
-      <div className={cn("flex items-center justify-between px-3 py-2 rounded-t-lg", color)}>
-        <span className="text-[10px] font-bold font-mono uppercase tracking-wider text-foreground">
-          {title}
-        </span>
-        <span className="text-[10px] font-bold font-mono text-foreground/70">
-          {tasks.length}
-        </span>
-      </div>
-      <div className="flex-1 bg-muted/10 rounded-b-lg p-2 space-y-1.5 min-h-[100px]">
-        {tasks.length === 0 ? (
-          <p className="text-[10px] text-muted-foreground/50 text-center py-4">No tasks</p>
-        ) : (
-          tasks.slice(0, 8).map((task) => (
-            <Link
-              key={task.jiraKey}
-              href={`/issue/${task.jiraKey}`}
-              className="block bg-card rounded-lg p-2.5 hover:ring-1 hover:ring-primary/20 transition-all space-y-1"
-            >
-              <div className="flex items-center gap-1.5">
-                <IssueTypeIcon type={task.issueType} size={12} />
-                <span className="text-[11px] font-bold font-mono" style={{ color: task.boardColor }}>
-                  {task.jiraKey}
-                </span>
-                <DeploymentIndicator status={task.deploymentStatus} />
-                {task.daysInStatus >= 3 && (
-                  <span className="text-[9px] font-mono text-amber-500 ml-auto">{task.daysInStatus}d</span>
-                )}
-              </div>
-              <p className="text-[10px] text-muted-foreground leading-snug line-clamp-2">{task.title}</p>
-              {task.assigneeName && (
-                <div className="flex items-center gap-1.5">
-                  {task.assigneeAvatar ? (
-                    <img src={task.assigneeAvatar} alt="" className="h-3.5 w-3.5 rounded-full" />
-                  ) : (
-                    <div className="h-3.5 w-3.5 rounded-full bg-muted/50 flex items-center justify-center text-[6px] font-bold font-mono text-muted-foreground">
-                      {getInitials(task.assigneeName)}
-                    </div>
-                  )}
-                  <span className="text-[9px] text-muted-foreground truncate">{task.assigneeName}</span>
-                </div>
-              )}
-            </Link>
-          ))
-        )}
-        {tasks.length > 8 && (
-          <p className="text-[9px] text-muted-foreground text-center">+{tasks.length - 8} more</p>
-        )}
-      </div>
-    </div>
-  );
-}
-
-// ─── Main Component ──────────────────────────────────────────────────────────
+// ─── Main Dashboard ──────────────────────────────────────────────────────────
 
 export function DeploymentsDashboard() {
   const [data, setData] = useState<DeploymentsData | null>(null);
@@ -448,240 +246,47 @@ export function DeploymentsDashboard() {
         ))}
       </div>
 
-      {/* Section 1: Attention Required */}
-      {data.mismatches.length > 0 && (
-        <div>
-          <SectionLabel icon={AlertTriangle} count={data.mismatches.length}>
-            Attention Required
-          </SectionLabel>
-          <div className="space-y-2">
-            {data.mismatches.map((m) => (
-              <Link
-                key={m.jiraKey}
-                href={`/issue/${m.jiraKey}`}
-                className={cn(
-                  "block rounded-xl p-4 transition-all hover:ring-1 hover:ring-foreground/10",
-                  m.type === "production_not_updated" ? "bg-red-500/5 ring-1 ring-red-500/10" : "bg-amber-500/5 ring-1 ring-amber-500/10",
-                )}
-              >
-                <div className="flex items-center gap-3 flex-wrap">
-                  <AlertTriangle className={cn("h-4 w-4 shrink-0", m.type === "production_not_updated" ? "text-red-500" : "text-amber-500")} />
-                  <div className="flex items-center gap-1.5">
-                    <IssueTypeIcon type={m.issueType} size={14} />
-                    <span className="text-sm font-bold font-mono" style={{ color: m.boardColor }}>{m.jiraKey}</span>
-                  </div>
-                  <span className="text-sm text-foreground truncate flex-1">{m.title}</span>
-                  <span className="text-[10px] font-mono text-muted-foreground shrink-0">
-                    {m.daysSinceDeployment}d ago
-                  </span>
-                </div>
-                <div className="flex items-center gap-4 mt-2 ml-7 text-[10px] font-mono text-muted-foreground">
-                  <span>Status: <strong className="text-foreground">{m.jiraStatusName || m.status}</strong></span>
-                  <span>Deployed: <strong className="text-foreground">{m.environment} {m.siteLabel || m.siteName || ""}</strong></span>
-                  {m.assigneeName && <span>Assignee: <strong className="text-foreground">{m.assigneeName}</strong></span>}
-                </div>
-              </Link>
-            ))}
-          </div>
-        </div>
-      )}
+      {/* Attention Required */}
+      <div>
+        <SectionLabel icon={AlertTriangle} count={data.mismatches.length}>
+          Attention Required
+        </SectionLabel>
+        <StatusMismatches mismatches={data.mismatches} />
+      </div>
 
-      {data.mismatches.length === 0 && (
-        <div className="bg-emerald-500/5 ring-1 ring-emerald-500/10 rounded-xl p-4 flex items-center gap-3">
-          <CheckCircle2 className="h-5 w-5 text-emerald-500 shrink-0" />
-          <div>
-            <p className="text-sm font-semibold font-mono text-emerald-700 dark:text-emerald-400">All Clear</p>
-            <p className="text-[10px] text-muted-foreground">No status mismatches detected. All deployed tasks have matching JIRA statuses.</p>
-          </div>
-        </div>
-      )}
-
-      {/* Section 2: Deployment Pipeline */}
+      {/* Deployment Pipeline */}
       <div>
         <SectionLabel icon={GitBranch} count={totalPipeline}>
           Deployment Pipeline
         </SectionLabel>
-        <div className="flex gap-3 overflow-x-auto pb-2">
-          <PipelineColumn title="Ready for Testing" tasks={data.pipeline.readyForTesting} color="bg-amber-500/10" />
-          <PipelineColumn title="Ready for Live" tasks={data.pipeline.readyForLive} color="bg-orange-500/10" />
-          <PipelineColumn title="Rolling Out" tasks={data.pipeline.rollingOut} color="bg-emerald-500/10" />
-          <PipelineColumn title="Post Live Testing" tasks={data.pipeline.postLiveTesting} color="bg-blue-500/10" />
-        </div>
+        <DeploymentPipelineView pipeline={data.pipeline} />
       </div>
 
-      {/* Section 3: Pending Releases */}
+      {/* Pending Releases */}
       {data.pendingReleases.length > 0 && (
         <div>
           <SectionLabel icon={Server} count={data.pendingReleases.length}>
             Pending Releases
           </SectionLabel>
-          <div className="bg-card rounded-xl overflow-hidden">
-            <div className="overflow-x-auto">
-              <table className="w-full text-xs font-mono">
-                <thead>
-                  <tr className="border-b border-foreground/5">
-                    <th className="text-left px-4 py-3 text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Task</th>
-                    <th className="text-left px-4 py-3 text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Title</th>
-                    <th className="text-left px-4 py-3 text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Assignee</th>
-                    <th className="text-left px-4 py-3 text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Site</th>
-                    <th className="text-left px-4 py-3 text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Staged</th>
-                    <th className="text-right px-4 py-3 text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Pending</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {data.pendingReleases.map((pr, idx) => (
-                    <tr key={`${pr.jiraKey}-${pr.siteName}-${idx}`} className="border-b border-foreground/5 last:border-0 hover:bg-muted/10">
-                      <td className="px-4 py-2.5">
-                        <Link href={`/issue/${pr.jiraKey}`} className="font-bold hover:underline inline-flex items-center gap-1" style={{ color: pr.boardColor }}>
-                          <IssueTypeIcon type={pr.issueType} size={12} />
-                          {pr.jiraKey}
-                        </Link>
-                      </td>
-                      <td className="px-4 py-2.5 text-muted-foreground max-w-[250px] truncate">{pr.title}</td>
-                      <td className="px-4 py-2.5">
-                        {pr.assigneeName ? (
-                          <div className="flex items-center gap-1.5">
-                            {pr.assigneeAvatar ? (
-                              <img src={pr.assigneeAvatar} alt="" className="h-4 w-4 rounded-full" />
-                            ) : null}
-                            <span className="text-muted-foreground">{pr.assigneeName}</span>
-                          </div>
-                        ) : (
-                          <span className="text-muted-foreground/40">—</span>
-                        )}
-                      </td>
-                      <td className="px-4 py-2.5 text-muted-foreground">{pr.siteLabel || pr.siteName || "—"}</td>
-                      <td className="px-4 py-2.5 text-muted-foreground">{formatDate(pr.stagedAt)}</td>
-                      <td className={cn(
-                        "px-4 py-2.5 text-right font-bold",
-                        pr.daysPending >= 8 ? "text-red-500" : pr.daysPending >= 3 ? "text-amber-500" : "text-emerald-500",
-                      )}>
-                        {pr.daysPending}d
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
+          <PendingReleasesTable releases={data.pendingReleases} />
         </div>
       )}
 
-      {/* Section 4: Recent Deployments */}
+      {/* Recent Deployments */}
       <div>
         <SectionLabel icon={Rocket} count={data.recentDeployments.length}>
           Recent Deployments
         </SectionLabel>
-        <div className="bg-card rounded-xl divide-y divide-foreground/5">
-          {data.recentDeployments.length === 0 ? (
-            <div className="flex flex-col items-center gap-2 py-12">
-              <Rocket className="h-8 w-8 text-muted-foreground/30" />
-              <p className="text-sm text-muted-foreground">No deployments found</p>
-            </div>
-          ) : (
-            data.recentDeployments.slice(0, 20).map((d) => (
-              <div key={d.id} className="flex items-center gap-3 px-4 py-3 hover:bg-muted/10 transition-colors">
-                {d.environment === "production" ? (
-                  <Globe className="h-4 w-4 text-emerald-500 shrink-0" />
-                ) : d.environment === "staging" ? (
-                  <Server className="h-4 w-4 text-amber-500 shrink-0" />
-                ) : (
-                  <GitBranch className="h-4 w-4 text-blue-500 shrink-0" />
-                )}
-
-                <Link
-                  href={`/issue/${d.jiraKey}`}
-                  className="text-xs font-bold font-mono shrink-0 hover:underline inline-flex items-center gap-1"
-                  style={{ color: d.boardColor }}
-                >
-                  {d.jiraKey}
-                </Link>
-
-                {d.isHotfix && (
-                  <span className="text-[8px] font-bold font-mono px-1.5 py-0.5 rounded-full bg-red-500/10 text-red-500 uppercase">
-                    Hotfix
-                  </span>
-                )}
-
-                <span className="text-xs text-muted-foreground truncate flex-1">
-                  {d.issueTitle || d.branch}
-                </span>
-
-                <span className="text-[10px] font-mono text-muted-foreground/60 shrink-0">
-                  {d.siteLabel || d.siteName || d.environment}
-                </span>
-
-                {d.deployedBy && (
-                  <span className="text-[10px] font-mono text-muted-foreground/50 shrink-0">
-                    {d.deployedBy}
-                  </span>
-                )}
-
-                {d.prUrl && (
-                  <a href={d.prUrl} target="_blank" rel="noopener noreferrer" className="shrink-0" onClick={(e) => e.stopPropagation()}>
-                    <ExternalLink className="h-3 w-3 text-muted-foreground/30 hover:text-primary transition-colors" />
-                  </a>
-                )}
-
-                <span className="text-[10px] font-mono text-muted-foreground shrink-0 w-[70px] text-right">
-                  {timeAgo(d.deployedAt)}
-                </span>
-              </div>
-            ))
-          )}
-        </div>
+        <RecentDeploymentsFeed deployments={data.recentDeployments} />
       </div>
 
-      {/* Section 5: Site Overview */}
+      {/* Site Overview */}
       {data.siteOverview.length > 0 && (
         <div>
           <SectionLabel icon={Globe}>
             Site Overview
           </SectionLabel>
-          <div className="bg-card rounded-xl overflow-hidden">
-            <div className="overflow-x-auto">
-              <table className="w-full text-xs font-mono">
-                <thead>
-                  <tr className="border-b border-foreground/5">
-                    <th className="text-left px-4 py-3 text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Site</th>
-                    <th className="text-left px-4 py-3 text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Staging</th>
-                    <th className="text-left px-4 py-3 text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Production</th>
-                    <th className="text-right px-4 py-3 text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Last Deploy</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {data.siteOverview.map((site) => (
-                    <tr key={site.siteName} className="border-b border-foreground/5 last:border-0">
-                      <td className="px-4 py-3 font-semibold text-foreground">
-                        {site.siteLabel || site.siteName}
-                      </td>
-                      <td className="px-4 py-3">
-                        {site.latestStaging ? (
-                          <Link href={`/issue/${site.latestStaging.jiraKey}`} className="text-amber-600 dark:text-amber-400 hover:underline">
-                            {site.latestStaging.jiraKey}
-                          </Link>
-                        ) : (
-                          <span className="text-muted-foreground/30">—</span>
-                        )}
-                      </td>
-                      <td className="px-4 py-3">
-                        {site.latestProduction ? (
-                          <Link href={`/issue/${site.latestProduction.jiraKey}`} className="text-emerald-600 dark:text-emerald-400 hover:underline">
-                            {site.latestProduction.jiraKey}
-                          </Link>
-                        ) : (
-                          <span className="text-muted-foreground/30">—</span>
-                        )}
-                      </td>
-                      <td className="px-4 py-3 text-right text-muted-foreground">
-                        {site.lastDeployAt ? timeAgo(site.lastDeployAt) : "—"}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
+          <SiteOverviewTable sites={data.siteOverview} />
         </div>
       )}
     </div>
