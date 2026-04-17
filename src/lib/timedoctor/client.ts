@@ -3,6 +3,13 @@
 import { sanitizeErrorText } from "@/lib/jira/client";
 
 const TD_BASE = "https://api2.timedoctor.com/api/1.0";
+const TD_TIMEOUT = 15_000; // 15 seconds
+
+function fetchWithTimeout(url: string, options: RequestInit, timeoutMs = TD_TIMEOUT): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  return fetch(url, { ...options, signal: controller.signal }).finally(() => clearTimeout(timer));
+}
 
 // ─── Config ──────────────────────────────────────────────────────────────────
 
@@ -24,7 +31,7 @@ function getCompanyId(): string {
 }
 
 async function login(): Promise<{ token: string; companyId: string }> {
-  const res = await fetch(`${TD_BASE}/authorization/login`, {
+  const res = await fetchWithTimeout(`${TD_BASE}/authorization/login`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -83,7 +90,7 @@ export async function tdFetch<T>(
     }
   }
 
-  const res = await fetch(url.toString(), {
+  const res = await fetchWithTimeout(url.toString(), {
     headers: {
       Authorization: `JWT ${token}`,
       Accept: "application/json",
@@ -97,7 +104,7 @@ export async function tdFetch<T>(
     tokenExpiry = 0;
     const { token: newToken } = await getTDToken();
 
-    const retryRes = await fetch(url.toString(), {
+    const retryRes = await fetchWithTimeout(url.toString(), {
       headers: {
         Authorization: `JWT ${newToken}`,
         Accept: "application/json",
