@@ -61,7 +61,12 @@ export function VelocityChart({ data }: VelocityChartProps) {
   if (!data || data.length === 0) {
     return (
       <div className="bg-card rounded-xl p-6">
-        <h3 className="text-base font-bold font-mono mb-4">VELOCITY TREND</h3>
+        <div className="flex items-center gap-2 mb-4">
+          <h3 className="text-base font-bold font-mono uppercase tracking-wider">
+            Velocity Trend
+          </h3>
+          <ChartInfo chartId="velocity" />
+        </div>
         <div className="h-[300px] flex items-center justify-center">
           <p className="text-sm text-muted-foreground">No data available</p>
         </div>

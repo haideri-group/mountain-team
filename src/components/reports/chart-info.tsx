@@ -160,14 +160,17 @@ function InfoDialog({
   guide: ChartGuide;
   onClose: () => void;
 }) {
-  const dialogRef = useRef<HTMLDivElement>(null);
+  const closeRef = useRef<HTMLButtonElement>(null);
 
+  // Focus close button on mount, trap Escape
   useEffect(() => {
-    function handleEscape(e: KeyboardEvent) {
+    closeRef.current?.focus();
+
+    function handleKeyDown(e: KeyboardEvent) {
       if (e.key === "Escape") onClose();
     }
-    document.addEventListener("keydown", handleEscape);
-    return () => document.removeEventListener("keydown", handleEscape);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
   }, [onClose]);
 
   return createPortal(
@@ -182,8 +185,8 @@ function InfoDialog({
 
       {/* Dialog */}
       <div
-        ref={dialogRef}
         role="dialog"
+        aria-modal="true"
         aria-label={guide.title}
         className={cn(
           "relative z-10 w-[90vw] max-w-md",
@@ -204,7 +207,9 @@ function InfoDialog({
             </h3>
           </div>
           <button
+            ref={closeRef}
             onClick={onClose}
+            aria-label="Close"
             className="p-1 rounded-md hover:bg-muted/30 transition-colors text-muted-foreground hover:text-foreground shrink-0"
           >
             <X className="h-4 w-4" />
@@ -248,15 +253,22 @@ function InfoDialog({
 
 // ─── ChartInfo Button ────────────────────────────────────────────────────────
 
-export function ChartInfo({ chartId }: { chartId: string }) {
+export type ChartId = keyof typeof CHART_GUIDES;
+
+export function ChartInfo({ chartId }: { chartId: ChartId }) {
   const [isOpen, setIsOpen] = useState(false);
+  const triggerRef = useRef<HTMLButtonElement>(null);
   const guide = CHART_GUIDES[chartId];
 
-  if (!guide) return null;
+  const handleClose = () => {
+    setIsOpen(false);
+    triggerRef.current?.focus();
+  };
 
   return (
     <>
       <button
+        ref={triggerRef}
         onClick={() => setIsOpen(true)}
         className="p-0.5 rounded-md hover:bg-muted/30 transition-colors text-muted-foreground/40 hover:text-muted-foreground"
         aria-label={`Info about ${guide.title}`}
@@ -265,7 +277,7 @@ export function ChartInfo({ chartId }: { chartId: string }) {
       </button>
 
       {isOpen && (
-        <InfoDialog guide={guide} onClose={() => setIsOpen(false)} />
+        <InfoDialog guide={guide} onClose={handleClose} />
       )}
     </>
   );
