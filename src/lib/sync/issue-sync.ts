@@ -15,7 +15,7 @@ import { normalizeIssue, calculateCycleTime, loadStatusMappingCache, invalidateS
 import { getAuthHeader, getBaseUrl, sanitizeErrorText } from "@/lib/jira/client";
 import { recordDeployment } from "@/lib/github/deployments";
 import { extractJiraKeys } from "@/lib/github/jira-keys";
-import { upsertWorklogs } from "@/lib/sync/worklog-sync";
+import { upsertWorklogs, fetchIssueWorklogs } from "@/lib/sync/worklog-sync";
 
 // --- Types ---
 
@@ -526,24 +526,16 @@ export async function syncSingleIssue(
     .values({ id, jiraKey: normalized.jiraKey, ...fields })
     .onDuplicateKeyUpdate({ set: fields });
 
-  // Sync worklogs for this issue (reuse member data from assignee resolution)
+  // Sync worklogs for this issue (reuses paginated fetcher from worklog-sync)
   let worklogsRecorded = 0;
   try {
-    const wlUrl = `${getBaseUrl()}/rest/api/3/issue/${encodeURIComponent(jiraKey)}/worklog`;
-    const wlRes = await fetchWithRetry(wlUrl, {
-      headers: { Authorization: getAuthHeader(), Accept: "application/json" },
-      cache: "no-store",
-    });
-    if (wlRes.ok) {
-      const wlData = await wlRes.json();
-      const rawWorklogs = wlData.worklogs || [];
-      if (rawWorklogs.length > 0) {
-        const allMembers = await db
-          .select({ id: team_members.id, jiraAccountId: team_members.jiraAccountId })
-          .from(team_members);
-        const accountIdToMemberId = new Map(allMembers.map((m) => [m.jiraAccountId, m.id]));
-        worklogsRecorded = await upsertWorklogs(jiraKey, rawWorklogs, accountIdToMemberId);
-      }
+    const rawWorklogs = await fetchIssueWorklogs(jiraKey);
+    if (rawWorklogs.length > 0) {
+      const allMembers = await db
+        .select({ id: team_members.id, jiraAccountId: team_members.jiraAccountId })
+        .from(team_members);
+      const accountIdToMemberId = new Map(allMembers.map((m) => [m.jiraAccountId, m.id]));
+      worklogsRecorded = await upsertWorklogs(jiraKey, rawWorklogs, accountIdToMemberId);
     }
   } catch (err) {
     console.warn("Worklog sync failed (non-fatal):", err instanceof Error ? err.message : String(err));

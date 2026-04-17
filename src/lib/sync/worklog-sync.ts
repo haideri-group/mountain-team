@@ -56,7 +56,7 @@ function parseComment(comment: JiraWorklog["comment"]): string | null {
 
 // ─── Fetch worklogs for a single issue ───────────────────────────────────────
 
-async function fetchIssueWorklogs(jiraKey: string): Promise<JiraWorklog[]> {
+export async function fetchIssueWorklogs(jiraKey: string): Promise<JiraWorklog[]> {
   const baseUrl = `${getBaseUrl()}/rest/api/3/issue/${encodeURIComponent(jiraKey)}/worklog`;
   const allWorklogs: JiraWorklog[] = [];
   let startAt = 0;
