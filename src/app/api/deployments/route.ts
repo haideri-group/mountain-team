@@ -4,6 +4,7 @@ import { db } from "@/lib/db";
 import { deployments, issues, boards, team_members, githubRepos, githubBranchMappings } from "@/lib/db/schema";
 import { eq, and, desc, gte, inArray, isNotNull, notInArray, sql } from "drizzle-orm";
 import { withResolvedAvatars } from "@/lib/db/helpers";
+import { sanitizeErrorText } from "@/lib/jira/client";
 import type { Mismatch, PendingRelease, SiteStatus } from "@/components/deployments/types";
 import { APP_TIMEZONE } from "@/lib/config";
 
@@ -360,7 +361,7 @@ export async function GET(request: Request) {
       boards: allBoards.map((b) => ({ jiraKey: b.jiraKey, name: b.name, color: b.color })),
     });
   } catch (error) {
-    console.error("Deployments API error:", error);
+    console.error("Deployments API error:", sanitizeErrorText(error instanceof Error ? error.message : String(error)));
     return NextResponse.json(
       { error: "Failed to load deployment data" },
       { status: 500 },
