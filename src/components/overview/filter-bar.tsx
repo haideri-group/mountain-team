@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useId } from "react";
 import { SlidersHorizontal, X, RefreshCw, ChevronDown, Check } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -80,6 +80,8 @@ function FilterSelect({
   const triggerRef = useRef<HTMLButtonElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const [focusedIdx, setFocusedIdx] = useState(-1);
+  const instanceId = useId();
+  const listboxId = `filter-listbox-${instanceId}`;
 
   const selectedLabel =
     options.find((o) => o.value === value)?.label ?? options[0]?.label;
@@ -175,6 +177,7 @@ function FilterSelect({
         )}
         aria-expanded={isOpen}
         aria-haspopup="listbox"
+        aria-controls={isOpen ? listboxId : undefined}
       >
         {selectedLabel}
         <ChevronDown
@@ -188,10 +191,11 @@ function FilterSelect({
       {isOpen && (
         <div
           ref={listRef}
+          id={listboxId}
           role="listbox"
           tabIndex={-1}
           aria-activedescendant={
-            focusedIdx >= 0 ? `option-${options[focusedIdx].value}` : undefined
+            focusedIdx >= 0 ? `${listboxId}-opt-${focusedIdx}` : undefined
           }
           className={cn(
             "absolute left-0 top-full mt-1.5 z-50",
@@ -206,7 +210,7 @@ function FilterSelect({
             return (
               <div
                 key={o.value}
-                id={`option-${o.value}`}
+                id={`${listboxId}-opt-${idx}`}
                 role="option"
                 aria-selected={isSelected}
                 onMouseEnter={() => setFocusedIdx(idx)}
