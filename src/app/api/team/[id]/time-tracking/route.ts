@@ -252,7 +252,10 @@ export async function GET(
     const [lastSync] = await db
       .select({ completedAt: syncLogs.completedAt })
       .from(syncLogs)
-      .where(or(eq(syncLogs.type, "worklog_sync"), eq(syncLogs.type, "timedoctor_sync")))
+      .where(and(
+        or(eq(syncLogs.type, "worklog_sync"), eq(syncLogs.type, "timedoctor_sync")),
+        eq(syncLogs.status, "completed"),
+      ))
       .orderBy(desc(syncLogs.completedAt))
       .limit(1);
 

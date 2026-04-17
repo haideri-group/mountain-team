@@ -30,7 +30,7 @@ export const team_members = mysqlTable("team_members", {
   color: varchar("color", { length: 50 }),
   teamId: varchar("teamId", { length: 191 }),
   teamName: varchar("teamName", { length: 255 }),
-  tdUserId: varchar("tdUserId", { length: 50 }),
+  tdUserId: varchar("tdUserId", { length: 50 }).unique(),
   createdAt: timestamp("createdAt").defaultNow(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow(),
 });
