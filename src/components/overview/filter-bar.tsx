@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { SlidersHorizontal, X, RefreshCw, ChevronDown, Check } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -77,36 +77,95 @@ function FilterSelect({
 }) {
   const [isOpen, setIsOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const listRef = useRef<HTMLDivElement>(null);
+  const [focusedIdx, setFocusedIdx] = useState(-1);
 
   const selectedLabel =
     options.find((o) => o.value === value)?.label ?? options[0]?.label;
   const isFiltered = value !== "";
 
+  const close = useCallback(() => {
+    setIsOpen(false);
+    triggerRef.current?.focus();
+  }, []);
+
+  // Open and set initial focus index to current selection
+  const open = useCallback(() => {
+    const idx = options.findIndex((o) => o.value === value);
+    setFocusedIdx(idx >= 0 ? idx : 0);
+    setIsOpen(true);
+  }, [options, value]);
+
+  // Scroll focused option into view
+  useEffect(() => {
+    if (!isOpen || focusedIdx < 0) return;
+    const el = listRef.current?.children[focusedIdx] as HTMLElement | undefined;
+    el?.scrollIntoView({ block: "nearest" });
+  }, [isOpen, focusedIdx]);
+
+  // Click outside
   useEffect(() => {
     if (!isOpen) return;
-
     function handleClickOutside(e: MouseEvent) {
       if (ref.current && !ref.current.contains(e.target as Node)) {
         setIsOpen(false);
       }
     }
-
-    function handleEscape(e: KeyboardEvent) {
-      if (e.key === "Escape") setIsOpen(false);
-    }
-
     document.addEventListener("mousedown", handleClickOutside);
-    document.addEventListener("keydown", handleEscape);
-    return () => {
-      document.removeEventListener("mousedown", handleClickOutside);
-      document.removeEventListener("keydown", handleEscape);
-    };
+    return () => document.removeEventListener("mousedown", handleClickOutside);
   }, [isOpen]);
 
+  function handleKeyDown(e: React.KeyboardEvent) {
+    if (!isOpen) {
+      // Open on arrow down/up/Enter/Space when trigger is focused
+      if (["ArrowDown", "ArrowUp", "Enter", " "].includes(e.key)) {
+        e.preventDefault();
+        open();
+      }
+      return;
+    }
+
+    switch (e.key) {
+      case "ArrowDown":
+        e.preventDefault();
+        setFocusedIdx((i) => Math.min(i + 1, options.length - 1));
+        break;
+      case "ArrowUp":
+        e.preventDefault();
+        setFocusedIdx((i) => Math.max(i - 1, 0));
+        break;
+      case "Home":
+        e.preventDefault();
+        setFocusedIdx(0);
+        break;
+      case "End":
+        e.preventDefault();
+        setFocusedIdx(options.length - 1);
+        break;
+      case "Enter":
+      case " ":
+        e.preventDefault();
+        if (focusedIdx >= 0 && focusedIdx < options.length) {
+          onChange(options[focusedIdx].value);
+          close();
+        }
+        break;
+      case "Escape":
+        e.preventDefault();
+        close();
+        break;
+      case "Tab":
+        setIsOpen(false);
+        break;
+    }
+  }
+
   return (
-    <div ref={ref} className="relative">
+    <div ref={ref} className="relative" onKeyDown={handleKeyDown}>
       <button
-        onClick={() => setIsOpen((v) => !v)}
+        ref={triggerRef}
+        onClick={() => (isOpen ? close() : open())}
         className={cn(
           "h-9 px-3 pr-8 rounded-lg text-sm font-mono cursor-pointer relative",
           "transition-all focus:outline-none focus:ring-2 focus:ring-primary/30",
@@ -128,7 +187,12 @@ function FilterSelect({
 
       {isOpen && (
         <div
+          ref={listRef}
           role="listbox"
+          tabIndex={-1}
+          aria-activedescendant={
+            focusedIdx >= 0 ? `option-${options[focusedIdx].value}` : undefined
+          }
           className={cn(
             "absolute left-0 top-full mt-1.5 z-50",
             "min-w-[200px] max-h-[280px] overflow-y-auto",
@@ -136,22 +200,26 @@ function FilterSelect({
             "ring-1 ring-foreground/10 shadow-xl py-1",
           )}
         >
-          {options.map((o) => {
+          {options.map((o, idx) => {
             const isSelected = value === o.value;
+            const isFocused = focusedIdx === idx;
             return (
-              <button
+              <div
                 key={o.value}
+                id={`option-${o.value}`}
                 role="option"
                 aria-selected={isSelected}
+                onMouseEnter={() => setFocusedIdx(idx)}
                 onClick={() => {
                   onChange(o.value);
-                  setIsOpen(false);
+                  close();
                 }}
                 className={cn(
-                  "w-full flex items-center gap-2.5 px-3 py-2 text-sm font-mono text-left transition-colors",
+                  "w-full flex items-center gap-2.5 px-3 py-2 text-sm font-mono text-left cursor-pointer transition-colors",
                   isSelected
                     ? "bg-primary/10 text-primary font-semibold"
-                    : "text-popover-foreground hover:bg-accent/50",
+                    : "text-popover-foreground",
+                  isFocused && !isSelected && "bg-accent/50",
                 )}
               >
                 <span
@@ -163,7 +231,7 @@ function FilterSelect({
                   <Check className="h-3.5 w-3.5" />
                 </span>
                 {o.label}
-              </button>
+              </div>
             );
           })}
         </div>
