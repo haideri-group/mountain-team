@@ -194,14 +194,16 @@ export async function runReleaseSync(): Promise<{ logId: string; result: Release
 // ─── Auto-discover unknown releases from issue fixVersions ───────────────────
 
 /**
- * Called after an issue is synced (e.g., via webhook). Checks if any of the
- * issue's fixVersion names are unknown to our jira_releases table, and if so,
- * fetches the project's versions from JIRA to discover the new release.
+ * Called after an issue is synced (e.g., via webhook). Fetches the project's
+ * versions from JIRA and upserts any that match the issue's fixVersions.
  *
- * This ensures that when a product owner creates a new release and assigns a
- * task to it, our app auto-discovers the release on the next webhook event.
+ * This ensures:
+ * - New releases are auto-discovered when a task is first assigned to them
+ * - Existing release data (released status, dates, issue counts) is refreshed
+ *   when any task in that release changes status (e.g., moved to Done)
+ * - Release marked as "Released" by product owner is picked up automatically
  */
-export async function ensureReleasesExist(
+export async function refreshReleasesForIssue(
   fixVersionsJson: string | null,
   projectKey: string,
 ): Promise<void> {
@@ -216,23 +218,13 @@ export async function ensureReleasesExist(
 
   if (!Array.isArray(versionNames) || versionNames.length === 0) return;
 
-  // Check which versions are already known
-  const existing = await db
-    .select({ name: jiraReleases.name })
-    .from(jiraReleases)
-    .where(inArray(jiraReleases.name, versionNames));
-
-  const knownNames = new Set(existing.map((r) => r.name));
-  const unknown = versionNames.filter((n) => !knownNames.has(n));
-
-  if (unknown.length === 0) return;
-
-  // Fetch versions for this project to discover the new ones
   try {
     const versions = await fetchProjectVersions(projectKey);
+    const targetNames = new Set(versionNames);
 
     for (const v of versions) {
-      if (!unknown.includes(v.name)) continue;
+      // Upsert all versions matching the issue's fixVersions
+      if (!targetNames.has(v.name)) continue;
       if (v.archived) continue;
 
       const issueStatus = v.issuesStatusForFixVersion || {};
@@ -262,6 +254,7 @@ export async function ensureReleasesExist(
         .onDuplicateKeyUpdate({
           set: {
             name: v.name,
+            description: v.description || null,
             releaseDate: v.releaseDate || null,
             released: v.released,
             overdue: v.overdue || false,
@@ -273,6 +266,6 @@ export async function ensureReleasesExist(
         });
     }
   } catch {
-    // Non-fatal — release will be discovered on next full sync
+    // Non-fatal — release will be refreshed on next sync
   }
 }

@@ -6,7 +6,7 @@ import { discoverCustomFieldIds } from "@/lib/jira/issues";
 import { normalizeIssue } from "@/lib/jira/normalizer";
 import { applyCycleTimeLogic, buildIssueUpsertFields } from "@/lib/sync/issue-sync";
 import { generateNotificationForIssue } from "@/lib/notifications/generator";
-import { ensureReleasesExist } from "@/lib/sync/release-sync";
+import { refreshReleasesForIssue } from "@/lib/sync/release-sync";
 import type { JiraIssueRaw } from "@/lib/jira/issues";
 
 // Helper: log webhook event for diagnostics
@@ -157,7 +157,7 @@ export async function POST(request: Request) {
 
     // Auto-discover new releases from fixVersions (also refreshes existing release status)
     try {
-      await ensureReleasesExist(normalized.fixVersions, normalized.projectKey);
+      await refreshReleasesForIssue(normalized.fixVersions, normalized.projectKey);
     } catch {
       // Non-fatal — releases will sync on next cron
     }
