@@ -4,6 +4,7 @@ import { db } from "@/lib/db";
 import { deployments, issues, boards, team_members, githubRepos, githubBranchMappings } from "@/lib/db/schema";
 import { eq, and, desc, gte, inArray, isNotNull, notInArray, sql } from "drizzle-orm";
 import { withResolvedAvatars } from "@/lib/db/helpers";
+import type { Mismatch, PendingRelease, SiteStatus } from "@/components/deployments/types";
 import { APP_TIMEZONE } from "@/lib/config";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -120,7 +121,7 @@ export async function GET(request: Request) {
 
     // Status mismatches: deployed to production but status not post_live/done/closed
     const EXPECTED_POST_DEPLOY = ["post_live_testing", "done", "closed"];
-    const mismatchList: any[] = [];
+    const mismatchList: Mismatch[] = [];
     const seenMismatchKeys = new Set<string>();
 
     for (const d of allDeployments) {
@@ -186,8 +187,8 @@ export async function GET(request: Request) {
 
     // Avg days in staging for pending releases
     const pendingDays: number[] = [];
-    const pendingReleases: any[] = [];
-    const pendingDedup = new Map<string, any>();
+    const pendingReleases: PendingRelease[] = [];
+    const pendingDedup = new Map<string, PendingRelease>();
 
     for (const d of allDeployments) {
       if (d.environment !== "staging") continue;
@@ -315,7 +316,7 @@ export async function GET(request: Request) {
     });
 
     // ── Site overview (latest per site per environment) ─────────────────
-    const siteOverview: any[] = [];
+    const siteOverview: SiteStatus[] = [];
     for (const siteName of siteNames) {
       const siteDeployments = allDeployments.filter((d) => d.siteName === siteName);
       const latestStaging = siteDeployments.find((d) => d.environment === "staging");
