@@ -71,7 +71,7 @@ const CHART_GUIDES = {
     description:
       "Hours logged by each developer from JIRA worklogs and Time Doctor (when configured).",
     bullets: [
-      "Blue represents time logged against JIRA issues. Amber represents other tracked time.",
+      "Orange bars represent time logged against JIRA issues. Amber represents other tracked time (when Time Doctor is configured).",
       "Toggle between This Week and This Month to change the time range.",
       "A warning icon next to a developer means they logged zero hours in the period.",
     ],
