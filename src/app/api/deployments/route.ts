@@ -307,13 +307,8 @@ export async function GET(request: Request) {
       else if (d.environment === "staging" && current !== "production") deployStatusMap.set(d.jiraKey, "staging");
     }
 
-    // Per-pipeline-issue deployed sites (from all deployments, not just filtered)
+    // Per-pipeline-issue deployed sites (fetch from full deployment table, not the limited select above)
     const pipelineDeployedSites = new Map<string, string[]>();
-    for (const d of pipelineDeployments) {
-      if (d.environment !== "production" && d.environment !== "canonical") continue;
-      // d only has jiraKey and environment from the select — need siteName from full deployments
-    }
-    // Fetch production site names for pipeline issues from full deployment table
     const pipelineProdSites = pipelineKeys.length > 0
       ? await db
           .select({ jiraKey: deployments.jiraKey, siteName: deployments.siteName })
