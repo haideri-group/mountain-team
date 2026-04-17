@@ -4,6 +4,7 @@ import { db } from "@/lib/db";
 import { worklogs, timedoctorEntries, team_members } from "@/lib/db/schema";
 import { eq, and, gte, inArray } from "drizzle-orm";
 import { APP_TIMEZONE } from "@/lib/config";
+import { withResolvedAvatars } from "@/lib/db/helpers";
 
 function getPKTDateString(date: Date): string {
   return date.toLocaleDateString("en-CA", { timeZone: APP_TIMEZONE });
@@ -63,14 +64,14 @@ export async function GET(request: Request) {
       ? and(inArray(team_members.status, ["active", "on_leave"]), eq(team_members.teamName, teamFilter))
       : inArray(team_members.status, ["active", "on_leave"]);
 
-    const members = await db
+    const members = withResolvedAvatars(await db
       .select({
         id: team_members.id,
         displayName: team_members.displayName,
         avatarUrl: team_members.avatarUrl,
       })
       .from(team_members)
-      .where(memberFilter);
+      .where(memberFilter));
 
     if (members.length === 0) {
       return NextResponse.json({ members: [], teamTotal: 0, teamDailyAvg: 0, hasTimeDoctorData: false });
