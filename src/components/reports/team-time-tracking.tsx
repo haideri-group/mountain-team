@@ -3,16 +3,8 @@
 import { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { Clock, AlertTriangle } from "lucide-react";
-import {
-  BarChart,
-  Bar,
-  XAxis,
-  YAxis,
-  Tooltip,
-  ResponsiveContainer,
-  type TooltipContentProps,
-} from "recharts";
-import type { ValueType, NameType } from "recharts/types/component/DefaultTooltipContent";
+import { ChartInfo } from "./chart-info";
+import { formatDuration as formatTime } from "@/lib/utils";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -36,8 +28,6 @@ interface TimeTrackingReport {
   hasTimeDoctorData: boolean;
 }
 
-import { formatDuration as formatTime } from "@/lib/utils";
-
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 function getInitials(name: string): string {
@@ -47,38 +37,6 @@ function getInitials(name: string): string {
     .join("")
     .substring(0, 2)
     .toUpperCase();
-}
-
-// ─── Custom Tooltip ──────────────────────────────────────────────────────────
-
-function ChartTooltip({ active, payload }: TooltipContentProps<ValueType, NameType>) {
-  if (!active || !payload?.length) return null;
-  const data = payload[0]?.payload as MemberTime & { jiraHours: number; otherHours: number } | undefined;
-  if (!data) return null;
-
-  return (
-    <div className="bg-popover/95 backdrop-blur-xl rounded-lg ring-1 ring-foreground/10 shadow-lg px-3 py-2 space-y-1">
-      <p className="text-xs font-bold font-mono">{data.displayName}</p>
-      {data.jiraHours > 0 && (
-        <div className="flex items-center gap-2">
-          <span className="h-2 w-2 rounded-full bg-primary shrink-0" />
-          <span className="text-[10px] font-mono">Issues: {formatTime(data.jiraSeconds)}</span>
-        </div>
-      )}
-      {data.otherHours > 0 && (
-        <div className="flex items-center gap-2">
-          <span className="h-2 w-2 rounded-full bg-amber-500 shrink-0" />
-          <span className="text-[10px] font-mono">Other: {formatTime(data.otherSeconds)}</span>
-        </div>
-      )}
-      <p className="text-xs font-bold font-mono pt-0.5 border-t border-foreground/5">
-        Total: {formatTime(data.totalSeconds)}
-      </p>
-      <p className="text-[10px] text-muted-foreground">
-        {data.daysLogged}/{data.daysInPeriod} working days
-      </p>
-    </div>
-  );
 }
 
 // ─── Component ───────────────────────────────────────────────────────────────
@@ -109,9 +67,11 @@ export function TeamTimeTracking({ team }: { team?: string }) {
 
   if (loading) {
     return (
-      <div className="bg-card rounded-xl p-5 animate-pulse space-y-4">
+      <div className="bg-card rounded-xl p-5 animate-pulse space-y-3">
         <div className="h-4 w-48 bg-muted rounded" />
-        <div className="h-48 bg-muted/50 rounded-xl" />
+        {[1, 2, 3, 4, 5].map((i) => (
+          <div key={i} className="h-10 bg-muted/30 rounded-lg" />
+        ))}
       </div>
     );
   }
@@ -124,6 +84,7 @@ export function TeamTimeTracking({ team }: { team?: string }) {
           <h3 className="text-[10px] font-bold font-mono uppercase tracking-wider text-muted-foreground">
             Team Time Tracking
           </h3>
+          <ChartInfo chartId="timeTracking" />
         </div>
         <div className="flex flex-col items-center gap-2 py-8">
           <Clock className="h-8 w-8 text-muted-foreground/30" />
@@ -134,16 +95,7 @@ export function TeamTimeTracking({ team }: { team?: string }) {
   }
 
   const { hasTimeDoctorData } = data;
-
-  // Chart data
-  const chartData = data.members.map((m) => ({
-    ...m,
-    jiraHours: m.jiraSeconds / 3600,
-    otherHours: m.otherSeconds / 3600,
-    totalHours: m.totalSeconds / 3600,
-    name: m.displayName.split(" ")[0],
-  }));
-  const maxHours = Math.max(...chartData.map((d) => d.jiraHours + d.otherHours), 1);
+  const maxSeconds = Math.max(...data.members.map((m) => m.totalSeconds), 1);
 
   return (
     <div className="bg-card rounded-xl p-5 space-y-4">
@@ -154,8 +106,9 @@ export function TeamTimeTracking({ team }: { team?: string }) {
           <h3 className="text-[10px] font-bold font-mono uppercase tracking-wider text-muted-foreground">
             Team Time Tracking
           </h3>
+          <ChartInfo chartId="timeTracking" />
           {hasTimeDoctorData && (
-            <div className="flex items-center gap-3 ml-3">
+            <div className="flex items-center gap-3 ml-2">
               <div className="flex items-center gap-1.5">
                 <span className="h-2 w-2 rounded-full bg-primary" />
                 <span className="text-[9px] font-mono text-muted-foreground">Issues</span>
@@ -170,6 +123,7 @@ export function TeamTimeTracking({ team }: { team?: string }) {
         <div className="flex items-center gap-0 rounded-full bg-muted/30 p-0.5">
           {(["week", "month"] as const).map((p) => (
             <button
+              type="button"
               key={p}
               onClick={() => setPeriod(p)}
               className={`px-3 py-1 rounded-full text-[10px] font-bold font-mono uppercase tracking-wider transition-all ${
@@ -184,94 +138,61 @@ export function TeamTimeTracking({ team }: { team?: string }) {
         </div>
       </div>
 
-      {/* Stacked Bar Chart */}
-      <div className="h-56">
-        <ResponsiveContainer width="100%" height="100%">
-          <BarChart
-            data={chartData}
-            layout="vertical"
-            margin={{ top: 0, right: 10, bottom: 0, left: 0 }}
-          >
-            <XAxis
-              type="number"
-              tick={{ fontSize: 9, fontFamily: "var(--font-mono)" }}
-              tickLine={false}
-              axisLine={false}
-              domain={[0, Math.ceil(maxHours)]}
-              tickFormatter={(v) => `${v}h`}
-            />
-            <YAxis
-              type="category"
-              dataKey="name"
-              tick={{ fontSize: 10, fontFamily: "var(--font-mono)" }}
-              tickLine={false}
-              axisLine={false}
-              width={70}
-            />
-            <Tooltip content={(props) => <ChartTooltip {...props} />} cursor={{ fill: "var(--color-muted)", opacity: 0.2 }} />
-            <Bar
-              dataKey="jiraHours"
-              stackId="time"
-              radius={hasTimeDoctorData ? [0, 0, 0, 0] : [0, 4, 4, 0]}
-              maxBarSize={20}
-              className="fill-primary/70"
-            />
-            {hasTimeDoctorData && (
-              <Bar
-                dataKey="otherHours"
-                stackId="time"
-                radius={[0, 4, 4, 0]}
-                maxBarSize={20}
-                className="fill-amber-500/50"
-              />
-            )}
-          </BarChart>
-        </ResponsiveContainer>
-      </div>
-
-      {/* Team Members Table */}
-      <div className="space-y-1">
+      {/* Member Rows with Inline Bars */}
+      <div className="space-y-1.5">
         {data.members.map((m) => {
           const noTime = m.totalSeconds === 0;
+          const jiraPct = maxSeconds > 0 ? (m.jiraSeconds / maxSeconds) * 100 : 0;
+          const otherPct = maxSeconds > 0 ? (m.otherSeconds / maxSeconds) * 100 : 0;
+
           return (
             <div
               key={m.memberId}
               onClick={() => router.push(`/members/${m.memberId}`)}
-              className="flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-muted/20 cursor-pointer transition-colors"
+              className="flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-muted/20 cursor-pointer transition-colors group"
             >
+              {/* Avatar */}
               {m.avatarUrl ? (
-                <img src={m.avatarUrl} alt="" className="h-6 w-6 rounded-full object-cover shrink-0" />
+                <img src={m.avatarUrl} alt="" className="h-7 w-7 rounded-full object-cover shrink-0" />
               ) : (
-                <div className="h-6 w-6 rounded-full bg-muted/50 flex items-center justify-center text-[8px] font-bold font-mono text-muted-foreground shrink-0">
+                <div className="h-7 w-7 rounded-full bg-muted/50 flex items-center justify-center text-[9px] font-bold font-mono text-muted-foreground shrink-0">
                   {getInitials(m.displayName)}
                 </div>
               )}
 
-              <span className="text-xs font-mono font-semibold flex-1 truncate">
+              {/* Name */}
+              <span className="text-xs font-mono font-semibold shrink-0 w-[130px] truncate group-hover:text-primary transition-colors">
                 {m.displayName}
               </span>
 
-              {/* Split columns when TD data exists */}
-              {hasTimeDoctorData ? (
-                <>
-                  <span className="text-[10px] font-mono text-primary shrink-0 min-w-[44px] text-right">
-                    {formatTime(m.jiraSeconds)}
-                  </span>
-                  <span className="text-[10px] font-mono text-amber-500 shrink-0 min-w-[44px] text-right">
-                    {m.otherSeconds > 0 ? formatTime(m.otherSeconds) : "—"}
-                  </span>
-                </>
-              ) : (
-                <span className="text-[10px] font-mono text-muted-foreground shrink-0">
-                  {m.daysLogged}/{m.daysInPeriod}d
-                </span>
-              )}
+              {/* Inline Bar */}
+              <div className="flex-1 h-5 rounded-full bg-muted/20 overflow-hidden flex">
+                {jiraPct > 0 && (
+                  <div
+                    className="h-full bg-primary/70 transition-all duration-300"
+                    style={{ width: `${jiraPct}%` }}
+                  />
+                )}
+                {hasTimeDoctorData && otherPct > 0 && (
+                  <div
+                    className="h-full bg-amber-500/50 transition-all duration-300"
+                    style={{ width: `${otherPct}%` }}
+                  />
+                )}
+              </div>
 
+              {/* Days logged */}
+              <span className="text-[10px] font-mono text-muted-foreground shrink-0 w-[32px] text-right">
+                {m.daysLogged}/{m.daysInPeriod}d
+              </span>
+
+              {/* Warning if no time */}
               {noTime && (
                 <AlertTriangle className="h-3.5 w-3.5 text-amber-500 shrink-0" />
               )}
 
-              <span className={`text-xs font-bold font-mono shrink-0 min-w-[52px] text-right ${noTime ? "text-muted-foreground/50" : ""}`}>
+              {/* Total time */}
+              <span className={`text-xs font-bold font-mono shrink-0 w-[60px] text-right ${noTime ? "text-muted-foreground/50" : ""}`}>
                 {formatTime(m.totalSeconds)}
               </span>
             </div>
