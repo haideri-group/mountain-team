@@ -179,7 +179,7 @@ export async function syncWorklogs(sinceDays = 7): Promise<WorklogSyncResult> {
   const baseUrl = getBaseUrl();
   const searchUrl = `${baseUrl}/rest/api/3/search/jql`;
 
-  let issueKeys: string[] = [];
+  const issueKeys: string[] = [];
 
   try {
     let nextPageToken: string | undefined;
