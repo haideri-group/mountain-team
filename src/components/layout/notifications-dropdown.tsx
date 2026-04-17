@@ -235,7 +235,7 @@ export function NotificationsDropdown({ isAdmin = false }: { isAdmin?: boolean }
           <span
             aria-hidden="true"
             className={cn(
-              "absolute -top-0.5 -right-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-destructive px-0.5",
+              "absolute -top-0.5 -right-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-red-600 px-0.5",
               "text-[10px] font-bold font-mono text-white leading-none select-none",
             )}
           >
