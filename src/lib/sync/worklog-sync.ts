@@ -67,12 +67,19 @@ async function fetchIssueWorklogs(jiraKey: string): Promise<JiraWorklog[]> {
       headers: { Authorization: getAuthHeader(), Accept: "application/json" },
       cache: "no-store",
     });
-    if (!res.ok) break;
+    if (!res.ok) {
+      // First page failure = total loss — surface error to caller
+      if (page === 0) {
+        throw new Error(`Worklog fetch failed for ${jiraKey} (${res.status})`);
+      }
+      // Subsequent page failure — return partial data with warning
+      console.warn(`Worklog pagination incomplete for ${jiraKey} at page ${page} (${res.status})`);
+      break;
+    }
     const data: JiraWorklogResponse = await res.json();
     const worklogs = data.worklogs || [];
-    allWorklogs.push(...worklogs);
+    for (const wl of worklogs) allWorklogs.push(wl);
 
-    // Check if we've fetched all worklogs
     if (!data.total || allWorklogs.length >= data.total) break;
     startAt = allWorklogs.length;
   }
