@@ -217,7 +217,6 @@ export async function GET(
         totalClosed,
         onTimePercentage,
         avgCycleTime,
-        activePoints,
         deadlinesMet: onTime,
         deadlinesTotal: doneWithDue.length,
         workloadPercentage,

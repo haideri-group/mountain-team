@@ -7,7 +7,7 @@ interface StatsStripProps {
     totalTasks: number;
     onTimePercentage: number;
     avgCycleTime: number;
-    activePoints: number;
+    workloadPercentage: number;
     deadlinesMet: number;
     deadlinesTotal: number;
     tenure: string | null;
@@ -69,9 +69,16 @@ export function StatsStrip({ stats, isDeparted }: StatsStripProps) {
           value: `${stats.avgCycleTime}d`,
         },
         {
-          label: "Active Points",
-          value: `${stats.activePoints} pts`,
-          color: "text-primary",
+          label: "Workload",
+          value: `${stats.workloadPercentage}%`,
+          color:
+            stats.workloadPercentage > 100
+              ? "text-red-600"
+              : stats.workloadPercentage >= 80
+                ? "text-orange-500"
+                : stats.workloadPercentage >= 50
+                  ? "text-amber-500"
+                  : "text-emerald-500",
         },
         {
           label: "Deadlines Met",
