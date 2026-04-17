@@ -21,7 +21,7 @@ function PipelineColumn({
   color: string;
 }) {
   return (
-    <div className="flex flex-col min-w-[220px]">
+    <div className="flex flex-col min-w-[240px] flex-1">
       <div className={cn("flex items-center justify-between px-3 py-2 rounded-t-lg", color)}>
         <span className="text-[10px] font-bold font-mono uppercase tracking-wider text-foreground">
           {title}
@@ -30,7 +30,8 @@ function PipelineColumn({
           {tasks.length}
         </span>
       </div>
-      <div className="flex-1 bg-muted/10 rounded-b-lg p-2 space-y-1.5 min-h-[100px] max-h-[500px] overflow-y-auto overscroll-contain">
+      <div className="flex-1 bg-muted/10 rounded-b-lg p-2 space-y-1.5 min-h-[100px] max-h-[500px] overflow-y-auto overscroll-contain scrollbar-thin scrollbar-thumb-muted/40 scrollbar-track-transparent hover:scrollbar-thumb-muted/60"
+        style={{ scrollbarWidth: "thin", scrollbarColor: "var(--color-muted) transparent" }}>
         {tasks.length === 0 ? (
           <p className="text-[10px] text-muted-foreground/50 text-center py-4">No tasks</p>
         ) : (
@@ -93,7 +94,7 @@ export function DeploymentPipelineView({ pipeline }: {
   };
 }) {
   return (
-    <div className="flex gap-3 overflow-x-auto pb-2">
+    <div className="grid grid-cols-4 gap-3 overflow-x-auto pb-2">
       <PipelineColumn title="Ready for Testing" tasks={pipeline.readyForTesting} color="bg-amber-500/10" />
       <PipelineColumn title="Ready for Live" tasks={pipeline.readyForLive} color="bg-orange-500/10" />
       <PipelineColumn title="Rolling Out" tasks={pipeline.rollingOut} color="bg-emerald-500/10" />
