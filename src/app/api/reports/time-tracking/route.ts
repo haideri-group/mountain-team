@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { auth } from "@/auth";
 import { db } from "@/lib/db";
 import { worklogs, timedoctorEntries, team_members } from "@/lib/db/schema";
 import { eq, and, gte, inArray } from "drizzle-orm";
@@ -36,6 +37,11 @@ function countWorkingDays(start: Date, end: Date): number {
 
 export async function GET(request: Request) {
   try {
+    const session = await auth();
+    if (!session?.user) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
     const url = new URL(request.url);
     const period = url.searchParams.get("period") || "week";
     const teamFilter = url.searchParams.get("team") || "";

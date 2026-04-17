@@ -57,14 +57,27 @@ function parseComment(comment: JiraWorklog["comment"]): string | null {
 // ─── Fetch worklogs for a single issue ───────────────────────────────────────
 
 async function fetchIssueWorklogs(jiraKey: string): Promise<JiraWorklog[]> {
-  const url = `${getBaseUrl()}/rest/api/3/issue/${encodeURIComponent(jiraKey)}/worklog`;
-  const res = await fetchWithRetry(url, {
-    headers: { Authorization: getAuthHeader(), Accept: "application/json" },
-    cache: "no-store",
-  });
-  if (!res.ok) return [];
-  const data: JiraWorklogResponse = await res.json();
-  return data.worklogs || [];
+  const baseUrl = `${getBaseUrl()}/rest/api/3/issue/${encodeURIComponent(jiraKey)}/worklog`;
+  const allWorklogs: JiraWorklog[] = [];
+  let startAt = 0;
+
+  for (let page = 0; page < 10; page++) {
+    const url = `${baseUrl}?startAt=${startAt}&maxResults=1000`;
+    const res = await fetchWithRetry(url, {
+      headers: { Authorization: getAuthHeader(), Accept: "application/json" },
+      cache: "no-store",
+    });
+    if (!res.ok) break;
+    const data: JiraWorklogResponse = await res.json();
+    const worklogs = data.worklogs || [];
+    allWorklogs.push(...worklogs);
+
+    // Check if we've fetched all worklogs
+    if (!data.total || allWorklogs.length >= data.total) break;
+    startAt = allWorklogs.length;
+  }
+
+  return allWorklogs;
 }
 
 // ─── Upsert worklogs to DB ──────────────────────────────────────────────────
@@ -167,7 +180,7 @@ export async function syncWorklogs(sinceDays = 7): Promise<WorklogSyncResult> {
     let nextPageToken: string | undefined;
     const seen = new Set<string>();
 
-    for (let page = 0; page < 20; page++) {
+    for (let page = 0; page < 50; page++) {
       const body: Record<string, unknown> = {
         jql,
         fields: ["key"],

@@ -345,7 +345,7 @@ export function ReportsDashboard() {
       <div>
         <SectionLabel>Time Tracking</SectionLabel>
         <div className="mt-4">
-          <TeamTimeTracking team={selectedTeam || undefined} />
+          <TeamTimeTracking team={selectedTeam && selectedTeam !== "All" ? selectedTeam : undefined} />
         </div>
       </div>
 

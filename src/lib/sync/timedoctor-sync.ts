@@ -1,6 +1,6 @@
 import { db } from "@/lib/db";
 import { timedoctorEntries, team_members, syncLogs } from "@/lib/db/schema";
-import { eq, inArray, isNull, isNotNull } from "drizzle-orm";
+import { eq, inArray, isNull } from "drizzle-orm";
 import {
   isTimeDoctorConfigured,
   fetchTDUsers,
@@ -79,11 +79,12 @@ export async function syncTimeDoctorEntries(sinceDays = 7): Promise<TDSyncResult
     // Continue — we can still sync for already-matched users
   }
 
-  // Step 2: Load matched members
-  const matchedMembers = await db
+  // Step 2: Load matched active members (exclude departed)
+  const matchedMembers = (await db
     .select({ id: team_members.id, tdUserId: team_members.tdUserId })
     .from(team_members)
-    .where(isNotNull(team_members.tdUserId));
+    .where(inArray(team_members.status, ["active", "on_leave"])))
+    .filter((m) => m.tdUserId !== null);
 
   if (matchedMembers.length === 0) {
     result.errors.push("No team members matched with Time Doctor users");
@@ -141,6 +142,9 @@ export async function syncTimeDoctorEntries(sinceDays = 7): Promise<TDSyncResult
         })
         .onDuplicateKeyUpdate({
           set: {
+            memberId,
+            tdUserId,
+            started,
             durationSeconds,
             taskName: entry.taskName || null,
             projectName: entry.projectName || null,
