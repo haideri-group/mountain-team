@@ -175,7 +175,10 @@ export async function generateReleaseNotifications(): Promise<{
     byRelease.set(m.releaseId, list);
   }
 
-  // Batch: per-issue details for readiness
+  // Batch: per-issue details for readiness + per-issue jiraUpdatedAt which
+  // drives the `release_stale` freshness gate. `lastSyncedAt` on the release
+  // itself is not a usable signal here — the release-sync cron stamps it
+  // every run, so it's almost always "fresh" regardless of activity.
   const allKeys = [...new Set(memberships.map((m) => m.jiraKey))];
   const issueDetails = allKeys.length
     ? await db
@@ -185,6 +188,7 @@ export async function generateReleaseNotifications(): Promise<{
           assigneeId: issues.assigneeId,
           startDate: issues.startDate,
           jiraCreatedAt: issues.jiraCreatedAt,
+          jiraUpdatedAt: issues.jiraUpdatedAt,
         })
         .from(issues)
         .where(inArray(issues.jiraKey, allKeys))
@@ -309,17 +313,27 @@ export async function generateReleaseNotifications(): Promise<{
       }
     }
 
-    // 5. release_stale — 3+ stale in-progress tasks AND no movement in the
-    //    last 24h. Without the movement gate an actively-updating release
-    //    would keep firing this alert while work was still progressing.
-    const lastSync = r.lastSyncedAt ? r.lastSyncedAt.getTime() : null;
-    const movedRecently = lastSync === null ? false : lastSync >= oneDayAgo.getTime();
-    // "Moved recently" also considers whether any membership changed recently —
-    // a just-added / just-removed issue counts as real activity.
-    const membershipMoved = releaseMemberships.some(
-      (m) => m.addedAt.getTime() >= oneDayAgo.getTime(),
+    // 5. release_stale — 3+ stale in-progress tasks AND nothing in the
+    //    release has actually moved recently. The only reliable "movement"
+    //    signal is `issues.jiraUpdatedAt` on member issues: if the newest
+    //    updatedAt across the release is older than 24h, work genuinely
+    //    stalled. Using release.lastSyncedAt would be wrong — the cron
+    //    touches that timestamp daily regardless of activity.
+    let newestIssueUpdate = 0;
+    for (const key of keys) {
+      const i = issueMap.get(key);
+      const ts = i?.jiraUpdatedAt ? new Date(i.jiraUpdatedAt).getTime() : 0;
+      if (ts > newestIssueUpdate) newestIssueUpdate = ts;
+    }
+    // Membership change also counts as activity — a just-added issue is
+    // movement even if its status hasn't changed yet.
+    const newestMembershipChange = releaseMemberships.reduce(
+      (max, m) => Math.max(max, m.addedAt.getTime()),
+      0,
     );
-    const isStuck = issueCounts.staleInProgress >= 3 && !movedRecently && !membershipMoved;
+    const newestActivity = Math.max(newestIssueUpdate, newestMembershipChange);
+    const activityStale = newestActivity > 0 && newestActivity < oneDayAgo.getTime();
+    const isStuck = issueCounts.staleInProgress >= 3 && activityStale;
     if (isStuck) {
       if (!existing.has(dedupKey("release_stale", r.id))) {
         await createReleaseNotification({
