@@ -26,9 +26,10 @@ export function FilterSelect({ value, onChange, options, align = "left" }: Filte
   const instanceId = useId();
   const listboxId = `filter-listbox-${instanceId}`;
 
-  const selectedLabel = options.find((o) => o.value === value)?.label ?? options[0]?.label;
   const defaultValue = options[0]?.value ?? "";
-  const isFiltered = value !== defaultValue;
+  const normalizedValue = options.some((o) => o.value === value) ? value : defaultValue;
+  const selectedLabel = options.find((o) => o.value === normalizedValue)?.label ?? options[0]?.label;
+  const isFiltered = normalizedValue !== defaultValue;
 
   const close = useCallback(() => {
     setIsOpen(false);
