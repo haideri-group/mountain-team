@@ -253,7 +253,7 @@ export function ReleaseDetail({ releaseId }: { releaseId: string }) {
               {deployments.length}
             </span>
           </div>
-          <div className="bg-card rounded-xl divide-y divide-foreground/5">
+          <div className="bg-card rounded-xl overflow-hidden [&>*:nth-child(even)]:bg-muted/5">
             {deployments.slice(0, 50).map((d) => (
               <div
                 key={d.id}

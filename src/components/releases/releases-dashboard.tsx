@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Loader2, Package, TrendingUp, AlertTriangle } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { FilterSelect } from "@/components/shared/filter-select";
@@ -18,7 +18,13 @@ export function ReleasesDashboard() {
   const [status, setStatus] = useState<StatusFilter>("unreleased");
   const [project, setProject] = useState<string>("");
 
+  // Monotonic request id — when the user changes filters quickly, only the
+  // most recently started fetch is allowed to write state. Slower in-flight
+  // responses from stale filter selections are dropped.
+  const latestRequestId = useRef(0);
+
   const load = useCallback(async () => {
+    const requestId = ++latestRequestId.current;
     setLoading(true);
     setError(null);
     try {
@@ -30,12 +36,17 @@ export function ReleasesDashboard() {
       ]);
       if (!listRes.ok) throw new Error(`Failed to load releases (${listRes.status})`);
       if (!offRes.ok) throw new Error(`Failed to load off-release feed (${offRes.status})`);
-      setList(await listRes.json());
-      setOffRelease(await offRes.json());
+      const listJson = await listRes.json();
+      const offJson = await offRes.json();
+      // Bail out if the filter changed while we were waiting.
+      if (requestId !== latestRequestId.current) return;
+      setList(listJson);
+      setOffRelease(offJson);
     } catch (err) {
+      if (requestId !== latestRequestId.current) return;
       setError(err instanceof Error ? err.message : "Unknown error");
     } finally {
-      setLoading(false);
+      if (requestId === latestRequestId.current) setLoading(false);
     }
   }, [status, project]);
 

@@ -15,9 +15,14 @@ export async function GET(request: Request) {
     }
 
     const url = new URL(request.url);
-    const statusFilter = (url.searchParams.get("status") || "unreleased") as "unreleased" | "released" | "all";
+    const rawStatus = url.searchParams.get("status");
+    const statusFilter: "unreleased" | "released" | "all" =
+      rawStatus === "released" || rawStatus === "all" || rawStatus === "unreleased"
+        ? rawStatus
+        : "unreleased";
     const projectFilter = url.searchParams.get("project") || "";
-    const limit = Math.min(parseInt(url.searchParams.get("limit") || "50", 10), 200);
+    const rawLimit = Number.parseInt(url.searchParams.get("limit") || "50", 10);
+    const limit = Number.isFinite(rawLimit) && rawLimit > 0 ? Math.min(rawLimit, 200) : 50;
 
     // ── Fetch releases matching filters ─────────────────────────────────
     const whereClauses = [eq(jiraReleases.archived, false)];
@@ -213,23 +218,31 @@ export async function GET(request: Request) {
       .from(deployments)
       .where(gte(deployments.deployedAt, sevenDaysAgo));
 
+    // Align the off-release KPI with the feed's classification: a deployment
+    // counts as off-release when it's a hotfix OR the issue has no active
+    // release_issues membership. Basing this on the junction (not the raw
+    // fixVersions text) matches what `classifyDeployment` does downstream
+    // and catches issues whose fixVersions reference a release that isn't
+    // tracked/synced.
     const recentDepJiraKeys = [...new Set(recentDeps.map((d) => d.jiraKey))];
-    const recentIssues = recentDepJiraKeys.length
+    const memberRows = recentDepJiraKeys.length
       ? await db
-          .select({ jiraKey: issues.jiraKey, fixVersions: issues.fixVersions })
-          .from(issues)
-          .where(inArray(issues.jiraKey, recentDepJiraKeys))
+          .select({ jiraKey: releaseIssues.jiraKey })
+          .from(releaseIssues)
+          .where(
+            and(
+              inArray(releaseIssues.jiraKey, recentDepJiraKeys),
+              isNull(releaseIssues.removedAt),
+            ),
+          )
       : [];
-    const issueFixVersionMap = new Map(recentIssues.map((i) => [i.jiraKey, i.fixVersions]));
+    const hasKnownRelease = new Set(memberRows.map((r) => r.jiraKey));
 
     let offReleaseDeploys7d = 0;
     for (const d of recentDeps) {
-      if (d.isHotfix) {
+      if (d.isHotfix || !hasKnownRelease.has(d.jiraKey)) {
         offReleaseDeploys7d += 1;
-        continue;
       }
-      const fv = issueFixVersionMap.get(d.jiraKey);
-      if (!fv || fv === "[]") offReleaseDeploys7d += 1;
     }
 
     // Distinct project keys (for filter dropdown)

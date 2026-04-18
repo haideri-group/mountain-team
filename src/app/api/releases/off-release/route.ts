@@ -12,7 +12,7 @@ import { NextResponse } from "next/server";
 import { auth } from "@/auth";
 import { db } from "@/lib/db";
 import { deployments, issues, boards, team_members, releaseIssues } from "@/lib/db/schema";
-import { desc, gte, inArray, isNull } from "drizzle-orm";
+import { and, desc, gte, inArray, isNull } from "drizzle-orm";
 import { sanitizeErrorText } from "@/lib/jira/client";
 import { withResolvedAvatars } from "@/lib/db/helpers";
 import { classifyDeployment, type DeploymentCategory } from "@/lib/releases/classify";
@@ -58,12 +58,12 @@ export async function GET(request: Request) {
       : [];
     const issueMap = new Map(issueRows.map((i) => [i.jiraKey, i]));
 
-    // ── Known-release memberships (active) ──────────────────────────────
+    // ── Known-release memberships (active) — scoped to the deployments we loaded
     const membershipRows = jiraKeys.length
       ? await db
           .select({ jiraKey: releaseIssues.jiraKey })
           .from(releaseIssues)
-          .where(isNull(releaseIssues.removedAt))
+          .where(and(inArray(releaseIssues.jiraKey, jiraKeys), isNull(releaseIssues.removedAt)))
       : [];
     const inReleaseSet = new Set(membershipRows.map((m) => m.jiraKey));
 

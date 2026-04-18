@@ -23,18 +23,23 @@ export function PreReleaseChecklist({
   isAdmin: boolean;
 }) {
   const [items, setItems] = useState<ChecklistItem[] | null>(null);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [newLabel, setNewLabel] = useState("");
   const [busy, setBusy] = useState(false);
 
   const load = useCallback(async () => {
+    setLoading(true);
     try {
       const res = await fetch(`/api/releases/${releaseId}/checklist`, { cache: "no-store" });
       if (!res.ok) throw new Error(`Failed to load checklist (${res.status})`);
       const data = (await res.json()) as { items: ChecklistItem[] };
       setItems(data.items);
+      setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unknown error");
+    } finally {
+      setLoading(false);
     }
   }, [releaseId]);
 
@@ -135,11 +140,15 @@ export function PreReleaseChecklist({
 
       {error && <p className="text-xs text-destructive mb-2">{error}</p>}
 
-      {!items ? (
+      {loading && !items ? (
         <div className="flex items-center gap-2 text-xs text-muted-foreground">
           <Loader2 className="h-3 w-3 animate-spin" />
           Loading…
         </div>
+      ) : !items ? (
+        <p className="text-xs text-muted-foreground">
+          Unable to load checklist — try refreshing.
+        </p>
       ) : items.length === 0 ? (
         <p className="text-xs text-muted-foreground">No checklist items yet.</p>
       ) : (

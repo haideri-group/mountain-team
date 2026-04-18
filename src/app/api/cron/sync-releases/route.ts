@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { runReleaseSync } from "@/lib/sync/release-sync";
 import { generateReleaseNotifications } from "@/lib/notifications/release-generator";
+import { sanitizeErrorText } from "@/lib/jira/client";
 
 export async function GET(request: Request) {
   try {
@@ -19,7 +20,12 @@ export async function GET(request: Request) {
     try {
       notifCounts = await generateReleaseNotifications();
     } catch (err) {
-      console.error("Release notification generation failed (non-fatal):", err);
+      // Sanitize — the generator touches release/issue rows whose paths may
+      // echo upstream JIRA tokens when SQL driver errors bubble up.
+      console.error(
+        "Release notification generation failed (non-fatal):",
+        sanitizeErrorText(err instanceof Error ? err.message : String(err)),
+      );
     }
 
     return NextResponse.json({
@@ -31,10 +37,8 @@ export async function GET(request: Request) {
       notifications: notifCounts,
     });
   } catch (error) {
-    console.error("Cron release sync failed:", error);
-    return NextResponse.json(
-      { error: error instanceof Error ? error.message : "Sync failed" },
-      { status: 500 },
-    );
+    const message = sanitizeErrorText(error instanceof Error ? error.message : "Sync failed");
+    console.error("Cron release sync failed:", message);
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }

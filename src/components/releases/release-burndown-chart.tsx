@@ -13,6 +13,7 @@ import {
 import type { TooltipContentProps } from "recharts";
 import type { ValueType, NameType } from "recharts/types/component/DefaultTooltipContent";
 import { InfoButton } from "@/components/shared/info-modal";
+import { CHART_COLORS } from "@/lib/chart-colors";
 
 interface SnapshotPoint {
   date: string;
@@ -150,7 +151,7 @@ export function ReleaseBurndownChart({ releaseId }: { releaseId: string }) {
           <Line
             type="monotone"
             dataKey="Done"
-            stroke="#10b981"
+            stroke={CHART_COLORS.done}
             strokeWidth={2}
             dot={{ r: 2 }}
             activeDot={{ r: 4 }}
@@ -158,7 +159,7 @@ export function ReleaseBurndownChart({ releaseId }: { releaseId: string }) {
           <Line
             type="monotone"
             dataKey="In progress"
-            stroke="#f59e0b"
+            stroke={CHART_COLORS.inProgress}
             strokeWidth={2}
             dot={{ r: 2 }}
             activeDot={{ r: 4 }}
@@ -166,7 +167,7 @@ export function ReleaseBurndownChart({ releaseId }: { releaseId: string }) {
           <Line
             type="monotone"
             dataKey="To do"
-            stroke="#94a3b8"
+            stroke={CHART_COLORS.toDo}
             strokeWidth={2}
             dot={{ r: 2 }}
             activeDot={{ r: 4 }}

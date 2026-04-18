@@ -187,12 +187,16 @@ export async function GET(_request: Request, context: { params: Promise<{ id: st
       .reverse()
       .find((d) => d.environment === "production" || d.environment === "canonical");
 
-    // Scope-creep tracked members
-    const scopeCreep = memberships.filter((m) => {
-      const createdAt = release.createdAt ? new Date(release.createdAt).getTime() : 0;
-      const oneDay = 24 * 60 * 60 * 1000;
-      return m.addedAt.getTime() > createdAt + oneDay;
-    });
+    // Scope-creep tracked members. Skip classification entirely when the
+    // release has no creation timestamp — otherwise every membership gets
+    // compared against epoch and flagged as late-added.
+    const scopeCreep = release.createdAt
+      ? memberships.filter((m) => {
+          const createdAt = new Date(release.createdAt!).getTime();
+          const oneDay = 24 * 60 * 60 * 1000;
+          return m.addedAt.getTime() > createdAt + oneDay;
+        })
+      : [];
 
     // Readiness — compute from the same rows we've already loaded
     const stagingCount = activeKeys.filter((k) => stagingKeys.has(k)).length;

@@ -253,8 +253,12 @@ export function NotificationsDropdown({ isAdmin = false }: { isAdmin?: boolean }
 
     setIsOpen(false);
 
-    if (notif.relatedRelease?.id) {
-      router.push(`/releases/${notif.relatedRelease.id}`);
+    // Prefer the raw id — the joined `relatedRelease` object may be absent
+    // if the release row was archived/deleted after the notification fired,
+    // but the id alone is enough to deep-link.
+    const releaseId = notif.relatedRelease?.id ?? notif.relatedReleaseId;
+    if (releaseId) {
+      router.push(`/releases/${releaseId}`);
     } else if (notif.relatedIssue?.jiraKey) {
       router.push(`/issue/${notif.relatedIssue.jiraKey}`);
     } else if (notif.relatedMemberId) {

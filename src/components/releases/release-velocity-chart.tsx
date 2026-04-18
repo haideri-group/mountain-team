@@ -4,6 +4,7 @@ import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Toolti
 import type { TooltipContentProps } from "recharts";
 import type { ValueType, NameType } from "recharts/types/component/DefaultTooltipContent";
 import { InfoButton } from "@/components/shared/info-modal";
+import { CHART_COLORS } from "@/lib/chart-colors";
 
 interface WeekPoint {
   week: string; // "2026-W16"
@@ -22,7 +23,7 @@ function CustomTooltip({ active, payload, label }: TooltipContentProps<ValueType
     <div className="bg-popover ring-1 ring-foreground/10 shadow-lg rounded-lg px-3 py-2 min-w-[130px]">
       <p className="text-xs font-bold font-mono mb-1">{label}</p>
       <p className="text-xs text-muted-foreground">
-        <span className="font-semibold" style={{ color: "#ff8400" }}>
+        <span className="font-semibold" style={{ color: CHART_COLORS.brand }}>
           Released:
         </span>{" "}
         {payload[0]?.value}
@@ -70,7 +71,7 @@ export function ReleaseVelocityChart({ data }: { data: WeekPoint[] }) {
               content={(props) => <CustomTooltip {...props} />}
               cursor={{ fill: "var(--muted)", fillOpacity: 0.2 }}
             />
-            <Bar dataKey="Released" fill="#ff8400" radius={[4, 4, 0, 0]} />
+            <Bar dataKey="Released" fill={CHART_COLORS.brand} radius={[4, 4, 0, 0]} />
           </BarChart>
         </ResponsiveContainer>
       )}

@@ -105,7 +105,7 @@ export function OffReleaseFeed({ data, loading }: { data: OffReleaseResponse | n
           </p>
         </div>
       ) : (
-        <div className="bg-card rounded-xl divide-y divide-foreground/5">
+        <div className="bg-card rounded-xl overflow-hidden [&>*:nth-child(even)]:bg-muted/5">
           {filtered.map((d) => (
             <OffReleaseRow key={d.id} deployment={d} />
           ))}

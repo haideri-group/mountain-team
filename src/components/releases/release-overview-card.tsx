@@ -13,7 +13,11 @@ function formatDate(dateStr: string | null): string {
 }
 
 export function ReleaseOverviewCard({ release }: { release: ReleaseListItem }) {
-  const total = release.issuesTotal || release.memberCount;
+  // Total must come from issue buckets — falling back to `memberCount`
+  // (the junction count) can disagree with the bucket numbers and push
+  // progress bars past 100% or show "12/3 done".
+  const bucketSum = release.issuesDone + release.issuesInProgress + release.issuesToDo;
+  const total = release.issuesTotal > 0 ? release.issuesTotal : bucketSum;
   const donePct = total > 0 ? Math.round((release.issuesDone / total) * 100) : 0;
   const inProgressPct = total > 0 ? Math.round((release.issuesInProgress / total) * 100) : 0;
   const toDoPct = total > 0 ? Math.round((release.issuesToDo / total) * 100) : 0;

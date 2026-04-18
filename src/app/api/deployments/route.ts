@@ -486,30 +486,50 @@ export async function GET(request: Request) {
       labelToSites.set(label, existing);
     }
 
+    // Fetch all relevant deployments in ONE query, then partition in JS —
+    // O(1) roundtrips instead of 2×N across all configured sites. Ordered
+    // newest-first so the first match per (site, environment) is the latest.
+    const allConfiguredCodes = [...new Set([...labelToSites.values()].flat())];
+    const siteDeployRows = allConfiguredCodes.length
+      ? await db
+          .select({
+            siteName: deployments.siteName,
+            environment: deployments.environment,
+            jiraKey: deployments.jiraKey,
+            deployedAt: deployments.deployedAt,
+            branch: deployments.branch,
+          })
+          .from(deployments)
+          .where(
+            and(
+              inArray(deployments.environment, ["staging", "production"]),
+              inArray(deployments.siteName, allConfiguredCodes),
+            ),
+          )
+          .orderBy(desc(deployments.deployedAt))
+      : [];
+
+    // First-seen-per-(siteCode, environment) wins because of the ORDER BY.
+    const latestByCodeEnv = new Map<string, (typeof siteDeployRows)[0]>();
+    for (const d of siteDeployRows) {
+      if (!d.siteName) continue;
+      const key = `${d.siteName}:${d.environment}`;
+      if (!latestByCodeEnv.has(key)) latestByCodeEnv.set(key, d);
+    }
+
     const siteOverview: SiteStatus[] = [];
     for (const [label, codes] of [...labelToSites.entries()].sort((a, b) => a[0].localeCompare(b[0]))) {
-      // Latest staging (unbounded, indexed lookup per label's site codes)
-      const [latestStaging] = await db
-        .select({
-          jiraKey: deployments.jiraKey,
-          deployedAt: deployments.deployedAt,
-          branch: deployments.branch,
-        })
-        .from(deployments)
-        .where(and(eq(deployments.environment, "staging"), inArray(deployments.siteName, codes)))
-        .orderBy(desc(deployments.deployedAt))
-        .limit(1);
-
-      const [latestProd] = await db
-        .select({
-          jiraKey: deployments.jiraKey,
-          deployedAt: deployments.deployedAt,
-          branch: deployments.branch,
-        })
-        .from(deployments)
-        .where(and(eq(deployments.environment, "production"), inArray(deployments.siteName, codes)))
-        .orderBy(desc(deployments.deployedAt))
-        .limit(1);
+      // Pick the newest staging/production across the codes that share this label.
+      const pickLatest = (env: "staging" | "production") => {
+        let best: (typeof siteDeployRows)[0] | null = null;
+        for (const code of codes) {
+          const c = latestByCodeEnv.get(`${code}:${env}`);
+          if (c && (!best || c.deployedAt.getTime() > best.deployedAt.getTime())) best = c;
+        }
+        return best;
+      };
+      const latestStaging = pickLatest("staging");
+      const latestProd = pickLatest("production");
 
       const lastDeployCandidates = [latestStaging?.deployedAt, latestProd?.deployedAt].filter(
         (v): v is Date => v instanceof Date,

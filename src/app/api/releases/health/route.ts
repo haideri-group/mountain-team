@@ -9,7 +9,7 @@ import { NextResponse } from "next/server";
 import { auth } from "@/auth";
 import { db } from "@/lib/db";
 import { jiraReleases, releaseIssues } from "@/lib/db/schema";
-import { and, eq, gte, isNotNull, isNull, sql } from "drizzle-orm";
+import { and, eq, gte, inArray, isNotNull, isNull } from "drizzle-orm";
 import { sanitizeErrorText } from "@/lib/jira/client";
 
 function ymd(d: Date): string {
@@ -80,21 +80,32 @@ export async function GET() {
       .from(jiraReleases)
       .where(and(eq(jiraReleases.archived, false), eq(jiraReleases.released, false)));
 
+    // Single pass over active memberships — compare each row's addedAt
+    // against its release's creation cutoff in JS. One query instead of N.
+    const releasesWithCreatedAt = activeReleases.filter(
+      (r): r is typeof r & { createdAt: Date } => !!r.createdAt,
+    );
+    const activeIdsWithCreated = releasesWithCreatedAt.map((r) => r.id);
+    const cutoffByRelease = new Map(
+      releasesWithCreatedAt.map((r) => [r.id, r.createdAt.getTime() + 24 * 60 * 60 * 1000]),
+    );
+
+    const allActiveMemberships = activeIdsWithCreated.length
+      ? await db
+          .select({ releaseId: releaseIssues.releaseId, addedAt: releaseIssues.addedAt })
+          .from(releaseIssues)
+          .where(
+            and(
+              inArray(releaseIssues.releaseId, activeIdsWithCreated),
+              isNull(releaseIssues.removedAt),
+            ),
+          )
+      : [];
+
     let totalCreep = 0;
-    for (const r of activeReleases) {
-      if (!r.createdAt) continue;
-      const cutoff = new Date(r.createdAt.getTime() + 24 * 60 * 60 * 1000);
-      const rows = await db
-        .select({ c: sql<number>`COUNT(*)` })
-        .from(releaseIssues)
-        .where(
-          and(
-            eq(releaseIssues.releaseId, r.id),
-            isNull(releaseIssues.removedAt),
-            gte(releaseIssues.addedAt, cutoff),
-          ),
-        );
-      totalCreep += Number(rows[0]?.c ?? 0);
+    for (const m of allActiveMemberships) {
+      const cutoff = cutoffByRelease.get(m.releaseId);
+      if (cutoff !== undefined && m.addedAt.getTime() > cutoff) totalCreep += 1;
     }
     const scopeCreepRate =
       activeReleases.length > 0

@@ -17,11 +17,11 @@ async function main() {
   if (!process.env.DATABASE_URL) throw new Error("DATABASE_URL not set");
   const conn = await mysql.createConnection(process.env.DATABASE_URL);
 
-  // 10 most recent non-archived releases
+  // 10 most recent non-archived unreleased releases
   const [releases] = (await conn.query(
     `SELECT r.id, r.name, r.projectKey, r.releaseDate, r.released, r.createdAt
      FROM jira_releases r
-     WHERE r.archived = 0
+     WHERE r.archived = 0 AND r.released = 0
      ORDER BY r.releaseDate DESC
      LIMIT 10`,
   )) as [

@@ -17,7 +17,7 @@ export function ReleaseIssueList({ issues }: { issues: ReleaseDetailIssue[] }) {
   }
 
   return (
-    <div className="bg-card rounded-xl divide-y divide-foreground/5">
+    <div className="bg-card rounded-xl overflow-hidden [&>*:nth-child(even)]:bg-muted/5">
       {issues.map((i) => (
         <div key={i.jiraKey} className="flex items-center gap-3 px-4 py-3 hover:bg-muted/5 transition-colors">
           {i.issueType && <IssueTypeIcon type={i.issueType} size={14} />}

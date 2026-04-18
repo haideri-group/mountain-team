@@ -44,6 +44,10 @@ const CUSTOMER_GROUPS: Array<{ key: string; heading: string; types: string[] }> 
   { key: "fixes", heading: "Issues resolved", types: ["bug"] },
   { key: "improvements", heading: "Improvements", types: ["task"] },
   { key: "content", heading: "Content updates", types: ["cms_change"] },
+  // Catch-all so unexpected / future issue types still appear in customer
+  // notes instead of silently disappearing. Matched by `classify` when none
+  // of the above buckets claim the type.
+  { key: "other", heading: "Other changes", types: [] },
 ];
 
 function classify(type: string | null, groups: typeof INTERNAL_GROUPS): string {

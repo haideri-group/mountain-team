@@ -43,22 +43,67 @@ const RELEASE_TYPES: ReleaseNotificationType[] = [
   "release_stale",
 ];
 
-/** Load every unread release-scoped notification once, expose an in-memory
- *  check. Replaces per-release dedup queries — O(releases × types) DB roundtrips
- *  collapse to a single SELECT. */
-async function loadExistingUnread(): Promise<Set<string>> {
-  const rows = await db
-    .select({ type: notifications.type, releaseId: notifications.relatedReleaseId })
-    .from(notifications)
-    .where(
-      and(
-        inArray(notifications.type, RELEASE_TYPES),
-        eq(notifications.isRead, false),
-        isNotNull(notifications.relatedReleaseId),
-      ),
-    );
-  return new Set(rows.map((r) => `${r.type}:${r.releaseId}`));
+/** Types that should fire at most once per release for the lifetime of the
+ *  release. Marking them read should NOT allow a re-fire. */
+const ONE_SHOT_TYPES: ReadonlySet<ReleaseNotificationType> = new Set([
+  "release_deployed",
+  "release_ready",
+]);
+
+/** Types that can re-fire after a read if the underlying condition re-emerges. */
+const RECURRING_TYPES: ReadonlySet<ReleaseNotificationType> = new Set([
+  "release_overdue",
+  "release_scope_changed",
+  "release_stale",
+]);
+
+/**
+ * Load existing release-scoped notifications once, expose an in-memory check.
+ *
+ * One-shot types (ready/deployed) check the FULL history so marking them read
+ * doesn't cause re-fire. Recurring types (overdue/scope-changed/stale) check
+ * only unread rows so they re-fire if the admin dismissed and the condition
+ * still holds.
+ */
+async function loadExistingKeys(): Promise<Set<string>> {
+  const oneShotTypes = [...ONE_SHOT_TYPES] as ReleaseNotificationType[];
+  const recurringTypes = [...RECURRING_TYPES] as ReleaseNotificationType[];
+
+  const [oneShotRows, recurringRows] = await Promise.all([
+    oneShotTypes.length
+      ? db
+          .select({ type: notifications.type, releaseId: notifications.relatedReleaseId })
+          .from(notifications)
+          .where(
+            and(
+              inArray(notifications.type, oneShotTypes),
+              isNotNull(notifications.relatedReleaseId),
+            ),
+          )
+      : Promise.resolve([]),
+    recurringTypes.length
+      ? db
+          .select({ type: notifications.type, releaseId: notifications.relatedReleaseId })
+          .from(notifications)
+          .where(
+            and(
+              inArray(notifications.type, recurringTypes),
+              eq(notifications.isRead, false),
+              isNotNull(notifications.relatedReleaseId),
+            ),
+          )
+      : Promise.resolve([]),
+  ]);
+
+  const keys = new Set<string>();
+  for (const r of [...oneShotRows, ...recurringRows]) {
+    keys.add(`${r.type}:${r.releaseId}`);
+  }
+  return keys;
 }
+
+// Keep backward-compat export name used elsewhere in this file.
+const loadExistingUnread = loadExistingKeys;
 
 function dedupKey(type: ReleaseNotificationType, releaseId: string): string {
   return `${type}:${releaseId}`;
@@ -243,8 +288,8 @@ export async function generateReleaseNotifications(): Promise<{
       }
     }
 
-    // 4. release_scope_changed — any membership added in the last 24h
-    //    that is *also* > 1d after release creation (real scope creep).
+    // 4. release_scope_changed — membership added in the last 24h AND
+    //    > 1d after release creation (real scope creep). Copy matches window.
     const recentCreep = releaseMemberships.filter(
       (m) =>
         creepCutoff &&
@@ -256,7 +301,7 @@ export async function generateReleaseNotifications(): Promise<{
         await createReleaseNotification({
           type: "release_scope_changed",
           title: `Scope changed: ${r.name}`,
-          message: `${r.projectKey} · ${recentCreep.length} ${recentCreep.length === 1 ? "issue" : "issues"} added this week`,
+          message: `${r.projectKey} · ${recentCreep.length} ${recentCreep.length === 1 ? "issue" : "issues"} added in the last 24h`,
           releaseId: r.id,
         });
         existing.add(dedupKey("release_scope_changed", r.id));
@@ -264,14 +309,23 @@ export async function generateReleaseNotifications(): Promise<{
       }
     }
 
-    // 5. release_stale — 3+ stale in-progress tasks. Uses existing
-    //    staleInProgress signal from readiness counts.
-    if (issueCounts.staleInProgress >= 3) {
+    // 5. release_stale — 3+ stale in-progress tasks AND no movement in the
+    //    last 24h. Without the movement gate an actively-updating release
+    //    would keep firing this alert while work was still progressing.
+    const lastSync = r.lastSyncedAt ? r.lastSyncedAt.getTime() : null;
+    const movedRecently = lastSync === null ? false : lastSync >= oneDayAgo.getTime();
+    // "Moved recently" also considers whether any membership changed recently —
+    // a just-added / just-removed issue counts as real activity.
+    const membershipMoved = releaseMemberships.some(
+      (m) => m.addedAt.getTime() >= oneDayAgo.getTime(),
+    );
+    const isStuck = issueCounts.staleInProgress >= 3 && !movedRecently && !membershipMoved;
+    if (isStuck) {
       if (!existing.has(dedupKey("release_stale", r.id))) {
         await createReleaseNotification({
           type: "release_stale",
           title: `Stalled: ${r.name}`,
-          message: `${r.projectKey} · ${issueCounts.staleInProgress} tasks stuck in progress for 3+ days`,
+          message: `${r.projectKey} · ${issueCounts.staleInProgress} tasks stuck in progress for 3+ days, no updates in 24h`,
           releaseId: r.id,
         });
         existing.add(dedupKey("release_stale", r.id));
