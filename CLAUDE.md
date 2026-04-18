@@ -85,6 +85,8 @@ Route groups `(auth)` and `(dashboard)` use separate layouts. Dashboard layout i
 
 **Auth:** Auth.js v5 (NextAuth beta) with Google OAuth + Credentials providers. JWT session strategy. Two roles: `admin` (full access) and `user` (read-only, no Settings/Sync/Users). Google OAuth stores access token in JWT for Google Directory API access. Per-request DB check ensures deactivated users lose access immediately and role changes take effect instantly. Super-admin (`syed.haider@ki5.co.uk`) cannot be deactivated or demoted. New Google sign-ins default to `user` role.
 
+> **Note:** Two different fields are named `role`. `users.role` is the **auth role** above (`admin` | `user`). `team_members.role` is the **job title** (free-text, e.g. "Senior Frontend Developer"), sourced from Google Workspace Directory — it has no effect on permissions.
+
 **State management:** Client-side `useState` + `fetch()` for data. No TanStack Query hooks yet — components fetch from API routes directly.
 
 ## Security
@@ -146,6 +148,7 @@ Team members are **not manually managed** — they are auto-synced from the Atla
 - New members are auto-created with auto-assigned colors from palette
 - `displayName`, `email`, `avatarUrl`, `role` (job title) are updated from JIRA/Google on each sync
 - Admin-managed fields (`capacity`, `color`) are never overwritten by sync
+- `joinedDate` is set to the sync date when a member is first inserted — it reflects **when TeamFlow first observed the member, not real team tenure**. Shown on the member profile header (`/members/[id]`) but deliberately omitted from the listing to avoid misleading "tenure" readings
 - `on_leave` status is admin-managed, not affected by sync (unless member leaves the org)
 - Admin (Syed Haider Hassan) is excluded from sync via `/rest/api/3/myself`
 - Safety check: aborts if API returns 0 members but DB has active members
