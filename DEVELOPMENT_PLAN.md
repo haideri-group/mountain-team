@@ -732,14 +732,15 @@ GITHUB_WEBHOOK_SECRET=...      # Shared secret for webhook verification
 | Deployment pipeline component (issue sidebar) | ✅ Done | Visual Staging → Production → Main |
 | Deployment indicator component (dev cards) | ✅ Done | Rocket/server icons |
 | Webhook diagnostic logging | ✅ Done | webhook_logs table + /api/webhooks/logs |
-| **Settings UI: Add Repo panel (proper form)** | ❌ Rebuild | Owner/repo input + Detect Branches + manual mapping table + presets as quick-fill |
-| **Settings UI: Repos Manager (edit/expand)** | ❌ Rebuild | Expandable cards, edit mappings, progress-aware backfill |
-| **Backfill with live progress** | ❌ Rebuild | In-memory progress state, poll every 1s, progress bar in UI |
-| **Wire website/brands into normalizer + issue sync** | ❌ Pending | Extract JIRA custom fields during sync |
-| **Wire deployment status into overview API** | ❌ Pending | Batch query deployments, add to dev card data |
-| **Deployment notifications** | ❌ Pending | "Deployed to production" scoped by Website field |
-| **Pending releases report** | ❌ Pending | Staging-but-not-live table |
+| Settings UI: Add Repo panel (proper form) | ✅ Done | `components/settings/add-repo-panel.tsx` — owner/repo input, Detect Branches, mapping table, Frontend/Backend presets |
+| Settings UI: Repos Manager (edit/expand) | ✅ Done | `components/settings/github-repos-manager.tsx` — card list, webhook status, branch mappings grouped by env, delete + backfill buttons |
+| Backfill with live progress | ✅ Done | `lib/github/backfill.ts` — in-memory progress (`phase`, `prsScanned`, `prsTotal`, `deploymentsCreated`); UI polls 1s via `GET /api/github/repos/:id/backfill-progress` |
+| Wire website/brands into normalizer + issue sync | ✅ Done | `lib/jira/normalizer.ts:327-328` reads `customfield_10734` (website) + `customfield_10805` (brands); populated on every sync |
+| Wire deployment status into overview API | ✅ Done | `app/api/overview/route.ts:36-53` batches deployments, returns `deploymentStatus: "staging" \| "production" \| null` per issue (line 123) |
+| Deployment notifications | ✅ Done | `lib/notifications/generator.ts:261` `generateDeploymentNotification()` — called from `webhooks/github/route.ts:116` (deployment_status) and `:202` (PR merge); respects `deploymentNotifications` config toggle + dedup |
+| Pending releases report | ✅ Done | `components/deployments/pending-releases-table.tsx` + API `/api/deployments` returns `pendingReleases` array sorted by `daysPending`; rendered on Deployments dashboard |
 
+**Status:** ✅ Complete — all 18 items shipped.
 **Deliverable:** Per-task deployment visibility — know if any JIRA task is on staging, live, or main for each site
 **Verify:** Add a repo via Settings → Detect Branches → assign environments → Save. Click Backfill → watch progress bar. Visit issue detail → see deployment pipeline. Merge a PR to stage-tilemtn → TeamFlow shows "TM Staged" in real-time via webhook.
 
@@ -797,7 +798,9 @@ CLOUDFLARE_R2_PUBLIC_URL=https://cdn-teamflow.appz.cc
 ---
 
 ### Phase 10.8: Team Sync Progress Tracking
-**Duration:** 0.5-1 day | **Complexity:** Small
+**Duration:** 0.5-1 day | **Complexity:** Small | **Status:** 🟡 Not yet implemented
+
+Verified missing: `lib/sync/team-sync.ts` has no progress state, no `GET /api/sync/team-members?progress=1` endpoint exists, and `components/settings/team-sync-manager.tsx` shows sync button + final summary only (no polling).
 
 Add live progress bar to the Team Sync (Sync Now) button in Settings, matching the same pattern used by Issue Sync.
 
@@ -817,7 +820,9 @@ Add live progress bar to the Team Sync (Sync Now) button in Settings, matching t
 ---
 
 ### Phase 10.9: Users Management Page
-**Duration:** 2-3 days | **Complexity:** Medium
+**Duration:** 2-3 days | **Complexity:** Medium | **Status:** ✅ Complete
+
+Verified shipped: `/users` route (`app/(dashboard)/users/page.tsx`), `/api/users` + `/api/users/[id]` routes, super-admin protection, per-request DB re-check in `auth.config.ts`, "user_joined" notifications. Google auth providers tracked, activation/deactivation + role toggling live.
 
 Admin-only page to view and manage all application users, their roles, and account status.
 
@@ -875,7 +880,9 @@ Admin-only page to view and manage all application users, their roles, and accou
 ---
 
 ### Phase 10.10: Dynamic Status Management System
-**Duration:** 3-4 days | **Complexity:** Large
+**Duration:** 3-4 days | **Complexity:** Large | **Status:** ✅ Complete
+
+Verified shipped: `status_mappings` table in `lib/db/schema.ts`, `/api/status-mappings` + `/api/status-mappings/apply` routes, `components/settings/status-mapping-manager.tsx` UI, `issues.jiraStatusName` column populated on sync, normalizer is async and auto-creates unknown status rows with `statusCategory` fallback.
 
 Replace hardcoded JIRA status mapping with a database-driven, configurable system. Shows exact JIRA status names on badges while maintaining fixed workflow stages for calculations.
 
@@ -924,18 +931,89 @@ Replace hardcoded JIRA status mapping with a database-driven, configurable syste
 ---
 
 ### Phase 11: Polish + Deploy
-**Duration:** 3-4 days | **Complexity:** Large
+**Duration:** 3-4 days | **Complexity:** Large | **Status:** 🟡 Partially complete
 
-- Error boundaries per page section
-- Loading skeletons matching exact page layouts
-- Empty states for no-data scenarios
-- Performance: dynamic imports for Recharts, proper TanStack Query tuning, React.memo on heavy components
-- Railway deployment finalization (env vars, MySQL access, Auth.js redirect URIs)
-- Final visual polish (transitions, hover effects, animations)
-- Favicon, meta tags, Open Graph
+**Implementation status (verified against the code):**
+
+| Item | Status | Notes |
+|------|--------|-------|
+| Build + start scripts | ✅ Done | `package.json` has `build` / `start` — Next.js auto-detect on Railway works |
+| Empty states | ✅ Done | Most feature pages (overview, members, users, deployments, settings) render empty-state copy |
+| Railway deployment (env vars, DB, auth URIs) | ✅ Done | Live at `haider-team.appz.cc` — production DB on Railway, all env vars configured, Cronicle hitting `/api/cron/*` |
+| Error boundaries per route | ❌ Missing | Zero `error.tsx` files in `src/app/` |
+| Loading skeletons per route | ❌ Missing | Zero `loading.tsx` files; ad-hoc `Skeleton` primitives used inline only |
+| Recharts dynamic imports | ❌ Missing | Charts eagerly imported — impacts initial JS bundle on report/deployment pages |
+| Custom favicon | ❌ Missing | `public/` contains only default Next.js demo SVGs |
+| Open Graph metadata | ❌ Missing | `app/layout.tsx` has `title` + `description` only — no `og:image`, `og:url`, `twitter` tags |
+| `next.config.ts` `images.remotePatterns` | ❌ Missing | External avatars (Gravatar, `lh3.googleusercontent.com`, Atlassian CDN) not whitelisted — currently served via our R2 CDN which sidesteps the issue |
+| Transitions + hover polish sweep | 🟡 Ad-hoc | Many components polished, no systematic pass |
+| Lighthouse/perf audit | ❌ Missing | No measurement recorded |
+
+**Remaining work (genuinely pending):**
+- Error boundaries per major route section (dashboard, issue detail, reports, settings)
+- `loading.tsx` skeletons matching page layouts (overview, members, reports are the slow ones)
+- Dynamic imports for Recharts + `React.memo` on heavy chart components
+- Custom favicon set (favicon.ico, apple-touch-icon, Android icons)
+- Open Graph metadata export in root layout with og:image
+- `images.remotePatterns` in `next.config.ts` as defense-in-depth
+- Final Lighthouse pass targeting > 90 on main pages
 
 **Deliverable:** Production-ready deployment on Railway
-**Verify:** Lighthouse > 90, all error/loading states work, deployment live
+**Verify:** Lighthouse > 90, all error/loading states work, deployment live (deployment itself already live)
+
+---
+
+## 9a. Phases Completed Beyond Original Scope
+
+Work that landed in the codebase but wasn't in the original plan. Each verified against actual source — not aspirational.
+
+### Phase 12: Time Doctor Integration — ✅ Complete
+- `timedoctor_entries` table in schema, unique per `tdUserId`
+- `lib/timedoctor/client.ts` — login + worklog fetch
+- `lib/sync/timedoctor-sync.ts` — daily sync engine
+- `/api/cron/sync-timedoctor` — authed cron endpoint
+- Surfaces on the developer profile page's time-tracking view
+- Env vars: `TIMEDOCTOR_EMAIL`, `TIMEDOCTOR_PASSWORD`
+
+### Phase 13: JIRA Releases Tracking — ✅ Complete
+- `jira_releases` table in schema (16 columns including issueCount, release status, dates)
+- `lib/sync/release-sync.ts` — daily sync + on-demand from webhook
+- `/api/cron/sync-releases` + release discovery on JIRA webhook issue updates
+- Releases section on Deployments dashboard with collapsible upcoming/recent groups + filter + sort controls (PR #33, #34)
+- Rendered via `components/deployments/release-progress.tsx`
+
+### Phase 14: Workload Snapshots + Burnout Detection — ✅ Complete
+- `workload_snapshots` table for weekly capacity history
+- `lib/workload/snapshots.ts` — shared `calculateTaskWeight()` + `WORKLOAD_COUNTED_STATUSES`
+- Full `/workload` dashboard with capacity bars, burnout flags, trend sparklines
+- Workload-aware dev card sorting on the overview (highest-loaded first)
+
+### Phase 15: Dedicated Deployments Dashboard — ✅ Complete
+- `/deployments` route (`app/(dashboard)/deployments/page.tsx`)
+- `components/deployments/deployments-dashboard.tsx` — pipeline view, site overview, filters (environment/repo/site/board), status mismatches, recent deployments feed, release progress
+- `/api/deployments` endpoint returning pipeline + pending releases + site overview in one response
+
+### Phase 16: Password Reset Flow (PR #36) — ✅ Complete
+- `/forgot-password` + `/reset-password` pages (Summit Logic split-panel design)
+- `password_reset_tokens` table (SHA-256 hashed, single-use, 30-min expiry) + `users.passwordChangedAt`
+- `lib/auth/tokens.ts`, `lib/auth/rate-limit.ts` (3/user/hr, 10/IP/hr), `lib/auth/password-rules.ts` (8–50 chars)
+- `lib/email/client.ts` (nodemailer over STARTTLS to `mx.appz.cc`) + HTML email template
+- Atomic transaction for token consumption + password update + sibling token invalidation (inside a `db.transaction()` with `expiresAt > now` + `isActive = true` guards)
+- JWT session invalidation via `token.iat < passwordChangedAt` check in the 60s DB re-check
+- Cron cleanup at `/api/cron/cleanup-password-tokens`
+- Login page shows success banner on `?reset=success`
+
+### Phase 17: Shared FilterSelect Component (PR #35) — ✅ Complete
+- `components/shared/filter-select.tsx` — accessible dropdown with keyboard nav, normalized value handling for stale options, align left/right
+- Replaced inline filter dropdowns across multiple pages
+
+### Phase 18: Schema Migration Tooling (PR #39) — 🟡 Awaiting merge
+- `scripts/compare-schema.ts` — read-only deep audit (columns, types, nullability, defaults, PKs, FKs, indexes) against live DB
+- `scripts/migrate-password-reset.ts` + `scripts/migrate-webhook-logs.ts` — dry-run-by-default, `--apply` flag required for mutations, idempotent via `information_schema` checks
+- `webhook_logs` table added to drizzle schema (was orphan in DB, ~27k rows of diagnostic data preserved)
+- Pattern established for future schema changes: prefer scripted dry-run migrations over `yarn db:push` (which requires a TTY drizzle-kit can't always get and has destructive defaults on auto-detected renames)
+
+_Status will flip to ✅ Complete once PR #39 merges._
 
 ---
 
@@ -1160,22 +1238,35 @@ mountain-team/
 
 ## 13. Timeline Summary
 
-| Phase | What | Duration | Complexity |
-|-------|------|----------|------------|
-| 1 | Project Scaffolding | 0.5 days | Medium |
-| 2 | Design System + Layout | 2-3 days | Large |
-| 3 | Database Schema + MySQL | 1-2 days | Medium |
-| 4 | Auth System | 2-3 days | Large |
-| 5 | Mock Data Layer | 1-2 days | Medium |
-| 6 | Dashboard Screens (Overview + Profile + Calendar) | 5-7 days | Extra Large |
-| 7 | Management Screens (Members + Workload + Settings) | 3-4 days | Large |
-| 8 | Reports Page (12 chart components) | 4-5 days | Extra Large |
-| 9 | Interactive Features (Dropdowns + Notifications + Filters) | 3-4 days | Large |
-| 10 | JIRA Integration (Sync Engine + API Routes) | 5-7 days | Extra Large |
-| 11 | Polish + Vercel Deploy | 3-4 days | Large |
-| **Total** | | **30-42 days** | **6-8 weeks** |
+| Phase | What | Duration | Complexity | Status |
+|-------|------|----------|------------|--------|
+| 1 | Project Scaffolding | 0.5 days | Medium | ✅ Complete |
+| 2 | Design System + Layout | 2-3 days | Large | ✅ Complete |
+| 3 | Database Schema + MySQL | 1-2 days | Medium | ✅ Complete |
+| 4 | Auth System | 2-3 days | Large | ✅ Complete |
+| 5 | Mock Data Layer | 1-2 days | Medium | ✅ Complete (superseded by live JIRA sync) |
+| 6 | Dashboard Screens (Overview + Profile + Calendar) | 5-7 days | Extra Large | ✅ Complete |
+| 7 | Management Screens (Members + Workload + Settings) | 3-4 days | Large | ✅ Complete |
+| 8 | Reports Page (12 chart components) | 4-5 days | Extra Large | ✅ Complete |
+| 9 | Interactive Features (Dropdowns + Notifications + Filters) | 3-4 days | Large | ✅ Complete |
+| 10 | JIRA Integration (Sync Engine + API Routes) | 5-7 days | Extra Large | ✅ Complete |
+| 10.5 | Team Member Sync (Atlassian Teams API + Google Directory) | 2-3 days | Large | ✅ Complete |
+| 10.6 | GitHub Deployment Tracking | 5-7 days | Extra Large | ✅ Complete |
+| 10.7 | Cloudflare R2 Avatar Caching | 2-3 days | Medium | ✅ Complete |
+| 10.8 | Team Sync Progress Tracking | 0.5-1 day | Small | 🟡 Not yet implemented |
+| 10.9 | Users Management Page | 2-3 days | Medium | ✅ Complete |
+| 10.10 | Dynamic Status Management System | 3-4 days | Large | ✅ Complete |
+| 11 | Polish + Railway Deploy | 3-4 days | Large | 🟡 Partially complete (deployed; boundaries/skeletons/OG/favicon missing) |
+| 12 | Time Doctor Integration | — | — | ✅ Complete (beyond scope) |
+| 13 | JIRA Releases Tracking | — | — | ✅ Complete (beyond scope) |
+| 14 | Workload Snapshots + Burnout Detection | — | — | ✅ Complete (beyond scope) |
+| 15 | Dedicated Deployments Dashboard | — | — | ✅ Complete (beyond scope) |
+| 16 | Password Reset Flow (PR #36) | — | — | ✅ Complete (beyond scope) |
+| 17 | Shared FilterSelect Component (PR #35) | — | — | ✅ Complete (beyond scope) |
+| 18 | Schema Migration Tooling (PR #39) | — | — | 🟡 Awaiting merge (PR #39 open) |
+| **Total (original)** | | **30-42 days** | **6-8 weeks** | |
 
-**Note:** Phases 6, 7, and 8 can be parallelized since they all depend on Phase 5 (mock data). Phase 10 requires Phases 3 + 4. Phase 11 requires all prior phases.
+**Note:** Phases 6, 7, and 8 can be parallelized since they all depend on Phase 5 (mock data). Phase 10 requires Phases 3 + 4. Phase 11 requires all prior phases. Phases 12–18 were added to the scope during implementation as new requirements emerged.
 
 ---
 
