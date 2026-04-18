@@ -144,17 +144,19 @@ Team members are **not manually managed** — they are auto-synced from the Atla
 - Each member is tagged with their `teamId` and `teamName` from the Atlassian team
 - **In team = `active`**, **removed from team = `departed`**, **rejoining = re-activated**
 - New members are auto-created with auto-assigned colors from palette
-- `displayName`, `email`, `avatarUrl` are updated from JIRA/Google on each sync
-- Admin-managed fields (`capacity`, `role`, `color`) are never overwritten by sync
+- `displayName`, `email`, `avatarUrl`, `role` (job title) are updated from JIRA/Google on each sync
+- Admin-managed fields (`capacity`, `color`) are never overwritten by sync
 - `on_leave` status is admin-managed, not affected by sync (unless member leaves the org)
 - Admin (Syed Haider Hassan) is excluded from sync via `/rest/api/3/myself`
 - Safety check: aborts if API returns 0 members but DB has active members
 
 **Google Directory integration:**
-- When admin is signed in with Google OAuth, sync also matches emails + avatars from Google Workspace
-- Uses Google People API `searchDirectoryPeople` with `directory.readonly` scope
+- When admin is signed in with Google OAuth, sync also matches emails, avatars, and job titles from Google Workspace
+- Uses Google People API `searchDirectoryPeople` with `directory.readonly` scope — `readMask` includes `organizations` to pull job title (prefers `current: true`)
+- **Workspace is the source of truth for `team_members.role`.** Each sync overwrites role with the current Workspace title so Admin Console changes flow through. If Workspace has no title for a member, `role` is left unchanged (not blanked)
 - Multi-strategy name matching (full name → first+last → first only) with scoring
 - Inline email edit on Members page has autocomplete dropdown from Google Directory (300ms debounce, min 3 chars)
+- Editing a single member's email triggers a single-member directory lookup that also refreshes `role` and avatar — no full sync required, members table auto-refetches within 5s
 
 **Sync triggers:**
 - Daily cron at 06:00 UTC (`/api/cron/sync-teams`)
