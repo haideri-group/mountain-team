@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
+import { FilterSelect } from "@/components/shared/filter-select";
 import {
   ChevronLeft,
   ChevronRight,
@@ -79,34 +80,7 @@ const DEFAULT_FILTERS: Filters = { board: "", member: "", status: "" };
 
 // ─── FilterSelect ─────────────────────────────────────────────────────────────
 
-function FilterSelect({
-  value,
-  onChange,
-  options,
-}: {
-  value: string;
-  onChange: (v: string) => void;
-  options: { value: string; label: string }[];
-}) {
-  return (
-    <select
-      value={value}
-      onChange={(e) => onChange(e.target.value)}
-      className="h-8 px-3 pr-8 rounded-lg bg-muted/30 text-xs font-mono text-foreground appearance-none cursor-pointer focus:outline-none focus:ring-2 focus:ring-primary/30 transition-all"
-      style={{
-        backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%236b7280' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E")`,
-        backgroundRepeat: "no-repeat",
-        backgroundPosition: "right 8px center",
-      }}
-    >
-      {options.map((o) => (
-        <option key={o.value} value={o.value}>
-          {o.label}
-        </option>
-      ))}
-    </select>
-  );
-}
+// FilterSelect imported from @/components/shared/filter-select
 
 // ─── Main Component ───────────────────────────────────────────────────────────
 
