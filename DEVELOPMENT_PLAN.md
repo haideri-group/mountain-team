@@ -4,7 +4,7 @@
 **Product:** TeamFlow
 **Company:** Tile Mountain
 **Repository:** https://github.com/haidertm/team-flow
-**Last Updated:** April 10, 2026
+**Last Updated:** April 18, 2026
 
 ---
 
@@ -238,6 +238,74 @@ notifications
 ├── isRead: integer (boolean, default 0)
 └── createdAt: integer
 ```
+
+### 5.1a Phase 19 Additions — Releases Command Center
+
+New tables introduced to replace the read-time `JSON_CONTAINS(issues.fixVersions, …)` match, model coordinated multi-project releases, and drive release-readiness analytics.
+
+```
+release_issues (junction — replaces JSON_CONTAINS lookups)
+├── releaseId: text (FK → jira_releases.id)
+├── jiraKey: text (FK-by-convention → issues.jiraKey)
+├── addedAt: integer
+├── removedAt: integer (nullable — soft-removal for scope-creep audit)
+├── PRIMARY KEY (releaseId, jiraKey)
+└── INDEX (jiraKey)  -- "which releases is this issue in?"
+
+release_bundles (TeamFlow-native grouping across JIRA projects)
+├── id: text (cuid, PK)
+├── name: text (e.g., "Q2 Tile Mountain Launch")
+├── description: text
+├── targetDate: text (ISO date)
+├── status: text ('planning' | 'ready' | 'released' | 'cancelled')
+├── ownerUserId: text (FK → users.id, nullable)
+├── createdAt: integer
+└── releasedAt: integer (nullable)
+
+release_bundle_versions (which JIRA releases a bundle contains + order)
+├── bundleId: text (FK → release_bundles.id)
+├── releaseId: text (FK → jira_releases.id)
+├── deployOrder: integer (1 = BE first, 2 = FE follows)
+├── isBlocking: integer (boolean — dependency hint)
+└── PRIMARY KEY (bundleId, releaseId)
+
+deployment_acknowledgements (mutes known status mismatches)
+├── id: text (cuid, PK)
+├── jiraKey: text
+├── mismatchType: text
+├── reason: text
+├── ackedBy: text (FK → users.id)
+├── ackedAt: integer
+└── expiresAt: integer (nullable)
+
+release_daily_snapshots (drives burndown charts)
+├── releaseId: text (FK → jira_releases.id)
+├── date: text (ISO date)
+├── done: integer
+├── inProgress: integer
+├── toDo: integer
+├── staging: integer (count of issues deployed to staging)
+├── production: integer
+└── PRIMARY KEY (releaseId, date)
+
+release_checklist_items (pre-release checklist)
+├── id: text (cuid, PK)
+├── releaseId: text (FK → jira_releases.id)
+├── label: text
+├── isComplete: integer (boolean)
+├── completedBy: text (FK → users.id, nullable)
+├── completedAt: integer (nullable)
+└── sortOrder: integer
+```
+
+**Column additions to existing tables:**
+- `notifications.relatedReleaseId: text (nullable)` — so release-scoped notifications don't have to hang off an issue.
+- `notifications.type` enum extended with: `'release_overdue' | 'release_ready' | 'release_deployed' | 'release_scope_changed' | 'release_stale'`.
+- `jira_releases.lastSyncedAt: integer` — drives staleness indicator.
+- `jira_releases.ownerUserId: text (nullable)` — admin-assignable from TeamFlow (not synced from JIRA).
+- `deployments.releasedViaBundleId: text (nullable)` — back-link cached when a deployment's issue belongs to a bundle.
+
+---
 
 ### 5.2 Critical Business Rules
 - **Done vs Closed:** `done` = full development lifecycle completed (dev → QA → deploy). `closed` = task cancelled, no work done. Velocity and performance metrics count ONLY `done` tasks.
@@ -1015,6 +1083,24 @@ Work that landed in the codebase but wasn't in the original plan. Each verified 
 
 _Status will flip to ✅ Complete once PR #39 merges._
 
+### Phase 19: Releases Command Center — 🟡 In progress
+Makes `/releases` the single place a team lead sees what's shipping, what's blocking a release, and what's been deployed *outside* any release. Layered on top of existing JIRA Fix Versions — no JIRA refactor required.
+- Dedicated `/releases` landing page + `/releases/[id]` detail (`app/(dashboard)/releases/*`)
+- **In-Release vs Off-Release classifier** (`lib/releases/classify.ts`) categorising every deployment as In-Release / Hotfix / Untagged / Orphan — makes the "deployed without a fixVersion" gap visible
+- New tables: `release_issues` (junction, replaces `JSON_CONTAINS` lookups), `release_bundles`, `release_bundle_versions`, `deployment_acknowledgements`, `release_daily_snapshots`, `release_checklist_items`
+- New columns: `notifications.relatedReleaseId`, `jira_releases.lastSyncedAt`, `jira_releases.ownerUserId`, `deployments.releasedViaBundleId`
+- Release readiness scoring (0–100, deterministic, explainable) + burndown chart from daily snapshots
+- Scope-creep tracker (issues added/removed after release start via `release_issues.addedAt` / `removedAt`)
+- Release notes generator: internal dev changelog + customer-facing changelog, markdown export
+- New notification types: `release_overdue`, `release_ready`, `release_deployed`, `release_scope_changed`, `release_stale`
+- **Release Bundle** concept — coordinates multi-project releases (e.g., "Q2 Launch" = PROD 2.4 + BE 3.1 + BUTTERFLY 2.4) with deploy order + blocking flags. Models the reality that FE sometimes depends on a BE release landing the same day.
+- Bundled cleanup shipped with Phase A: mismatches 30-day-window leak fix, site-overview 30-day-window leak fix, new `closed_but_deployed` mismatch type, mismatch dedup bug (allow multiple mismatch types per `jiraKey`)
+- Industry alignment: keeps JIRA Fix Versions as source of truth (per-project); Release Bundle layers Program-Increment–style grouping on top without forcing a JIRA refactor
+- **Read-only vs JIRA for v1.** Writeback (mark-released, bulk-tag fixVersion, transition status) deferred to a later phase.
+- Phasing: **A Foundation** (pages + classifier + fixes) → **B Insights** (readiness + burndown + scope creep) → **C Collaboration** (notifications + notes + checklist) → **D Bundles** → **E Power features** (future).
+
+_Status will flip to ✅ Complete once Phases A–C ship. D and E tracked as future work._
+
 ---
 
 ## 10. Notification Types
@@ -1027,6 +1113,11 @@ _Status will flip to ✅ Complete once PR #39 merges._
 | Task Completed | Issue moved to `done` | Info (read style) | White (green icon, 50% opacity) |
 | Task Unblocked | Issue status changed from `blocked` | Info | White (blue icon) |
 | User Joined | New Google sign-in (first time) | Info | White (blue user icon) |
+| Release Overdue | Release past `releaseDate`, not released | Error | White (red Package icon) |
+| Release Ready | All issues done + staging coverage 100% | Info | White (green Package icon) |
+| Release Deployed | Marked released in JIRA OR full production coverage | Info (read style) | White (green Rocket icon, 50% opacity) |
+| Release Scope Changed | Issue added/removed after release start | Warning | White (amber Package icon) |
+| Release Stale | `in_progress` > 7d with < 10% release velocity | Warning | White (amber clock icon) |
 
 ---
 
@@ -1264,9 +1355,10 @@ mountain-team/
 | 16 | Password Reset Flow (PR #36) | — | — | ✅ Complete (beyond scope) |
 | 17 | Shared FilterSelect Component (PR #35) | — | — | ✅ Complete (beyond scope) |
 | 18 | Schema Migration Tooling (PR #39) | — | — | 🟡 Awaiting merge (PR #39 open) |
+| 19 | Releases Command Center (A Foundation → B Insights → C Collaboration → D Bundles) | — | — | 🟡 In progress |
 | **Total (original)** | | **30-42 days** | **6-8 weeks** | |
 
-**Note:** Phases 6, 7, and 8 can be parallelized since they all depend on Phase 5 (mock data). Phase 10 requires Phases 3 + 4. Phase 11 requires all prior phases. Phases 12–18 were added to the scope during implementation as new requirements emerged.
+**Note:** Phases 6, 7, and 8 can be parallelized since they all depend on Phase 5 (mock data). Phase 10 requires Phases 3 + 4. Phase 11 requires all prior phases. Phases 12–18 were added to the scope during implementation as new requirements emerged. Phase 19 (Releases Command Center) runs after Phase 18 merges and ships in three waves (A foundation, B insights, C collaboration), with Phase D (bundles) kicking off only after Phase A has been in use for ~2 weeks.
 
 ---
 

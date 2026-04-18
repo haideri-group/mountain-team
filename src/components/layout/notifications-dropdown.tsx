@@ -9,14 +9,27 @@ import {
   AlertTriangle,
   CheckCircle2,
   Rocket,
+  Package,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
-type NotificationType = "aging" | "overdue" | "capacity" | "completed" | "unblocked" | "deployed";
+type NotificationType =
+  | "aging"
+  | "overdue"
+  | "capacity"
+  | "completed"
+  | "unblocked"
+  | "deployed"
+  | "user_joined"
+  | "release_overdue"
+  | "release_ready"
+  | "release_deployed"
+  | "release_scope_changed"
+  | "release_stale";
 
-type TabKey = "all" | "aging" | "overdue" | "capacity" | "deployed";
+type TabKey = "all" | "aging" | "overdue" | "capacity" | "deployed" | "releases";
 
 interface RelatedIssue {
   jiraKey: string;
@@ -29,6 +42,12 @@ interface RelatedMember {
   avatarUrl: string | null;
 }
 
+interface RelatedRelease {
+  id: string;
+  name: string;
+  projectKey: string;
+}
+
 interface Notification {
   id: string;
   type: NotificationType;
@@ -36,10 +55,12 @@ interface Notification {
   message: string;
   relatedIssueId: string | null;
   relatedMemberId: string | null;
+  relatedReleaseId: string | null;
   isRead: boolean;
   createdAt: string;
   relatedIssue: RelatedIssue | null;
   relatedMember: RelatedMember | null;
+  relatedRelease: RelatedRelease | null;
 }
 
 interface NotificationsResponse {
@@ -84,6 +105,14 @@ function NotificationIcon({ type, isRead }: { type: NotificationType; isRead: bo
       return <CheckCircle2 className={cn(base, dimmed, "text-success")} />;
     case "deployed":
       return <Rocket className={cn(base, dimmed, "text-emerald-500")} />;
+    case "release_overdue":
+    case "release_stale":
+      return <AlertTriangle className={cn(base, dimmed, "text-amber-500")} />;
+    case "release_ready":
+    case "release_deployed":
+      return <Package className={cn(base, dimmed, "text-emerald-500")} />;
+    case "release_scope_changed":
+      return <Package className={cn(base, dimmed, "text-amber-500")} />;
     default:
       return <Bell className={cn(base, dimmed, "text-muted-foreground")} />;
   }
@@ -97,7 +126,16 @@ const ALL_TABS: { key: TabKey; label: string; adminOnly?: boolean }[] = [
   { key: "overdue", label: "Overdue" },
   { key: "capacity", label: "Capacity", adminOnly: true },
   { key: "deployed", label: "Deployed" },
+  { key: "releases", label: "Releases", adminOnly: true },
 ];
+
+const RELEASE_TYPE_SET: ReadonlySet<string> = new Set([
+  "release_overdue",
+  "release_ready",
+  "release_deployed",
+  "release_scope_changed",
+  "release_stale",
+]);
 
 // ─── Main Component ───────────────────────────────────────────────────────────
 
@@ -133,13 +171,20 @@ export function NotificationsDropdown({ isAdmin = false }: { isAdmin?: boolean }
   const fetchNotifications = useCallback(async (type?: string) => {
     setIsLoading(true);
     try {
-      const url = type && type !== "all"
-        ? `/api/notifications?type=${type}`
-        : "/api/notifications";
+      // "releases" is a client-side group (5 types); always fetch all for it
+      // and filter below. Everything else passes straight through to ?type=.
+      const url =
+        type && type !== "all" && type !== "releases"
+          ? `/api/notifications?type=${type}`
+          : "/api/notifications";
       const res = await fetch(url);
       if (!res.ok) return;
       const data: NotificationsResponse = await res.json();
-      setNotifications(data.notifications);
+      const list =
+        type === "releases"
+          ? data.notifications.filter((n) => RELEASE_TYPE_SET.has(n.type))
+          : data.notifications;
+      setNotifications(list);
       setUnreadCount(data.unreadCount);
     } catch {
       // Silent fail
@@ -208,7 +253,13 @@ export function NotificationsDropdown({ isAdmin = false }: { isAdmin?: boolean }
 
     setIsOpen(false);
 
-    if (notif.relatedIssue?.jiraKey) {
+    // Prefer the raw id — the joined `relatedRelease` object may be absent
+    // if the release row was archived/deleted after the notification fired,
+    // but the id alone is enough to deep-link.
+    const releaseId = notif.relatedRelease?.id ?? notif.relatedReleaseId;
+    if (releaseId) {
+      router.push(`/releases/${releaseId}`);
+    } else if (notif.relatedIssue?.jiraKey) {
       router.push(`/issue/${notif.relatedIssue.jiraKey}`);
     } else if (notif.relatedMemberId) {
       router.push(`/members/${notif.relatedMemberId}`);

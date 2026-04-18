@@ -7,6 +7,7 @@ import { normalizeIssue } from "@/lib/jira/normalizer";
 import { applyCycleTimeLogic, buildIssueUpsertFields } from "@/lib/sync/issue-sync";
 import { generateNotificationForIssue } from "@/lib/notifications/generator";
 import { refreshReleasesForIssue } from "@/lib/sync/release-sync";
+import { reconcileReleaseIssues } from "@/lib/releases/sync-release-issues";
 import type { JiraIssueRaw } from "@/lib/jira/issues";
 
 // Helper: log webhook event for diagnostics
@@ -161,6 +162,15 @@ export async function POST(request: Request) {
     } catch {
       // Non-fatal — releases will sync on next cron
     }
+
+    // Reconcile the release_issues junction against the now-persisted
+    // fixVersions. Idempotent — retries and re-fires of the same webhook
+    // converge on the correct state without needing a stable "old" snapshot.
+    await reconcileReleaseIssues(
+      normalized.jiraKey,
+      normalized.fixVersions,
+      normalized.projectKey,
+    );
 
     // Generate notification for this issue change
     try {

@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { cn } from "@/lib/utils";
 import type { SiteStatus } from "./types";
 
 function timeAgo(dateStr: string): string {
@@ -29,8 +30,25 @@ export function SiteOverviewTable({ sites }: { sites: SiteStatus[] }) {
           <tbody>
             {sites.map((site) => (
               <tr key={site.siteName} className="border-b border-foreground/5 last:border-0">
-                <td className="px-4 py-3 font-semibold text-foreground">
-                  {site.siteLabel || site.siteName}
+                <td className="px-4 py-3">
+                  <div className="flex items-center gap-2">
+                    <span className="font-semibold text-foreground">
+                      {site.siteLabel || site.siteName}
+                    </span>
+                    {site.isStale && (
+                      <span
+                        className="text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded-full bg-amber-500/10 text-amber-700 dark:text-amber-400"
+                        title={`No deployments for ${site.daysSinceLastDeploy}d`}
+                      >
+                        Stale
+                      </span>
+                    )}
+                    {!site.lastDeployAt && (
+                      <span className="text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded-full bg-muted/30 text-muted-foreground">
+                        Never
+                      </span>
+                    )}
+                  </div>
                 </td>
                 <td className="px-4 py-3">
                   {site.latestStaging ? (
@@ -50,7 +68,12 @@ export function SiteOverviewTable({ sites }: { sites: SiteStatus[] }) {
                     <span className="text-muted-foreground/30">—</span>
                   )}
                 </td>
-                <td className="px-4 py-3 text-right text-muted-foreground">
+                <td
+                  className={cn(
+                    "px-4 py-3 text-right",
+                    site.isStale ? "text-amber-600 dark:text-amber-400 font-semibold" : "text-muted-foreground",
+                  )}
+                >
                   {site.lastDeployAt ? timeAgo(site.lastDeployAt) : "—"}
                 </td>
               </tr>

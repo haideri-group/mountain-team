@@ -16,6 +16,8 @@ import { getAuthHeader, getBaseUrl, sanitizeErrorText } from "@/lib/jira/client"
 import { recordDeployment } from "@/lib/github/deployments";
 import { extractJiraKeys } from "@/lib/github/jira-keys";
 import { upsertWorklogs, fetchIssueWorklogs } from "@/lib/sync/worklog-sync";
+import { reconcileReleaseIssues } from "@/lib/releases/sync-release-issues";
+import { refreshReleasesForIssue } from "@/lib/sync/release-sync";
 
 // --- Types ---
 
@@ -189,6 +191,38 @@ async function syncIssues(type: IssueSyncType, filterBoardKey?: string): Promise
           set: fields,
         });
 
+      // Ensure release rows exist before diffing the junction. Without this,
+      // a brand-new fixVersion encountered by bulk sync before the nightly
+      // release-sync cron would silently skip the junction insert, leaving
+      // the diff with nothing to repair.
+      try {
+        await refreshReleasesForIssue(normalized.fixVersions, normalized.projectKey);
+      } catch (err) {
+        // Non-fatal — release-sync cron will backfill any missed versions.
+        // Sanitize — refreshReleasesForIssue hits JIRA and its errors can
+        // echo upstream tokens.
+        console.warn(
+          "refreshReleasesForIssue failed (non-fatal):",
+          sanitizeErrorText(err instanceof Error ? err.message : String(err)),
+        );
+      }
+
+      // Reconcile the junction against the now-persisted fixVersions.
+      // Idempotent: makes the current active membership match fixVersions
+      // regardless of prior state — so a retry after a partial failure
+      // self-heals, unlike a diff against a potentially-stale snapshot.
+      try {
+        await reconcileReleaseIssues(
+          normalized.jiraKey,
+          normalized.fixVersions,
+          normalized.projectKey,
+        );
+      } catch (err) {
+        result.errors.push(
+          `Release junction reconcile failed for ${normalized.jiraKey}: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+
       if (existing) {
         result.updated++;
       } else {
@@ -248,17 +282,43 @@ export async function runIssueSync(type: IssueSyncType, boardKey?: string): Prom
       .where(eq(syncLogs.id, logId));
 
     // Generate notifications after successful sync
+    // Post-sync hooks — always sanitize before logging. These handlers touch
+    // release/notification code paths that can surface upstream JIRA tokens
+    // via SQL driver error messages.
+    const logHookFailure = (label: string, err: unknown) => {
+      console.error(
+        `${label} failed:`,
+        sanitizeErrorText(err instanceof Error ? err.message : String(err)),
+      );
+    };
+
     try {
       await generateNotificationsFromSync();
     } catch (notifError) {
-      console.error("Notification generation failed:", notifError);
+      logHookFailure("Notification generation", notifError);
     }
 
     // Record workload snapshots for trend tracking
     try {
       await recordWorkloadSnapshots();
     } catch (snapError) {
-      console.error("Workload snapshot recording failed:", snapError);
+      logHookFailure("Workload snapshot recording", snapError);
+    }
+
+    // Record release daily snapshots for the burndown chart
+    try {
+      const { recordReleaseDailySnapshots } = await import("@/lib/releases/snapshots");
+      await recordReleaseDailySnapshots();
+    } catch (snapError) {
+      logHookFailure("Release snapshot recording", snapError);
+    }
+
+    // Fire release-scoped notifications (overdue/ready/deployed/scope-changed/stale)
+    try {
+      const { generateReleaseNotifications } = await import("@/lib/notifications/release-generator");
+      await generateReleaseNotifications();
+    } catch (relNotifError) {
+      logHookFailure("Release notification generation", relNotifError);
     }
 
     return { logId, result };
@@ -526,6 +586,20 @@ export async function syncSingleIssue(
     .insert(issues)
     .values({ id, jiraKey: normalized.jiraKey, ...fields })
     .onDuplicateKeyUpdate({ set: fields });
+
+  // Ensure any new fixVersion rows exist before the junction reconcile.
+  try {
+    await refreshReleasesForIssue(normalized.fixVersions, normalized.projectKey);
+  } catch {
+    // Non-fatal — release-sync cron will backfill.
+  }
+
+  // Reconcile the junction against the now-persisted fixVersions (idempotent).
+  await reconcileReleaseIssues(
+    normalized.jiraKey,
+    normalized.fixVersions,
+    normalized.projectKey,
+  );
 
   // Sync worklogs for this issue (reuses paginated fetcher from worklog-sync)
   let worklogsRecorded = 0;

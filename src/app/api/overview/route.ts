@@ -1,10 +1,23 @@
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { team_members, issues, boards, deployments } from "@/lib/db/schema";
-import { eq, inArray } from "drizzle-orm";
-import { auth } from "@/auth";
+import { and, eq, gte, inArray, or, sql } from "drizzle-orm";
 import { withResolvedAvatars } from "@/lib/db/helpers";
 import { calculateTaskWeight, WORKLOAD_COUNTED_STATUSES } from "@/lib/workload/snapshots";
+
+// Statuses the overview treats as "active". Used both in the SQL filter and in
+// the in-memory metrics calc — keep in sync.
+const ACTIVE_STATUSES = [
+  "backlog",
+  "todo",
+  "on_hold",
+  "in_progress",
+  "in_review",
+  "ready_for_testing",
+  "ready_for_live",
+  "rolling_out",
+  "post_live_testing",
+] as const;
 
 export async function GET() {
   try {
@@ -21,13 +34,74 @@ export async function GET() {
 
     const trackedBoardIds = trackedBoards.map((b) => b.id);
 
-    // Fetch all issues from tracked boards
-    let allIssues: (typeof issues.$inferSelect)[] = [];
+    // ── Fetch issues with TWO narrowings ────────────────────────────────
+    // 1. Project only columns we actually render / compute on. Previously a
+    //    SELECT * pulled `description` (rendered HTML, 5–50 KB per row) and
+    //    several other blobs (labels, brands, fixVersions) that nothing on
+    //    the overview reads. On 3k+ issues that's tens of MB shipped to
+    //    build a page that needs a few hundred KB.
+    // 2. Filter to active-or-recently-done. Old done/closed issues
+    //    accumulate indefinitely; the overview only shows "recent done"
+    //    (last 7 days) and counts total-done for stats that don't need
+    //    the row itself. 30 days is a comfortable cushion for that count.
+    const thirtyDaysAgo = new Date();
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+    const thirtyDaysAgoStr = thirtyDaysAgo.toISOString().split("T")[0];
+
+    type IssueRow = {
+      id: string;
+      jiraKey: string;
+      title: string;
+      status: string;
+      type: "bug" | "story" | "cms_change" | "enhancement" | "task" | "subtask" | null;
+      boardId: string;
+      assigneeId: string | null;
+      startDate: string | null;
+      dueDate: string | null;
+      completedDate: string | null;
+      cycleTime: number | null;
+      storyPoints: number | null;
+      priority: "highest" | "high" | "medium" | "low" | "lowest" | null;
+      requestPriority: string | null;
+      labels: string | null;
+      jiraCreatedAt: string | null;
+    };
+
+    let allIssues: IssueRow[] = [];
     if (trackedBoardIds.length > 0) {
-      allIssues = await db
-        .select()
+      allIssues = (await db
+        .select({
+          id: issues.id,
+          jiraKey: issues.jiraKey,
+          title: issues.title,
+          status: issues.status,
+          type: issues.type,
+          boardId: issues.boardId,
+          assigneeId: issues.assigneeId,
+          startDate: issues.startDate,
+          dueDate: issues.dueDate,
+          completedDate: issues.completedDate,
+          cycleTime: issues.cycleTime,
+          storyPoints: issues.storyPoints,
+          priority: issues.priority,
+          requestPriority: issues.requestPriority, // calculateTaskWeight
+          labels: issues.labels, // calculateTaskWeight
+          jiraCreatedAt: issues.jiraCreatedAt,
+        })
         .from(issues)
-        .where(inArray(issues.boardId, trackedBoardIds));
+        .where(
+          and(
+            inArray(issues.boardId, trackedBoardIds),
+            or(
+              inArray(issues.status, [...ACTIVE_STATUSES]),
+              // Recently completed — needed for "recent done" + totalDone
+              // counts. Issues done > 30d ago are counted in aggregate via
+              // a separate query below if we ever need a lifetime total.
+              and(eq(issues.status, "done"), gte(issues.completedDate, thirtyDaysAgoStr)),
+              and(eq(issues.status, "closed"), gte(issues.completedDate, thirtyDaysAgoStr)),
+            ),
+          ),
+        )) as IssueRow[];
     }
 
     // Build board lookup for colors
@@ -50,6 +124,34 @@ export async function GET() {
       } else if (d.environment === "staging" && current !== "production") {
         deploymentStatusMap.set(d.jiraKey, "staging");
       }
+    }
+
+    // Lifetime done/closed counts per assignee — cheap aggregate (one query,
+    // a few dozen rows) that preserves the API contract while letting
+    // `allIssues` stay narrowed to active + recent-done.
+    const lifetimeCounts = trackedBoardIds.length > 0
+      ? await db
+          .select({
+            assigneeId: issues.assigneeId,
+            status: issues.status,
+            count: sql<number>`COUNT(*)`,
+          })
+          .from(issues)
+          .where(
+            and(
+              inArray(issues.boardId, trackedBoardIds),
+              inArray(issues.status, ["done", "closed"]),
+            ),
+          )
+          .groupBy(issues.assigneeId, issues.status)
+      : [];
+    const doneByAssignee = new Map<string, number>();
+    const closedByAssignee = new Map<string, number>();
+    for (const row of lifetimeCounts) {
+      if (!row.assigneeId) continue;
+      const n = Number(row.count);
+      if (row.status === "done") doneByAssignee.set(row.assigneeId, n);
+      else if (row.status === "closed") closedByAssignee.set(row.assigneeId, n);
     }
 
     // 7 days ago for "recent done"
@@ -87,8 +189,10 @@ export async function GET() {
           return b.completedDate.localeCompare(a.completedDate);
         });
 
-      const totalDone = memberIssues.filter((i) => i.status === "done").length;
-      const totalClosed = memberIssues.filter((i) => i.status === "closed").length;
+      // Preserve lifetime semantics using the aggregate map; `memberIssues`
+      // only carries last-30d done/closed so its counts would be incomplete.
+      const totalDone = doneByAssignee.get(member.id) || 0;
+      const totalClosed = closedByAssignee.get(member.id) || 0;
 
       // Workload: uses shared weighted formula
       const countedStatuses: readonly string[] = WORKLOAD_COUNTED_STATUSES;
@@ -114,7 +218,7 @@ export async function GET() {
       const onTimePercentage = doneWithDue.length > 0 ? Math.round((onTime / doneWithDue.length) * 100) : 100;
 
       // Enrich issues with board info
-      const enrichIssue = (issue: typeof issues.$inferSelect) => {
+      const enrichIssue = (issue: IssueRow) => {
         const board = boardMap.get(issue.boardId);
         return {
           ...issue,
@@ -141,13 +245,15 @@ export async function GET() {
     // Sort by workload descending (highest loaded first)
     membersWithIssues.sort((a, b) => b.workloadPercentage - a.workloadPercentage);
 
-    // Compute overview metrics
-    const activeStatuses = ["backlog", "todo", "on_hold", "in_progress", "in_review", "ready_for_testing", "ready_for_live", "rolling_out", "post_live_testing"];
+    // Compute overview metrics. `allIssues` is now scoped to active +
+    // recent-done, which is the superset every metric below needs — no
+    // separate query required.
+    const activeSet: ReadonlySet<string> = new Set(ACTIVE_STATUSES);
     const today = new Date().toISOString().split("T")[0];
 
     const metrics = {
       teamMembers: allMembers.filter((m) => m.status === "active").length,
-      activeIssues: allIssues.filter((i) => activeStatuses.includes(i.status)).length,
+      activeIssues: allIssues.filter((i) => activeSet.has(i.status)).length,
       inProgress: allIssues.filter((i) => i.status === "in_progress").length,
       overdueTasks: allIssues.filter(
         (i) =>
@@ -159,20 +265,31 @@ export async function GET() {
       overdueChange: 0, // TODO: compute vs last week
     };
 
-    return NextResponse.json({
-      members: membersWithIssues,
-      metrics,
-      boards: trackedBoards.map((b) => ({
-        id: b.id,
-        jiraKey: b.jiraKey,
-        name: b.name,
-        color: b.color,
-      })),
-    });
+    return NextResponse.json(
+      {
+        members: membersWithIssues,
+        metrics,
+        boards: trackedBoards.map((b) => ({
+          id: b.id,
+          jiraKey: b.jiraKey,
+          name: b.name,
+          color: b.color,
+        })),
+      },
+      {
+        headers: {
+          // Cache for 30s, serve stale for up to 60s more while revalidating.
+          // Overview data moves on webhook-driven syncs, so 30s of staleness
+          // is invisible to users but eliminates re-query cost on rapid
+          // re-navigation (e.g., clicking between tabs, back-navigation).
+          "Cache-Control": "public, max-age=30, stale-while-revalidate=60",
+        },
+      },
+    );
   } catch (error) {
     console.error("Failed to fetch overview data:", error);
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : "Failed to fetch overview data" },
+      { error: "Failed to fetch overview data" },
       { status: 500 },
     );
   }

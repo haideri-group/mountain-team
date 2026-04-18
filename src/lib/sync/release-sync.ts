@@ -8,7 +8,7 @@
 
 import { db } from "@/lib/db";
 import { jiraReleases, boards, syncLogs } from "@/lib/db/schema";
-import { eq, inArray } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { getAuthHeader, getBaseUrl, sanitizeErrorText } from "@/lib/jira/client";
 import { fetchWithRetry } from "@/lib/jira/issues";
 import crypto from "crypto";
@@ -108,6 +108,7 @@ export async function syncReleases(): Promise<ReleaseSyncResult> {
         const toDo = issueStatus.toDo || 0;
         const total = done + inProgress + toDo + (issueStatus.unmapped || 0);
 
+        const now = new Date();
         await db
           .insert(jiraReleases)
           .values({
@@ -125,6 +126,7 @@ export async function syncReleases(): Promise<ReleaseSyncResult> {
             issuesInProgress: inProgress,
             issuesToDo: toDo,
             issuesTotal: total,
+            lastSyncedAt: now,
           })
           .onDuplicateKeyUpdate({
             set: {
@@ -139,6 +141,7 @@ export async function syncReleases(): Promise<ReleaseSyncResult> {
               issuesInProgress: inProgress,
               issuesToDo: toDo,
               issuesTotal: total,
+              lastSyncedAt: now,
             },
           });
 
@@ -233,6 +236,7 @@ export async function refreshReleasesForIssue(
       const toDo = issueStatus.toDo || 0;
       const total = done + inProgress + toDo + (issueStatus.unmapped || 0);
 
+      const now = new Date();
       await db
         .insert(jiraReleases)
         .values({
@@ -250,6 +254,7 @@ export async function refreshReleasesForIssue(
           issuesInProgress: inProgress,
           issuesToDo: toDo,
           issuesTotal: total,
+          lastSyncedAt: now,
         })
         .onDuplicateKeyUpdate({
           set: {
@@ -262,6 +267,7 @@ export async function refreshReleasesForIssue(
             issuesInProgress: inProgress,
             issuesToDo: toDo,
             issuesTotal: total,
+            lastSyncedAt: now,
           },
         });
     }

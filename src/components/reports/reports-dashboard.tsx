@@ -17,6 +17,7 @@ import { DeveloperHeatmap } from "./developer-heatmap";
 import { BoardHealth } from "./board-health";
 import { PendingReleases } from "./pending-releases";
 import { TeamTimeTracking } from "./team-time-tracking";
+import { ReleaseHealthSection } from "@/components/releases/release-health-section";
 
 // ---- Types ----
 
@@ -364,6 +365,9 @@ export function ReportsDashboard() {
 
       {/* ── Pending Releases (self-fetching, only renders if data exists) ── */}
       <PendingReleases />
+
+      {/* ── Release Health (self-fetching; Phase 19-B) ── */}
+      <ReleaseHealthSection />
     </div>
   );
 }
