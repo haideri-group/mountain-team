@@ -221,7 +221,7 @@ export async function GET(request: NextRequest) {
 
     // Alerts
     const alerts: {
-      type: "over-capacity" | "idle" | "burnout-risk";
+      type: "over-capacity" | "idle" | "idle-queued" | "burnout-risk";
       memberId: string;
       memberName: string;
       avatarUrl: string | null;
@@ -256,21 +256,24 @@ export async function GET(request: NextRequest) {
       // Flag anyone actively employed who has zero in-progress tasks —
       // they might have queued/review work but aren't executing anything
       // right now, which is useful visibility for the team lead.
+      // Distinct alert types so the UI can render the right label:
+      //   "idle"        — truly no tasks, "Available" badge
+      //   "idle-queued" — has pending work, nothing in progress, "Between tasks" badge
       if (
         m.status === "active" &&
         m.inProgressCount === 0 &&
         !alertedIds.has(m.id)
       ) {
+        const hasQueue = m.assignedCount > 0;
         alerts.push({
-          type: "idle",
+          type: hasQueue ? "idle-queued" : "idle",
           memberId: m.id,
           memberName: m.displayName,
           avatarUrl: m.avatarUrl,
           percentage: m.percentage,
-          message:
-            m.assignedCount === 0
-              ? "No tasks assigned · Available for assignment"
-              : `${m.assignedCount} task${m.assignedCount > 1 ? "s" : ""} queued · Nothing in progress right now`,
+          message: hasQueue
+            ? `${m.assignedCount} task${m.assignedCount > 1 ? "s" : ""} queued · Nothing in progress right now`
+            : "No tasks assigned · Available for assignment",
         });
       }
     }

@@ -41,7 +41,7 @@ interface WorkloadMember {
 }
 
 interface WorkloadAlert {
-  type: "over-capacity" | "idle" | "burnout-risk";
+  type: "over-capacity" | "idle" | "idle-queued" | "burnout-risk";
   memberId: string;
   memberName: string;
   avatarUrl: string | null;

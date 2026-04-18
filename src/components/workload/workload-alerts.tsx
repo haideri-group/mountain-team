@@ -1,11 +1,11 @@
 "use client";
 
 import Link from "next/link";
-import { AlertTriangle, Flame, Inbox } from "lucide-react";
+import { AlertTriangle, Flame, Inbox, PauseCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 interface WorkloadAlert {
-  type: "over-capacity" | "idle" | "burnout-risk";
+  type: "over-capacity" | "idle" | "idle-queued" | "burnout-risk";
   memberId: string;
   memberName: string;
   avatarUrl: string | null;
@@ -30,6 +30,7 @@ function AlertRow({ alert }: { alert: WorkloadAlert }) {
   const isOver = alert.type === "over-capacity";
   const isBurnout = alert.type === "burnout-risk";
   const isIdle = alert.type === "idle";
+  const isIdleQueued = alert.type === "idle-queued";
 
   const borderClass = isOver
     ? "border-2 border-dashed border-red-500/30"
@@ -55,13 +56,21 @@ function AlertRow({ alert }: { alert: WorkloadAlert }) {
       ? "bg-orange-100 text-orange-700 dark:bg-orange-950/40 dark:text-orange-400"
       : "bg-muted/50 text-muted-foreground";
 
-  const Icon = isOver ? AlertTriangle : isBurnout ? Flame : Inbox;
+  const Icon = isOver
+    ? AlertTriangle
+    : isBurnout
+      ? Flame
+      : isIdleQueued
+        ? PauseCircle
+        : Inbox;
 
   const label = isOver
     ? `${alert.memberName} is over capacity`
     : isBurnout
       ? `${alert.memberName} — burnout risk`
-      : `${alert.memberName} has no tasks`;
+      : isIdleQueued
+        ? `${alert.memberName} is between tasks`
+        : `${alert.memberName} has no tasks`;
 
   return (
     <div
@@ -116,7 +125,7 @@ function AlertRow({ alert }: { alert: WorkloadAlert }) {
       </div>
 
       {/* Percentage badge (over-capacity + burnout) */}
-      {!isIdle && (
+      {(isOver || isBurnout) && (
         <span
           className={cn(
             "shrink-0 px-2.5 py-1 rounded-full text-xs font-bold font-mono",
@@ -127,7 +136,7 @@ function AlertRow({ alert }: { alert: WorkloadAlert }) {
         </span>
       )}
 
-      {/* Idle badge */}
+      {/* Idle — no tasks at all */}
       {isIdle && (
         <span
           className={cn(
@@ -138,6 +147,18 @@ function AlertRow({ alert }: { alert: WorkloadAlert }) {
           Available
         </span>
       )}
+
+      {/* Idle-queued — has pending work, nothing in progress */}
+      {isIdleQueued && (
+        <span
+          className={cn(
+            "shrink-0 px-2.5 py-1 rounded-full text-xs font-semibold",
+            badgeBg,
+          )}
+        >
+          Between tasks
+        </span>
+      )}
     </div>
   );
 }
@@ -145,10 +166,11 @@ function AlertRow({ alert }: { alert: WorkloadAlert }) {
 export function WorkloadAlerts({ alerts }: WorkloadAlertsProps) {
   if (alerts.length === 0) return null;
 
-  // Group by type for display order: over-capacity → burnout → idle
+  // Group by type for display order: over-capacity → burnout → idle-queued → idle
   const ordered = [
     ...alerts.filter((a) => a.type === "over-capacity"),
     ...alerts.filter((a) => a.type === "burnout-risk"),
+    ...alerts.filter((a) => a.type === "idle-queued"),
     ...alerts.filter((a) => a.type === "idle"),
   ];
 
