@@ -1,6 +1,6 @@
 import { db } from "@/lib/db";
-import { boards, syncLogs } from "@/lib/db/schema";
-import { desc, eq, inArray } from "drizzle-orm";
+import { boards, issues, syncLogs } from "@/lib/db/schema";
+import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { auth } from "@/auth";
 import { redirect } from "next/navigation";
 import { BoardsManager } from "@/components/settings/boards-manager";
@@ -8,6 +8,7 @@ import { TeamSyncManager } from "@/components/settings/team-sync-manager";
 import { IssueSyncManager } from "@/components/settings/issue-sync-manager";
 import { GitHubReposManager } from "@/components/settings/github-repos-manager";
 import { StatusMappingManager } from "@/components/settings/status-mapping-manager";
+import { DeploymentBackfillPanel } from "@/components/settings/deployment-backfill-panel";
 
 export default async function SettingsPage() {
   const session = await auth();
@@ -32,6 +33,38 @@ export default async function SettingsPage() {
     .where(inArray(syncLogs.type, ["full", "incremental", "manual"]))
     .orderBy(desc(syncLogs.startedAt))
     .limit(1);
+
+  const [lastDeploymentBackfill] = await db
+    .select()
+    .from(syncLogs)
+    .where(eq(syncLogs.type, "deployment_backfill"))
+    .orderBy(desc(syncLogs.startedAt))
+    .limit(1);
+
+  const trackedBoardIds = allBoards
+    .filter((b) => b.isTracked)
+    .map((b) => b.id);
+
+  let unsyncedCount = 0;
+  let totalTracked = 0;
+  if (trackedBoardIds.length > 0) {
+    const [totalRow] = await db
+      .select({ n: sql<number>`count(*)` })
+      .from(issues)
+      .where(inArray(issues.boardId, trackedBoardIds));
+    totalTracked = Number(totalRow?.n ?? 0);
+
+    const [unsyncedRow] = await db
+      .select({ n: sql<number>`count(*)` })
+      .from(issues)
+      .where(
+        and(
+          inArray(issues.boardId, trackedBoardIds),
+          isNull(issues.deploymentsSyncedAt),
+        ),
+      );
+    unsyncedCount = Number(unsyncedRow?.n ?? 0);
+  }
 
   return (
     <div>
@@ -88,6 +121,27 @@ export default async function SettingsPage() {
         {/* GitHub Deployment Tracking */}
         <section>
           <GitHubReposManager />
+        </section>
+
+        {/* Deployment Backfill (Phase 20) */}
+        <section>
+          <DeploymentBackfillPanel
+            lastSync={
+              lastDeploymentBackfill
+                ? {
+                    id: lastDeploymentBackfill.id,
+                    type: lastDeploymentBackfill.type,
+                    status: lastDeploymentBackfill.status,
+                    startedAt: lastDeploymentBackfill.startedAt,
+                    completedAt: lastDeploymentBackfill.completedAt,
+                    issueCount: lastDeploymentBackfill.issueCount,
+                    error: lastDeploymentBackfill.error,
+                  }
+                : null
+            }
+            unsyncedCount={unsyncedCount}
+            totalTracked={totalTracked}
+          />
         </section>
 
         {/* Projects / Boards Management */}
