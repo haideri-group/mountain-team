@@ -1,16 +1,34 @@
 const TOKEN_ENDPOINT = "https://oauth2.googleapis.com/token";
 const PEOPLE_API = "https://people.googleapis.com/v1";
 
+interface DirectoryOrganization {
+  title?: string;
+  name?: string;
+  department?: string;
+  current?: boolean;
+}
+
 interface DirectoryPerson {
   names?: { displayName: string }[];
   emailAddresses?: { value: string; type?: string }[];
   photos?: { url: string }[];
+  organizations?: DirectoryOrganization[];
 }
 
 export interface DirectoryMatch {
   email: string;
   name: string;
   photoUrl: string | null;
+  jobTitle: string | null;
+}
+
+// Prefer the current organization's title; fall back to the first non-empty title.
+function extractJobTitle(orgs?: DirectoryOrganization[]): string | null {
+  if (!orgs || orgs.length === 0) return null;
+  const current = orgs.find((o) => o.current && o.title);
+  if (current?.title) return current.title.trim();
+  const any = orgs.find((o) => o.title);
+  return any?.title ? any.title.trim() : null;
 }
 
 interface SearchResponse {
@@ -80,7 +98,7 @@ async function searchDirectory(
 ): Promise<DirectoryPerson[]> {
   const params = new URLSearchParams({
     query,
-    readMask: "names,emailAddresses,photos",
+    readMask: "names,emailAddresses,photos,organizations",
     sources: "DIRECTORY_SOURCE_TYPE_DOMAIN_PROFILE",
     pageSize: "5",
   });
@@ -145,6 +163,7 @@ function pickBestMatch(
         email,
         name: person.names?.[0]?.displayName || displayName,
         photoUrl: person.photos?.[0]?.url || null,
+        jobTitle: extractJobTitle(person.organizations),
       };
     }
   }
@@ -172,6 +191,7 @@ export async function searchDirectoryByName(
 export interface MemberDirectoryMatch {
   email: string | null;
   photoUrl: string | null;
+  jobTitle: string | null;
 }
 
 // Match emails and photos for a batch of team members
@@ -195,6 +215,7 @@ export async function matchFromDirectory(
           matchMap.set(member.id, {
             email: null, // already have email
             photoUrl: emailMatch.photos?.[0]?.url || null,
+            jobTitle: extractJobTitle(emailMatch.organizations),
           });
           continue;
         }
@@ -219,6 +240,7 @@ export async function matchFromDirectory(
         matchMap.set(member.id, {
           email: member.email ? null : result.email,
           photoUrl: result.photoUrl,
+          jobTitle: result.jobTitle,
         });
       }
     } catch (error) {
@@ -233,13 +255,14 @@ export async function matchFromDirectory(
 }
 
 /**
- * Find a Google Workspace photo URL by exact email match.
- * Used for single-member avatar sync after email change.
+ * Find a Google Workspace person by exact email match.
+ * Returns both the photo URL and the job title. Used for single-member
+ * enrichment after an email change.
  */
-export async function findPhotoByEmail(
+export async function findPersonByEmail(
   accessToken: string,
   email: string,
-): Promise<string | null> {
+): Promise<{ photoUrl: string | null; jobTitle: string | null } | null> {
   try {
     const people = await searchDirectory(accessToken, email);
     const match = people.find((p) =>
@@ -247,7 +270,11 @@ export async function findPhotoByEmail(
         (e) => e.value?.toLowerCase() === email.toLowerCase(),
       ),
     );
-    return match?.photos?.[0]?.url || null;
+    if (!match) return null;
+    return {
+      photoUrl: match.photos?.[0]?.url || null,
+      jobTitle: extractJobTitle(match.organizations),
+    };
   } catch {
     return null;
   }

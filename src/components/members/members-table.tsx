@@ -355,7 +355,6 @@ export function MembersTable({ isAdmin }: MembersTableProps) {
                   <th className="text-left px-5 py-3 text-xs font-bold font-mono uppercase tracking-wider text-muted-foreground hidden md:table-cell">Role</th>
                   <th className="text-left px-5 py-3 text-xs font-bold font-mono uppercase tracking-wider text-muted-foreground">Status</th>
                   <th className="text-left px-5 py-3 text-xs font-bold font-mono uppercase tracking-wider text-muted-foreground hidden lg:table-cell">Capacity</th>
-                  <th className="text-left px-5 py-3 text-xs font-bold font-mono uppercase tracking-wider text-muted-foreground hidden lg:table-cell">Joined</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-border/50">
@@ -479,9 +478,6 @@ export function MembersTable({ isAdmin }: MembersTableProps) {
                     </td>
                     <td className="px-5 py-4 hidden lg:table-cell">
                       <span className="text-xs font-mono text-muted-foreground">{member.capacity ?? 10} pts</span>
-                    </td>
-                    <td className="px-5 py-4 hidden lg:table-cell">
-                      <span className="text-xs font-mono text-muted-foreground">{member.joinedDate || "—"}</span>
                     </td>
                   </tr>
                 ))}
