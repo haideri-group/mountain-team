@@ -85,6 +85,8 @@ Route groups `(auth)` and `(dashboard)` use separate layouts. Dashboard layout i
 
 **Auth:** Auth.js v5 (NextAuth beta) with Google OAuth + Credentials providers. JWT session strategy. Two roles: `admin` (full access) and `user` (read-only, no Settings/Sync/Users). Google OAuth stores access token in JWT for Google Directory API access. Per-request DB check ensures deactivated users lose access immediately and role changes take effect instantly. Super-admin (`syed.haider@ki5.co.uk`) cannot be deactivated or demoted. New Google sign-ins default to `user` role.
 
+> **Note:** Two different fields are named `role`. `users.role` is the **auth role** above (`admin` | `user`). `team_members.role` is the **job title** (free-text, e.g. "Senior Frontend Developer"), sourced from Google Workspace Directory — it has no effect on permissions.
+
 **State management:** Client-side `useState` + `fetch()` for data. No TanStack Query hooks yet — components fetch from API routes directly.
 
 ## Security
@@ -144,17 +146,20 @@ Team members are **not manually managed** — they are auto-synced from the Atla
 - Each member is tagged with their `teamId` and `teamName` from the Atlassian team
 - **In team = `active`**, **removed from team = `departed`**, **rejoining = re-activated**
 - New members are auto-created with auto-assigned colors from palette
-- `displayName`, `email`, `avatarUrl` are updated from JIRA/Google on each sync
-- Admin-managed fields (`capacity`, `role`, `color`) are never overwritten by sync
+- `displayName`, `email`, `avatarUrl`, `role` (job title) are updated from JIRA/Google on each sync
+- Admin-managed fields (`capacity`, `color`) are never overwritten by sync
+- `joinedDate` is set to the sync date when a member is first inserted — it reflects **when TeamFlow first observed the member, not real team tenure**. Shown on the member profile header (`/members/[id]`) but deliberately omitted from the listing to avoid misleading "tenure" readings
 - `on_leave` status is admin-managed, not affected by sync (unless member leaves the org)
 - Admin (Syed Haider Hassan) is excluded from sync via `/rest/api/3/myself`
 - Safety check: aborts if API returns 0 members but DB has active members
 
 **Google Directory integration:**
-- When admin is signed in with Google OAuth, sync also matches emails + avatars from Google Workspace
-- Uses Google People API `searchDirectoryPeople` with `directory.readonly` scope
+- When admin is signed in with Google OAuth, sync also matches emails, avatars, and job titles from Google Workspace
+- Uses Google People API `searchDirectoryPeople` with `directory.readonly` scope — `readMask` includes `organizations` to pull job title (prefers `current: true`)
+- **Workspace is the source of truth for `team_members.role`.** Each sync overwrites role with the current Workspace title so Admin Console changes flow through. If Workspace has no title for a member, `role` is left unchanged (not blanked)
 - Multi-strategy name matching (full name → first+last → first only) with scoring
 - Inline email edit on Members page has autocomplete dropdown from Google Directory (300ms debounce, min 3 chars)
+- When the editing admin is signed in via Google OAuth, editing a member's email also triggers a single-member directory lookup that refreshes `role` and avatar in the background; members table auto-refetches within 5s. **Credentials-only sessions have no Google token and silently skip this enrichment** — only the email itself is saved
 
 **Sync triggers:**
 - Daily cron at 06:00 UTC (`/api/cron/sync-teams`)
