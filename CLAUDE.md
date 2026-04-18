@@ -159,7 +159,7 @@ Team members are **not manually managed** — they are auto-synced from the Atla
 - **Workspace is the source of truth for `team_members.role`.** Each sync overwrites role with the current Workspace title so Admin Console changes flow through. If Workspace has no title for a member, `role` is left unchanged (not blanked)
 - Multi-strategy name matching (full name → first+last → first only) with scoring
 - Inline email edit on Members page has autocomplete dropdown from Google Directory (300ms debounce, min 3 chars)
-- Editing a single member's email triggers a single-member directory lookup that also refreshes `role` and avatar — no full sync required, members table auto-refetches within 5s
+- When the editing admin is signed in via Google OAuth, editing a member's email also triggers a single-member directory lookup that refreshes `role` and avatar in the background; members table auto-refetches within 5s. **Credentials-only sessions have no Google token and silently skip this enrichment** — only the email itself is saved
 
 **Sync triggers:**
 - Daily cron at 06:00 UTC (`/api/cron/sync-teams`)
