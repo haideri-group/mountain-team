@@ -63,7 +63,7 @@ function FilterSelect({
         type="button"
         onClick={() => setIsOpen((v) => !v)}
         className={cn(
-          "h-8 px-3 pr-7 rounded-lg text-xs font-mono cursor-pointer relative",
+          "h-9 px-3 pr-8 rounded-lg text-sm font-mono cursor-pointer relative",
           "transition-all focus:outline-none focus:ring-2 focus:ring-primary/30",
           isFiltered
             ? "bg-primary/10 text-primary font-semibold dark:bg-primary/15"
@@ -77,19 +77,19 @@ function FilterSelect({
         )} />
       </button>
       {isOpen && (
-        <div className="absolute left-0 top-full mt-1 z-50 min-w-[160px] max-h-[240px] overflow-y-auto bg-popover/95 backdrop-blur-xl rounded-lg ring-1 ring-foreground/10 shadow-xl py-1">
+        <div className="absolute left-0 top-full mt-1.5 z-50 min-w-[200px] max-h-[280px] overflow-y-auto bg-popover/95 backdrop-blur-xl rounded-lg ring-1 ring-foreground/10 shadow-xl py-1.5">
           {options.map((o) => (
             <button
               type="button"
               key={o.value}
               onClick={() => { onChange(o.value); setIsOpen(false); }}
               className={cn(
-                "w-full flex items-center gap-2 px-3 py-1.5 text-xs font-mono text-left transition-colors",
+                "w-full flex items-center gap-2.5 px-3.5 py-2 text-sm font-mono text-left transition-colors",
                 value === o.value ? "bg-primary/10 text-primary font-semibold" : "text-popover-foreground hover:bg-accent/50",
               )}
             >
-              <span className={cn("flex items-center justify-center h-3.5 w-3.5 shrink-0", value !== o.value && "invisible")}>
-                <Check className="h-3 w-3" />
+              <span className={cn("flex items-center justify-center h-4 w-4 shrink-0", value !== o.value && "invisible")}>
+                <Check className="h-3.5 w-3.5" />
               </span>
               {o.label}
             </button>
@@ -130,6 +130,7 @@ export function DeploymentsDashboard() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
   const [filters, setFilters] = useState({ environment: "", repo: "", site: "", board: "" });
+  const [releasesExpanded, setReleasesExpanded] = useState(false);
 
   const fetchData = useCallback(async () => {
     setLoading(true);
@@ -265,13 +266,32 @@ export function DeploymentsDashboard() {
         ))}
       </div>
 
-      {/* Releases */}
+      {/* Releases (collapsible, default collapsed) */}
       {(data.releases.upcoming.length > 0 || data.releases.recent.length > 0) && (
         <div>
-          <SectionLabel icon={Package} count={data.releases.upcoming.length}>
-            Releases
-          </SectionLabel>
-          <ReleaseProgress upcoming={data.releases.upcoming} recent={data.releases.recent} />
+          <button
+            type="button"
+            onClick={() => setReleasesExpanded((v) => !v)}
+            className="w-full flex items-center gap-2 mb-4 group cursor-pointer"
+          >
+            <Package className="h-4 w-4 text-muted-foreground" />
+            <span className="text-[10px] font-bold font-mono uppercase tracking-wider text-muted-foreground">
+              Releases
+            </span>
+            {data.releases.upcoming.length > 0 && (
+              <span className="text-[10px] font-bold font-mono px-1.5 py-0.5 rounded-full bg-muted/30 text-muted-foreground">
+                {data.releases.upcoming.length}
+              </span>
+            )}
+            <div className="flex-1 h-px bg-muted/30" />
+            <ChevronDown className={cn(
+              "h-4 w-4 text-muted-foreground transition-transform",
+              !releasesExpanded && "-rotate-90",
+            )} />
+          </button>
+          {releasesExpanded && (
+            <ReleaseProgress upcoming={data.releases.upcoming} recent={data.releases.recent} />
+          )}
         </div>
       )}
 
