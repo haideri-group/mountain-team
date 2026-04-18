@@ -104,16 +104,21 @@ export const authConfig = {
           : 0;
       }
 
-      // Periodic DB check: re-validate isActive + role from DB
+      // Periodic DB check: re-validate isActive + role + passwordChangedAt from DB
       // Cached for 60 seconds to avoid overwhelming the connection pool
-      // Deactivated users lose access within 60 seconds, role changes take effect within 60 seconds
+      // Deactivated users lose access within 60 seconds, role changes take effect within 60 seconds,
+      // and password resets invalidate all existing sessions within 60 seconds.
       if (token.id && !account) {
         const lastCheck = (token._lastDbCheck as number) || 0;
         const now = Date.now();
         if (now - lastCheck > 60_000) { // check every 60 seconds
           try {
             const [dbUser] = await db
-              .select({ role: users.role, isActive: users.isActive })
+              .select({
+                role: users.role,
+                isActive: users.isActive,
+                passwordChangedAt: users.passwordChangedAt,
+              })
               .from(users)
               .where(eq(users.id, token.id as string))
               .limit(1);
@@ -125,6 +130,14 @@ export const authConfig = {
                 return {} as typeof token;
               } else {
                 token.role = dbUser.role;
+              }
+
+              // Invalidate JWTs issued before the last password change
+              if (dbUser.passwordChangedAt && typeof token.iat === "number") {
+                const changedAtSec = Math.floor(dbUser.passwordChangedAt.getTime() / 1000);
+                if (token.iat < changedAtSec) {
+                  return {} as typeof token;
+                }
               }
             }
             token._lastDbCheck = now;

@@ -1,7 +1,15 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 
-const publicPaths = ["/login", "/api/auth", "/overview", "/issue", "/workload"];
+const publicPaths = [
+  "/login",
+  "/forgot-password",
+  "/reset-password",
+  "/api/auth",
+  "/overview",
+  "/issue",
+  "/workload",
+];
 
 export function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
@@ -21,7 +29,10 @@ export function proxy(request: NextRequest) {
 
   // Allow public paths without auth
   if (isPublicPath) {
-    if (isLoggedIn && pathname === "/login") {
+    if (
+      isLoggedIn &&
+      (pathname === "/login" || pathname === "/forgot-password")
+    ) {
       return NextResponse.redirect(new URL("/overview", request.url));
     }
     return NextResponse.next();

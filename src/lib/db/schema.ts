@@ -1,4 +1,4 @@
-import { mysqlTable, varchar, text, int, boolean, timestamp, mysqlEnum, float, index } from "drizzle-orm/mysql-core";
+import { mysqlTable, varchar, text, int, boolean, timestamp, mysqlEnum, float, index, uniqueIndex } from "drizzle-orm/mysql-core";
 
 export const users = mysqlTable("users", {
   id: varchar("id", { length: 191 }).primaryKey(),
@@ -12,7 +12,22 @@ export const users = mysqlTable("users", {
   createdAt: timestamp("createdAt").defaultNow(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow(),
   lastLoginAt: timestamp("lastLoginAt"),
+  passwordChangedAt: timestamp("passwordChangedAt"),
 });
+
+export const passwordResetTokens = mysqlTable("password_reset_tokens", {
+  id: varchar("id", { length: 191 }).primaryKey(),
+  userId: varchar("userId", { length: 191 }).notNull().references(() => users.id),
+  tokenHash: varchar("tokenHash", { length: 64 }).notNull(),
+  expiresAt: timestamp("expiresAt").notNull(),
+  usedAt: timestamp("usedAt"),
+  requestedIp: varchar("requestedIp", { length: 45 }),
+  requestedAt: timestamp("requestedAt").defaultNow().notNull(),
+}, (t) => ({
+  tokenHashIdx: uniqueIndex("password_reset_tokens_token_hash_idx").on(t.tokenHash),
+  userIdIdx: index("password_reset_tokens_user_id_idx").on(t.userId),
+  expiresAtIdx: index("password_reset_tokens_expires_at_idx").on(t.expiresAt),
+}));
 
 export const team_members = mysqlTable("team_members", {
   id: varchar("id", { length: 191 }).primaryKey(),
