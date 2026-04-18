@@ -2,7 +2,7 @@
 
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
-import { and, eq, isNull } from "drizzle-orm";
+import { and, eq, gt, isNull } from "drizzle-orm";
 import bcrypt from "bcryptjs";
 import { z } from "zod";
 import { AuthError } from "next-auth";
@@ -255,8 +255,10 @@ export async function resetPassword(
 
   try {
     await db.transaction(async (tx) => {
-      // Atomically consume the token — guarded by usedAt IS NULL so concurrent
-      // submissions of the same token can never both succeed.
+      // Atomically consume the token. The WHERE clause re-checks both
+      // `usedAt IS NULL` (single-use) and `expiresAt > now` (not expired)
+      // inside the transaction, closing the TOCTOU window between
+      // validateResetToken and here (bcrypt takes ~300ms).
       const consume = await tx
         .update(passwordResetTokens)
         .set({ usedAt: now })
@@ -264,6 +266,7 @@ export async function resetPassword(
           and(
             eq(passwordResetTokens.tokenHash, tokenHash),
             isNull(passwordResetTokens.usedAt),
+            gt(passwordResetTokens.expiresAt, now),
           ),
         );
       const consumed =
@@ -272,10 +275,17 @@ export async function resetPassword(
         0;
       if (consumed !== 1) throw new Error(TOKEN_INVALID);
 
+      // Require the user to still be active. Prevents a just-deactivated
+      // account from silently getting their password rewritten.
       const userUpdate = await tx
         .update(users)
         .set({ hashedPassword: hashed, passwordChangedAt: now })
-        .where(eq(users.id, validation.userId));
+        .where(
+          and(
+            eq(users.id, validation.userId),
+            eq(users.isActive, true),
+          ),
+        );
       const updated =
         (userUpdate as { affectedRows?: number; rowsAffected?: number }).affectedRows ??
         (userUpdate as { affectedRows?: number; rowsAffected?: number }).rowsAffected ??
