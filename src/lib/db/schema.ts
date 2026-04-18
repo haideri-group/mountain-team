@@ -86,7 +86,19 @@ export const issues = mysqlTable("issues", {
   jiraUpdatedAt: varchar("jiraUpdatedAt", { length: 50 }),
   createdAt: timestamp("createdAt").defaultNow(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow(),
-});
+}, (table) => [
+  // Drizzle declares FKs on both columns but doesn't add explicit indexes;
+  // MySQL's auto-FK-index behaviour is version-dependent, so be explicit.
+  // /api/overview does `WHERE boardId IN (...)` — full scan without this.
+  // Assignee-scoped queries (profile, overview per-member filter, workload
+  // snapshots) all depend on assigneeId lookups.
+  index("idx_issues_board").on(table.boardId),
+  index("idx_issues_assignee").on(table.assigneeId),
+  // Status is hit by many queries (overview active filter, sync, workload);
+  // a composite (status, completedDate) supports both "active" scans and
+  // "recent done" lookups via leading-column matching.
+  index("idx_issues_status_completed").on(table.status, table.completedDate),
+]);
 
 export const syncLogs = mysqlTable("sync_logs", {
   id: varchar("id", { length: 191 }).primaryKey(),
