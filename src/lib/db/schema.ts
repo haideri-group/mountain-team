@@ -253,3 +253,16 @@ export const workloadSnapshots = mysqlTable("workload_snapshots", {
   assignedCount: int("assignedCount").default(0),
   createdAt: timestamp("createdAt").defaultNow(),
 });
+
+// Diagnostic log of inbound webhooks (JIRA + GitHub). Written via
+// `db.execute(sql\`INSERT INTO webhook_logs ...\`)` today; the viewer
+// at /api/webhooks/logs reads it. Defined here so drizzle knows it
+// exists and won't suggest dropping it on the next push.
+export const webhookLogs = mysqlTable("webhook_logs", {
+  id: varchar("id", { length: 191 }).primaryKey(),
+  source: varchar("source", { length: 50 }).notNull(),
+  event: varchar("event", { length: 100 }),
+  payload: text("payload"),
+  result: varchar("result", { length: 500 }),
+  receivedAt: timestamp("receivedAt").defaultNow(),
+});
