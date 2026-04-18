@@ -1,10 +1,10 @@
 import { NextResponse } from "next/server";
-import { cleanupExpiredResetTokens } from "@/app/actions/auth";
+import { cleanupExpiredResetTokens } from "@/lib/auth/cleanup-tokens";
 
 export async function GET(request: Request) {
   const authHeader = request.headers.get("authorization") || "";
   const provided = authHeader.replace(/^Bearer\s+/i, "");
-  const expected = process.env.SYNC_SECRET;
+  const expected = process.env.CRON_SECRET || process.env.SYNC_SECRET;
 
   if (!expected || provided !== expected) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });

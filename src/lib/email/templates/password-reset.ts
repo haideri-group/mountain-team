@@ -1,14 +1,22 @@
+function escapeHtml(s: string): string {
+  return s.replace(/[&<>"']/g, (c) =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c] ?? c,
+  );
+}
+
 export function passwordResetEmail(input: {
   recipientName: string | null;
   resetUrl: string;
   expiryMinutes: number;
 }): { subject: string; html: string; text: string } {
   const { recipientName, resetUrl, expiryMinutes } = input;
-  const greeting = recipientName ? `Hi ${recipientName},` : "Hi there,";
+  const safeNameHtml = recipientName ? escapeHtml(recipientName) : null;
+  const htmlGreeting = safeNameHtml ? `Hi ${safeNameHtml},` : "Hi there,";
+  const textGreeting = recipientName ? `Hi ${recipientName},` : "Hi there,";
   const subject = "Reset your TeamFlow password";
 
   const text = [
-    greeting,
+    textGreeting,
     "",
     "We received a request to reset the password on your TeamFlow account.",
     "Use the link below to choose a new password. The link expires in " + expiryMinutes + " minutes and can only be used once.",
@@ -49,7 +57,7 @@ export function passwordResetEmail(input: {
           <tr>
             <td style="padding:40px;">
               <h1 style="margin:0 0 24px 0;font-family:'JetBrains Mono',monospace;font-size:24px;font-weight:700;letter-spacing:-0.02em;color:#1b1c1c;">Reset your password</h1>
-              <p style="margin:0 0 16px 0;font-size:15px;line-height:24px;color:#1b1c1c;">${greeting}</p>
+              <p style="margin:0 0 16px 0;font-size:15px;line-height:24px;color:#1b1c1c;">${htmlGreeting}</p>
               <p style="margin:0 0 24px 0;font-size:15px;line-height:24px;color:#1b1c1c;">
                 We received a request to reset the password on your TeamFlow account. Click the button below to choose a new one.
               </p>

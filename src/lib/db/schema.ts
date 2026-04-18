@@ -25,7 +25,8 @@ export const passwordResetTokens = mysqlTable("password_reset_tokens", {
   requestedAt: timestamp("requestedAt").defaultNow().notNull(),
 }, (t) => ({
   tokenHashIdx: uniqueIndex("password_reset_tokens_token_hash_idx").on(t.tokenHash),
-  userIdIdx: index("password_reset_tokens_user_id_idx").on(t.userId),
+  userRequestedAtIdx: index("password_reset_tokens_user_requested_at_idx").on(t.userId, t.requestedAt),
+  ipRequestedAtIdx: index("password_reset_tokens_ip_requested_at_idx").on(t.requestedIp, t.requestedAt),
   expiresAtIdx: index("password_reset_tokens_expires_at_idx").on(t.expiresAt),
 }));
 

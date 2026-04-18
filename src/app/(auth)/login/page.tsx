@@ -178,6 +178,7 @@ function LoginContent() {
                 id="email"
                 name="email"
                 type="email"
+                autoComplete="username"
                 required
                 placeholder="sarah.chen@tilemountain.co.uk"
                 className="w-full rounded-lg bg-input px-4 py-3 text-sm outline-none ring-1 ring-transparent transition-all placeholder:text-muted-foreground/40 hover:ring-border/30 focus:ring-2 focus:ring-primary/40"
@@ -204,6 +205,7 @@ function LoginContent() {
                   id="password"
                   name="password"
                   type={showPassword ? "text" : "password"}
+                  autoComplete="current-password"
                   required
                   placeholder="••••••••"
                   className="w-full rounded-lg bg-input px-4 py-3 pr-11 text-sm outline-none ring-1 ring-transparent transition-all placeholder:text-muted-foreground/40 hover:ring-border/30 focus:ring-2 focus:ring-primary/40"

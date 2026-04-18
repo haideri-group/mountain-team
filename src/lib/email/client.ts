@@ -20,6 +20,9 @@ function getTransporter(): Transporter {
     secure: port === 465,
     requireTLS: port !== 465,
     auth: { user, pass },
+    connectionTimeout: 10_000,
+    greetingTimeout: 10_000,
+    socketTimeout: 20_000,
   });
 
   return globalForMail._mailTransporter;

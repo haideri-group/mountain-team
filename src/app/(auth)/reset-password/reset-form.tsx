@@ -33,6 +33,7 @@ export function ResetForm({ token }: { token: string }) {
             id="password"
             name="password"
             type={showPassword ? "text" : "password"}
+            autoComplete="new-password"
             required
             minLength={PASSWORD_MIN_LENGTH}
             maxLength={PASSWORD_MAX_LENGTH}
@@ -77,6 +78,7 @@ export function ResetForm({ token }: { token: string }) {
             id="confirmPassword"
             name="confirmPassword"
             type={showConfirm ? "text" : "password"}
+            autoComplete="new-password"
             required
             minLength={PASSWORD_MIN_LENGTH}
             maxLength={PASSWORD_MAX_LENGTH}

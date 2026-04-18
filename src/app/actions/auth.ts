@@ -2,7 +2,7 @@
 
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
-import { and, eq, isNull, lt, sql } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 import bcrypt from "bcryptjs";
 import { z } from "zod";
 import { AuthError } from "next-auth";
@@ -124,7 +124,11 @@ export async function requestPasswordReset(
     });
 
     if (isMailConfigured()) {
-      const appUrl = process.env.NEXT_PUBLIC_APP_URL || "";
+      const appUrl = process.env.NEXT_PUBLIC_APP_URL || process.env.NEXTAUTH_URL || process.env.AUTH_URL;
+      if (!appUrl) {
+        console.error("[password-reset] Missing app URL (NEXT_PUBLIC_APP_URL/NEXTAUTH_URL) — email NOT sent.");
+        return { status: "sent", email };
+      }
       const resetUrl = `${appUrl.replace(/\/$/, "")}/reset-password?token=${plain}`;
       const template = passwordResetEmail({
         recipientName: user.name,
@@ -223,19 +227,37 @@ export async function resetPassword(
   }
 
   try {
-    const hashed = await bcrypt.hash(password, 12);
     const now = new Date();
     const tokenHash = hashToken(token);
+
+    // Atomically consume the token — guarded by usedAt IS NULL so concurrent
+    // submissions of the same token can never both succeed.
+    const consumeResult = await db
+      .update(passwordResetTokens)
+      .set({ usedAt: now })
+      .where(
+        and(
+          eq(passwordResetTokens.tokenHash, tokenHash),
+          isNull(passwordResetTokens.usedAt),
+        ),
+      );
+    const affected =
+      (consumeResult as { affectedRows?: number; rowsAffected?: number }).affectedRows ??
+      (consumeResult as { affectedRows?: number; rowsAffected?: number }).rowsAffected ??
+      0;
+    if (affected !== 1) {
+      return {
+        status: "error",
+        message: "This reset link is invalid or has expired. Please request a new one.",
+      };
+    }
+
+    const hashed = await bcrypt.hash(password, 12);
 
     await db
       .update(users)
       .set({ hashedPassword: hashed, passwordChangedAt: now })
       .where(eq(users.id, validation.userId));
-
-    await db
-      .update(passwordResetTokens)
-      .set({ usedAt: now })
-      .where(eq(passwordResetTokens.tokenHash, tokenHash));
 
     // Invalidate any other outstanding tokens for this user
     await db
@@ -255,19 +277,3 @@ export async function resetPassword(
   redirect("/login?reset=success");
 }
 
-// ---------- Cleanup (used by cron) ----------
-
-export async function cleanupExpiredResetTokens(): Promise<number> {
-  const cutoff = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
-  const [countRow] = await db
-    .select({ count: sql<number>`COUNT(*)` })
-    .from(passwordResetTokens)
-    .where(lt(passwordResetTokens.expiresAt, cutoff));
-  const toDelete = Number(countRow?.count ?? 0);
-  if (toDelete > 0) {
-    await db
-      .delete(passwordResetTokens)
-      .where(lt(passwordResetTokens.expiresAt, cutoff));
-  }
-  return toDelete;
-}
