@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { auth } from "@/auth";
 import { db } from "@/lib/db";
 import { deployments, issues, boards, team_members, githubRepos, githubBranchMappings } from "@/lib/db/schema";
-import { eq, and, desc, gte, inArray, isNotNull, notInArray } from "drizzle-orm";
+import { eq, and, desc, gte, inArray } from "drizzle-orm";
 import { withResolvedAvatars } from "@/lib/db/helpers";
 import { sanitizeErrorText } from "@/lib/jira/client";
 import type { Mismatch, PendingRelease, SiteStatus } from "@/components/deployments/types";
