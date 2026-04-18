@@ -196,7 +196,13 @@ export const deployments = mysqlTable("deployments", {
   deployedAt: timestamp("deployedAt").notNull(),
   createdAt: timestamp("createdAt").defaultNow(),
 }, (table) => [
+  // Serves per-issue pipeline lookups (fetch all deployments for a JIRA key).
   index("idx_deployments_jirakey_env").on(table.jiraKey, table.environment),
+  // Serves unbounded env-filtered scans ordered by recency: the mismatches
+  // pass in /api/deployments and the site-overview batch fetch. Without
+  // this, those queries fall back to full-table scan + filesort because
+  // the `jirakey_env` index's leading column isn't in their WHERE clause.
+  index("idx_deployments_env_deployed_at").on(table.environment, table.deployedAt),
 ]);
 
 // --- JIRA Releases ---
