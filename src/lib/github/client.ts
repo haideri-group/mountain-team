@@ -35,6 +35,40 @@ function sanitizeErrorText(text: string): string {
 
 // --- Fetch ---
 
+/**
+ * Last-seen GitHub rate-limit state, updated by every githubFetch /
+ * githubFetchAll response that carries `X-RateLimit-*` headers.
+ * Module-level so all GH-touching flows (per-issue sync, webhook,
+ * backfill, etc.) contribute to one shared counter. Callers that care
+ * (e.g., the deployment-backfill circuit breaker) read it via
+ * `getLastKnownRateLimit()`.
+ *
+ * Null means we haven't seen a response yet this process lifetime.
+ * After a restart, the next request repopulates it.
+ */
+let lastRateLimit: { remaining: number; limit: number; resetAt: Date } | null = null;
+
+export function getLastKnownRateLimit(): { remaining: number; limit: number; resetAt: Date } | null {
+  return lastRateLimit ? { ...lastRateLimit } : null;
+}
+
+/** Parse `X-RateLimit-*` headers from a fetch Response and update module state.
+ *  Safe to call on any response — if headers are absent, nothing changes. */
+function captureRateLimitHeaders(res: Response): void {
+  const remaining = res.headers.get("x-ratelimit-remaining");
+  const limit = res.headers.get("x-ratelimit-limit");
+  const reset = res.headers.get("x-ratelimit-reset");
+  if (remaining === null || reset === null) return;
+  const remainingNum = Number.parseInt(remaining, 10);
+  const resetSec = Number.parseInt(reset, 10);
+  if (!Number.isFinite(remainingNum) || !Number.isFinite(resetSec)) return;
+  lastRateLimit = {
+    remaining: remainingNum,
+    limit: limit ? Number.parseInt(limit, 10) : lastRateLimit?.limit ?? 5000,
+    resetAt: new Date(resetSec * 1000),
+  };
+}
+
 export async function githubFetch<T>(path: string): Promise<T> {
   const url = path.startsWith("http")
     ? path
@@ -44,6 +78,8 @@ export async function githubFetch<T>(path: string): Promise<T> {
     headers: getAuthHeaders(),
     cache: "no-store",
   });
+
+  captureRateLimitHeaders(res);
 
   if (!res.ok) {
     const text = await res.text();
@@ -68,6 +104,8 @@ export async function githubFetchAll<T>(path: string, maxPages = 10): Promise<T[
       headers: getAuthHeaders(),
       cache: "no-store",
     });
+
+    captureRateLimitHeaders(res);
 
     if (!res.ok) {
       const text = await res.text();
@@ -117,6 +155,16 @@ export function verifyWebhookSignature(
 
 // --- Rate Limit ---
 
+/**
+ * Active poll of the GitHub rate-limit endpoint. Preferred over the
+ * passively-captured `lastRateLimit` when you need a guaranteed-fresh
+ * reading (e.g., pre-flight check at the start of a long-running
+ * backfill). The `/rate_limit` endpoint itself does NOT count against
+ * the rate limit — it's free to call.
+ *
+ * Also updates the module-level `lastRateLimit` as a side effect via
+ * githubFetch.
+ */
 export async function getRateLimit(): Promise<{
   remaining: number;
   limit: number;

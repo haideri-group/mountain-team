@@ -4,7 +4,7 @@
 **Product:** TeamFlow
 **Company:** Tile Mountain
 **Repository:** https://github.com/haidertm/team-flow
-**Last Updated:** April 18, 2026
+**Last Updated:** April 19, 2026
 
 ---
 
@@ -1101,6 +1101,28 @@ Makes `/releases` the single place a team lead sees what's shipping, what's bloc
 
 _Status will flip to ✅ Complete once Phases A–C ship. D and E tracked as future work._
 
+### Phase 20: Deployment Backfill Cron — 🟡 In progress
+Closes the historical deployment-coverage gap. As of this phase's start, 3,902 of 4,075 tracked issues (95.8%) had zero rows in the `deployments` table — the per-repo 90-day backfill only covers the last quarter of GitHub PR history, and the webhook only captures deployments going forward. The Releases page's deployment icons, mismatch detection, site-overview coverage, and release burndown chart all render partial or empty state for uncovered issues.
+- **Issue-driven, not PR-driven.** Walks the `issues` table (bounded input ~4,000 rows) instead of scanning GitHub PR history backward — eliminates the arbitrary 90-day window.
+- **New `issues.deploymentsSyncedAt` column** (timestamp, nullable, indexed) drives a five-tier priority queue:
+  1. Never synced + active status
+  2. Never synced + any status
+  3. Active + stamp > 6h old
+  4. JIRA-moved since last sync
+  5. Age-based rotation (safety net)
+  Skips done/closed issues whose `deployedSites` ⊇ `expectedSites(brands)` — reuses `getDeploymentCompleteness()` from `src/lib/deployments/brand-resolver.ts`.
+- **`recordDeploymentsForIssue(issue)`** extracted from `syncSingleIssue` into `src/lib/github/issue-deployment-sync.ts`. Same three-strategy fetcher the per-issue Sync button uses: JIRA dev-status → GitHub search → JIRA comments parse. Now reusable by both the button AND the backfill.
+- **`propagateDeploymentToOtherBranches`** + `cachedCompare` + `findBranchDeployDate` moved from `issue-sync.ts` (loses ~200 lines) into `src/lib/github/deployment-propagation.ts`.
+- **Rate-limit-aware.** `githubFetch` now parses `X-RateLimit-Remaining` + `X-RateLimit-Reset` headers on every response into module-level state. Backfill circuit-breaks when `remaining < 500`; every other GH-touching flow (per-issue sync, webhook, per-repo backfill) contributes to the same shared counter — app-wide safety net as a side benefit.
+- **Schedule:** `GET /api/cron/deployment-backfill` (SYNC_SECRET auth), **every 3 hours** (`30 */3 * * *` via Cronicle), hard cap of 200 issues per run. At 8 runs/day × 200 issues = 1,600/day, full 3,902-issue coverage in ~2.5 days then drops to maintenance mode (most runs small, most issues skipped via the completion pre-filter).
+- **Admin manual trigger:** `POST /api/admin/deployment-backfill` (admin-only) + `GET` returns in-memory progress for the Settings UI panel. Runs the same batch-of-200 as the cron; admin clicks again for another batch.
+- **New `syncLogs.type` enum value:** `deployment_backfill`.
+- **Env-configurable:** `BACKFILL_MAX_ISSUES_PER_RUN=200`, `BACKFILL_RATE_LIMIT_FLOOR=500`, `BACKFILL_RATE_LIMIT_START=1000`, `BACKFILL_SLEEP_BETWEEN_ISSUES_MS=100`.
+- **Idempotent.** `recordDeployment()` dedupes on `(jiraKey, environment, siteName, repoId, commitSha)` — unchanged — so re-runs and webhook/backfill overlap never produce duplicates.
+- **Future enhancements deferred:** GitHub App auth (3× quota), SSE progress, per-issue retry budget, parallel processing.
+
+_Status will flip to ✅ Complete once the migration ships, the cron is scheduled in Cronicle, and the first full-coverage sweep has run._
+
 ---
 
 ## 10. Notification Types
@@ -1356,9 +1378,10 @@ mountain-team/
 | 17 | Shared FilterSelect Component (PR #35) | — | — | ✅ Complete (beyond scope) |
 | 18 | Schema Migration Tooling (PR #39) | — | — | 🟡 Awaiting merge (PR #39 open) |
 | 19 | Releases Command Center (A Foundation → B Insights → C Collaboration → D Bundles) | — | — | 🟡 In progress |
+| 20 | Deployment Backfill Cron | — | — | 🟡 In progress |
 | **Total (original)** | | **30-42 days** | **6-8 weeks** | |
 
-**Note:** Phases 6, 7, and 8 can be parallelized since they all depend on Phase 5 (mock data). Phase 10 requires Phases 3 + 4. Phase 11 requires all prior phases. Phases 12–18 were added to the scope during implementation as new requirements emerged. Phase 19 (Releases Command Center) runs after Phase 18 merges and ships in three waves (A foundation, B insights, C collaboration), with Phase D (bundles) kicking off only after Phase A has been in use for ~2 weeks.
+**Note:** Phases 6, 7, and 8 can be parallelized since they all depend on Phase 5 (mock data). Phase 10 requires Phases 3 + 4. Phase 11 requires all prior phases. Phases 12–18 were added to the scope during implementation as new requirements emerged. Phase 19 (Releases Command Center) runs after Phase 18 merges and ships in three waves (A foundation, B insights, C collaboration), with Phase D (bundles) kicking off only after Phase A has been in use for ~2 weeks. Phase 20 (Deployment Backfill Cron) closes the historical deployment-coverage gap for all 4,075 tracked issues; runs every 3 hours in a rate-limit-aware batch, reaches full coverage in ~2.5 days.
 
 ---
 
