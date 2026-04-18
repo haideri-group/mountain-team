@@ -128,6 +128,10 @@ export async function GET(request: NextRequest) {
         0,
       );
 
+      const inProgressCount = memberIssues.filter(
+        (i) => i.status === "in_progress",
+      ).length;
+
       const capacity = member.capacity || 15;
       const percentage = Math.round((activePoints / capacity) * 100);
       const level = getWorkloadLevel(percentage);
@@ -174,6 +178,7 @@ export async function GET(request: NextRequest) {
         capacity,
         status: member.status,
         assignedCount: memberIssues.length,
+        inProgressCount,
         activePoints: Math.round(activePoints * 10) / 10,
         completedCount,
         percentage,
@@ -224,6 +229,7 @@ export async function GET(request: NextRequest) {
       message: string;
     }[] = [];
 
+    const alertedIds = new Set<string>();
     for (const m of members) {
       if (m.level === "over") {
         alerts.push({
@@ -234,6 +240,7 @@ export async function GET(request: NextRequest) {
           percentage: m.percentage,
           message: `${m.assignedCount} tasks assigned · ${m.activePoints} pts / ${m.capacity} capacity`,
         });
+        alertedIds.add(m.id);
       }
       if (m.burnoutRisk && m.level !== "over") {
         alerts.push({
@@ -244,15 +251,26 @@ export async function GET(request: NextRequest) {
           percentage: m.percentage,
           message: `100%+ for ${m.weeksOverCapacity} week${m.weeksOverCapacity > 1 ? "s" : ""} · Monitor closely`,
         });
+        alertedIds.add(m.id);
       }
-      if (m.level === "idle" && m.status === "active") {
+      // Flag anyone actively employed who has zero in-progress tasks —
+      // they might have queued/review work but aren't executing anything
+      // right now, which is useful visibility for the team lead.
+      if (
+        m.status === "active" &&
+        m.inProgressCount === 0 &&
+        !alertedIds.has(m.id)
+      ) {
         alerts.push({
           type: "idle",
           memberId: m.id,
           memberName: m.displayName,
           avatarUrl: m.avatarUrl,
-          percentage: 0,
-          message: "No tasks assigned · Available for assignment",
+          percentage: m.percentage,
+          message:
+            m.assignedCount === 0
+              ? "No tasks assigned · Available for assignment"
+              : `${m.assignedCount} task${m.assignedCount > 1 ? "s" : ""} queued · Nothing in progress right now`,
         });
       }
     }

@@ -27,6 +27,7 @@ interface WorkloadMember {
   capacity: number;
   status: "active" | "on_leave" | "departed";
   assignedCount: number;
+  inProgressCount: number;
   activePoints: number;
   completedCount: number;
   percentage: number;
