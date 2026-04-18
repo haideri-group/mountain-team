@@ -13,6 +13,9 @@ export function passwordResetEmail(input: {
   const safeNameHtml = recipientName ? escapeHtml(recipientName) : null;
   const htmlGreeting = safeNameHtml ? `Hi ${safeNameHtml},` : "Hi there,";
   const textGreeting = recipientName ? `Hi ${recipientName},` : "Hi there,";
+  // Defensive escape — resetUrl is server-built from trusted sources, but if the
+  // app URL env ever contains &/" it would break the href. Cheap protection.
+  const safeResetUrl = escapeHtml(resetUrl);
   const subject = "Reset your TeamFlow password";
 
   const text = [
@@ -64,7 +67,7 @@ export function passwordResetEmail(input: {
               <table role="presentation" cellpadding="0" cellspacing="0" style="margin:0 0 24px 0;">
                 <tr>
                   <td style="background-color:#1a1a2e;border-radius:8px;">
-                    <a href="${resetUrl}" style="display:inline-block;padding:14px 28px;font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:700;text-transform:uppercase;letter-spacing:0.12em;color:#ffffff;text-decoration:none;">Reset password</a>
+                    <a href="${safeResetUrl}" style="display:inline-block;padding:14px 28px;font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:700;text-transform:uppercase;letter-spacing:0.12em;color:#ffffff;text-decoration:none;">Reset password</a>
                   </td>
                 </tr>
               </table>
@@ -75,7 +78,7 @@ export function passwordResetEmail(input: {
                 Button not working? Paste this URL into your browser:
               </p>
               <p style="margin:0 0 32px 0;font-family:'JetBrains Mono',monospace;font-size:12px;line-height:18px;color:#944a00;word-break:break-all;">
-                <a href="${resetUrl}" style="color:#944a00;text-decoration:underline;">${resetUrl}</a>
+                <a href="${safeResetUrl}" style="color:#944a00;text-decoration:underline;">${safeResetUrl}</a>
               </p>
               <div style="height:1px;background-color:#dec1af;opacity:0.3;margin:24px 0;"></div>
               <p style="margin:0;font-size:13px;line-height:20px;color:#7c7268;">

@@ -20,6 +20,11 @@ import { checkResetRateLimit, getRequestIp } from "@/lib/auth/rate-limit";
 import { sendMail, isMailConfigured } from "@/lib/email/client";
 import { passwordResetEmail } from "@/lib/email/templates/password-reset";
 import { PASSWORD_MIN_LENGTH, PASSWORD_MAX_LENGTH } from "@/lib/auth/password-rules";
+import { sanitizeErrorText } from "@/lib/jira/client";
+
+function sanitize(err: unknown): string {
+  return sanitizeErrorText(err instanceof Error ? err.message : String(err));
+}
 
 export async function authenticate(prevState: string | undefined, formData: FormData) {
   try {
@@ -115,38 +120,51 @@ export async function requestPasswordReset(
     const tokenHash = hashToken(plain);
     const expiresAt = resetTokenExpiry();
 
+    const tokenId = `prt_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
     await db.insert(passwordResetTokens).values({
-      id: `prt_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+      id: tokenId,
       userId: user.id,
       tokenHash,
       expiresAt,
       requestedIp: ip,
     });
 
-    if (isMailConfigured()) {
-      const appUrl = process.env.NEXT_PUBLIC_APP_URL || process.env.NEXTAUTH_URL || process.env.AUTH_URL;
-      if (!appUrl) {
-        console.error("[password-reset] Missing app URL (NEXT_PUBLIC_APP_URL/NEXTAUTH_URL) — email NOT sent.");
-        return { status: "sent", email };
-      }
-      const resetUrl = `${appUrl.replace(/\/$/, "")}/reset-password?token=${plain}`;
-      const template = passwordResetEmail({
-        recipientName: user.name,
-        resetUrl,
-        expiryMinutes: RESET_TOKEN_TTL_MINUTES,
-      });
+    const deleteOrphanToken = async () => {
       try {
-        await sendMail({ to: user.email, ...template });
-      } catch (err) {
-        console.error("[password-reset] sendMail failed:", err instanceof Error ? err.message : err);
+        await db.delete(passwordResetTokens).where(eq(passwordResetTokens.id, tokenId));
+      } catch (delErr) {
+        console.error("[password-reset] failed to clean up orphan token:", sanitize(delErr));
       }
-    } else {
+    };
+
+    if (!isMailConfigured()) {
       console.warn("[password-reset] SMTP not configured — email NOT sent.");
+      await deleteOrphanToken();
+      return { status: "sent", email };
+    }
+
+    const appUrl = process.env.NEXT_PUBLIC_APP_URL || process.env.NEXTAUTH_URL || process.env.AUTH_URL;
+    if (!appUrl) {
+      console.error("[password-reset] Missing app URL (NEXT_PUBLIC_APP_URL/NEXTAUTH_URL) — email NOT sent.");
+      await deleteOrphanToken();
+      return { status: "sent", email };
+    }
+    const resetUrl = `${appUrl.replace(/\/$/, "")}/reset-password?token=${plain}`;
+    const template = passwordResetEmail({
+      recipientName: user.name,
+      resetUrl,
+      expiryMinutes: RESET_TOKEN_TTL_MINUTES,
+    });
+    try {
+      await sendMail({ to: user.email, ...template });
+    } catch (err) {
+      console.error("[password-reset] sendMail failed:", sanitize(err));
+      await deleteOrphanToken();
     }
 
     return { status: "sent", email };
   } catch (err) {
-    console.error("[password-reset] requestPasswordReset error:", err instanceof Error ? err.message : err);
+    console.error("[password-reset] requestPasswordReset error:", sanitize(err));
     return { status: "sent", email };
   }
 }
@@ -226,52 +244,63 @@ export async function resetPassword(
     };
   }
 
-  try {
-    const now = new Date();
-    const tokenHash = hashToken(token);
+  // Hash outside the transaction — bcrypt is slow and CPU-bound; keeping
+  // the transaction short reduces lock contention.
+  const hashed = await bcrypt.hash(password, 12);
+  const tokenHash = hashToken(token);
+  const now = new Date();
 
-    // Atomically consume the token — guarded by usedAt IS NULL so concurrent
-    // submissions of the same token can never both succeed.
-    const consumeResult = await db
-      .update(passwordResetTokens)
-      .set({ usedAt: now })
-      .where(
-        and(
-          eq(passwordResetTokens.tokenHash, tokenHash),
-          isNull(passwordResetTokens.usedAt),
-        ),
-      );
-    const affected =
-      (consumeResult as { affectedRows?: number; rowsAffected?: number }).affectedRows ??
-      (consumeResult as { affectedRows?: number; rowsAffected?: number }).rowsAffected ??
-      0;
-    if (affected !== 1) {
+  const TOKEN_INVALID = "TOKEN_INVALID";
+  const USER_NOT_FOUND = "USER_NOT_FOUND";
+
+  try {
+    await db.transaction(async (tx) => {
+      // Atomically consume the token — guarded by usedAt IS NULL so concurrent
+      // submissions of the same token can never both succeed.
+      const consume = await tx
+        .update(passwordResetTokens)
+        .set({ usedAt: now })
+        .where(
+          and(
+            eq(passwordResetTokens.tokenHash, tokenHash),
+            isNull(passwordResetTokens.usedAt),
+          ),
+        );
+      const consumed =
+        (consume as { affectedRows?: number; rowsAffected?: number }).affectedRows ??
+        (consume as { affectedRows?: number; rowsAffected?: number }).rowsAffected ??
+        0;
+      if (consumed !== 1) throw new Error(TOKEN_INVALID);
+
+      const userUpdate = await tx
+        .update(users)
+        .set({ hashedPassword: hashed, passwordChangedAt: now })
+        .where(eq(users.id, validation.userId));
+      const updated =
+        (userUpdate as { affectedRows?: number; rowsAffected?: number }).affectedRows ??
+        (userUpdate as { affectedRows?: number; rowsAffected?: number }).rowsAffected ??
+        0;
+      if (updated !== 1) throw new Error(USER_NOT_FOUND);
+
+      // Invalidate any other outstanding tokens for this user
+      await tx
+        .update(passwordResetTokens)
+        .set({ usedAt: now })
+        .where(
+          and(
+            eq(passwordResetTokens.userId, validation.userId),
+            isNull(passwordResetTokens.usedAt),
+          ),
+        );
+    });
+  } catch (err) {
+    if (err instanceof Error && (err.message === TOKEN_INVALID || err.message === USER_NOT_FOUND)) {
       return {
         status: "error",
         message: "This reset link is invalid or has expired. Please request a new one.",
       };
     }
-
-    const hashed = await bcrypt.hash(password, 12);
-
-    await db
-      .update(users)
-      .set({ hashedPassword: hashed, passwordChangedAt: now })
-      .where(eq(users.id, validation.userId));
-
-    // Invalidate any other outstanding tokens for this user
-    await db
-      .update(passwordResetTokens)
-      .set({ usedAt: now })
-      .where(
-        and(
-          eq(passwordResetTokens.userId, validation.userId),
-          isNull(passwordResetTokens.usedAt),
-        ),
-      );
-
-  } catch (err) {
-    console.error("[password-reset] resetPassword error:", err instanceof Error ? err.message : err);
+    console.error("[password-reset] resetPassword error:", sanitize(err));
     return { status: "error", message: "Something went wrong. Please try again." };
   }
   redirect("/login?reset=success");
