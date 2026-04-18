@@ -14,6 +14,23 @@ function getInitials(name: string): string {
     .toUpperCase();
 }
 
+// Defensive parse for JSON-encoded string[] columns (labels, fixVersions).
+// DB values are written via JSON.stringify of string arrays, but historical
+// or manually-edited rows could contain anything — validate shape at the
+// read boundary so downstream renderers never see non-string values.
+function parseStringArray(raw: string | null): string[] {
+  if (!raw) return [];
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (Array.isArray(parsed) && parsed.every((v) => typeof v === "string")) {
+      return parsed;
+    }
+    return [];
+  } catch {
+    return [];
+  }
+}
+
 export async function GET(
   _request: Request,
   { params }: { params: Promise<{ key: string }> },
@@ -63,21 +80,8 @@ export async function GET(
         ? issue.completedDate <= issue.dueDate
         : null;
 
-    // Parse labels
-    let labels: string[] = [];
-    try {
-      labels = issue.labels ? JSON.parse(issue.labels) : [];
-    } catch {
-      labels = [];
-    }
-
-    // Parse fix versions (release names, e.g. "R 2025-04-15")
-    let fixVersions: string[] = [];
-    try {
-      fixVersions = issue.fixVersions ? JSON.parse(issue.fixVersions) : [];
-    } catch {
-      fixVersions = [];
-    }
+    const labels = parseStringArray(issue.labels);
+    const fixVersions = parseStringArray(issue.fixVersions);
 
     // Days in current status (from jiraUpdatedAt to now)
     const daysInCurrentStatus = issue.jiraUpdatedAt
