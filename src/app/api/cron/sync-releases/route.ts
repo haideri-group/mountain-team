@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { runReleaseSync } from "@/lib/sync/release-sync";
+import { generateReleaseNotifications } from "@/lib/notifications/release-generator";
 
 export async function GET(request: Request) {
   try {
@@ -12,12 +13,22 @@ export async function GET(request: Request) {
 
     const { logId, result } = await runReleaseSync();
 
+    // Fire release-scoped notifications after the sync so state transitions
+    // (e.g., released=true flipped in JIRA) propagate immediately.
+    let notifCounts: Awaited<ReturnType<typeof generateReleaseNotifications>> | null = null;
+    try {
+      notifCounts = await generateReleaseNotifications();
+    } catch (err) {
+      console.error("Release notification generation failed (non-fatal):", err);
+    }
+
     return NextResponse.json({
       success: true,
       logId,
       versionsUpserted: result.versionsUpserted,
       projectsScanned: result.projectsScanned,
       errors: result.errors,
+      notifications: notifCounts,
     });
   } catch (error) {
     console.error("Cron release sync failed:", error);

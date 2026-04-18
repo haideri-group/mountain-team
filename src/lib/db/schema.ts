@@ -127,11 +127,28 @@ export const dashboardConfig = mysqlTable("dashboard_config", {
 
 export const notifications = mysqlTable("notifications", {
   id: varchar("id", { length: 191 }).primaryKey(),
-  type: mysqlEnum("type", ["aging", "overdue", "capacity", "completed", "unblocked", "deployed", "user_joined"]).notNull(),
+  type: mysqlEnum("type", [
+    "aging",
+    "overdue",
+    "capacity",
+    "completed",
+    "unblocked",
+    "deployed",
+    "user_joined",
+    "release_overdue",
+    "release_ready",
+    "release_deployed",
+    "release_scope_changed",
+    "release_stale",
+  ]).notNull(),
   title: varchar("title", { length: 255 }).notNull(),
   message: text("message").notNull(),
   relatedIssueId: varchar("relatedIssueId", { length: 191 }).references(() => issues.id),
   relatedMemberId: varchar("relatedMemberId", { length: 191 }).references(() => team_members.id),
+  // Populated when the notification is about a release as a whole rather than
+  // a specific issue. Forward declaration — FK added as a raw ALTER in the
+  // Phase C migration since `jira_releases` is defined lower in this file.
+  relatedReleaseId: varchar("relatedReleaseId", { length: 191 }),
   isRead: boolean("isRead").default(false),
   createdAt: timestamp("createdAt").defaultNow(),
 });
@@ -199,9 +216,64 @@ export const jiraReleases = mysqlTable("jira_releases", {
   issuesInProgress: int("issuesInProgress").default(0),
   issuesToDo: int("issuesToDo").default(0),
   issuesTotal: int("issuesTotal").default(0),
+  lastSyncedAt: timestamp("lastSyncedAt"),
+  ownerUserId: varchar("ownerUserId", { length: 191 }).references(() => users.id),
   createdAt: timestamp("createdAt").defaultNow(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow(),
 });
+
+// Daily rollup per non-archived release — drives the burndown chart on
+// /releases/[id]. Synthesised `id` of the form `rds_{releaseId}_{date}` makes
+// the (releaseId, date) pair effectively unique, mirroring the trick used by
+// `workload_snapshots`. Populated by the existing sync-issues cron's post-sync
+// hook; no dedicated cron.
+export const releaseDailySnapshots = mysqlTable("release_daily_snapshots", {
+  id: varchar("id", { length: 191 }).primaryKey(),
+  releaseId: varchar("releaseId", { length: 191 }).references(() => jiraReleases.id).notNull(),
+  date: varchar("date", { length: 50 }).notNull(),
+  done: int("done").default(0),
+  inProgress: int("inProgress").default(0),
+  toDo: int("toDo").default(0),
+  staging: int("staging").default(0),
+  production: int("production").default(0),
+  createdAt: timestamp("createdAt").defaultNow(),
+}, (table) => [
+  index("idx_release_daily_snapshots_release_date").on(table.releaseId, table.date),
+]);
+
+// Junction table replacing read-time JSON_CONTAINS(issues.fixVersions, …) lookups.
+// Immutable audit trail: an issue added and then removed leaves two rows linked
+// by (releaseId, jiraKey) with addedAt/removedAt timestamps — used later for the
+// scope-creep analytics in Phase B. Maintained by the JIRA webhook fixVersion-diff
+// path and the bulk issue sync; initial backfill via scripts/migrate-release-issues.ts.
+export const releaseIssues = mysqlTable("release_issues", {
+  id: varchar("id", { length: 191 }).primaryKey(),
+  releaseId: varchar("releaseId", { length: 191 }).references(() => jiraReleases.id).notNull(),
+  jiraKey: varchar("jiraKey", { length: 50 }).notNull(),
+  addedAt: timestamp("addedAt").defaultNow().notNull(),
+  removedAt: timestamp("removedAt"),
+}, (table) => [
+  // Composite lookup: "is this issue currently in this release?"
+  index("idx_release_issues_release_key").on(table.releaseId, table.jiraKey),
+  // Reverse lookup: "which releases is this issue in?"
+  index("idx_release_issues_jirakey").on(table.jiraKey),
+]);
+
+// Per-release pre-release checklist. Admin-editable labels, per-user check-off.
+// Default templates are seeded on first view of a release (not materialised here
+// so admins can fully customise without fighting a template).
+export const releaseChecklistItems = mysqlTable("release_checklist_items", {
+  id: varchar("id", { length: 191 }).primaryKey(),
+  releaseId: varchar("releaseId", { length: 191 }).references(() => jiraReleases.id).notNull(),
+  label: varchar("label", { length: 255 }).notNull(),
+  isComplete: boolean("isComplete").default(false).notNull(),
+  completedBy: varchar("completedBy", { length: 191 }).references(() => users.id),
+  completedAt: timestamp("completedAt"),
+  sortOrder: int("sortOrder").default(0).notNull(),
+  createdAt: timestamp("createdAt").defaultNow(),
+}, (table) => [
+  index("idx_release_checklist_release").on(table.releaseId),
+]);
 
 // --- Time Doctor Entries ---
 

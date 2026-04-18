@@ -24,6 +24,9 @@ function getPageTitle(pathname: string): string {
   if (pathname === "/overview") return "Team Overview";
   if (pathname === "/calendar") return "Calendar";
   if (pathname === "/workload") return "Workload";
+  if (pathname === "/deployments") return "Deployments";
+  if (pathname === "/releases") return "Releases";
+  if (pathname.startsWith("/releases/")) return "Release Detail";
   if (pathname === "/reports") return "Reports";
   if (pathname === "/settings") return "Settings";
   if (pathname === "/members") return "Members";

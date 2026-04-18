@@ -16,6 +16,7 @@ import { getAuthHeader, getBaseUrl, sanitizeErrorText } from "@/lib/jira/client"
 import { recordDeployment } from "@/lib/github/deployments";
 import { extractJiraKeys } from "@/lib/github/jira-keys";
 import { upsertWorklogs, fetchIssueWorklogs } from "@/lib/sync/worklog-sync";
+import { syncReleaseIssuesForIssue } from "@/lib/releases/sync-release-issues";
 
 // --- Types ---
 
@@ -189,6 +190,15 @@ async function syncIssues(type: IssueSyncType, filterBoardKey?: string): Promise
           set: fields,
         });
 
+      // Keep release_issues junction in sync with fixVersions diff.
+      // Non-fatal: swallows errors internally so bulk sync never fails here.
+      await syncReleaseIssuesForIssue(
+        normalized.jiraKey,
+        existing?.fixVersions ?? null,
+        normalized.fixVersions,
+        normalized.projectKey,
+      );
+
       if (existing) {
         result.updated++;
       } else {
@@ -259,6 +269,22 @@ export async function runIssueSync(type: IssueSyncType, boardKey?: string): Prom
       await recordWorkloadSnapshots();
     } catch (snapError) {
       console.error("Workload snapshot recording failed:", snapError);
+    }
+
+    // Record release daily snapshots for the burndown chart
+    try {
+      const { recordReleaseDailySnapshots } = await import("@/lib/releases/snapshots");
+      await recordReleaseDailySnapshots();
+    } catch (snapError) {
+      console.error("Release snapshot recording failed:", snapError);
+    }
+
+    // Fire release-scoped notifications (overdue/ready/deployed/scope-changed/stale)
+    try {
+      const { generateReleaseNotifications } = await import("@/lib/notifications/release-generator");
+      await generateReleaseNotifications();
+    } catch (relNotifError) {
+      console.error("Release notification generation failed:", relNotifError);
     }
 
     return { logId, result };
@@ -526,6 +552,14 @@ export async function syncSingleIssue(
     .insert(issues)
     .values({ id, jiraKey: normalized.jiraKey, ...fields })
     .onDuplicateKeyUpdate({ set: fields });
+
+  // Keep release_issues junction in sync with fixVersions diff.
+  await syncReleaseIssuesForIssue(
+    normalized.jiraKey,
+    existing?.fixVersions ?? null,
+    normalized.fixVersions,
+    normalized.projectKey,
+  );
 
   // Sync worklogs for this issue (reuses paginated fetcher from worklog-sync)
   let worklogsRecorded = 0;

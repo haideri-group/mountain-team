@@ -145,17 +145,74 @@ export async function GET(request: Request) {
       issueDeployedSites.set(d.jiraKey, sites);
     }
 
-    // Status mismatches: deployed to production but status not post_live/done/closed
-    const EXPECTED_POST_DEPLOY = ["post_live_testing", "done", "closed"];
-    const mismatchList: Mismatch[] = [];
-    const seenMismatchKeys = new Set<string>();
+    // Status mismatches — intentionally NOT bounded by the 30-day `allDeployments`
+    // window. A production-deployed task stuck in `in_progress` for 45 days is
+    // MORE urgent, not less. We query production deployments unbounded and rank
+    // by age. Closed-but-deployed is carved out as its own type because shipping
+    // cancelled work is a distinct failure mode from "forgot to update JIRA".
+    const EXPECTED_POST_DEPLOY = ["post_live_testing", "done"]; // `closed` handled separately
+    const EARLY_STATUSES = ["backlog", "todo", "in_progress"];
+    const ROLLOUT_STATUSES = ["rolling_out", "ready_for_live"];
 
-    function buildMismatch(d: typeof allDeployments[0], issue: typeof deployedIssues[0], type: Mismatch["type"]): Mismatch {
+    // All production/canonical deployments ever — for mismatch detection.
+    // Index on (jiraKey, environment) keeps this fast; narrowed below by status.
+    const allProdDeployments = await db
+      .select()
+      .from(deployments)
+      .where(inArray(deployments.environment, ["production", "canonical"]))
+      .orderBy(desc(deployments.deployedAt));
+
+    // Build per-issue production-deployed-sites map from the unbounded set,
+    // replacing the 30-day-scoped version for mismatch and completeness checks.
+    const issueDeployedSitesUnbounded = new Map<string, string[]>();
+    for (const d of allProdDeployments) {
+      if (!d.siteName) continue;
+      const sites = issueDeployedSitesUnbounded.get(d.jiraKey) || [];
+      if (!sites.includes(d.siteName)) sites.push(d.siteName);
+      issueDeployedSitesUnbounded.set(d.jiraKey, sites);
+    }
+
+    // Load issue rows for the unbounded production deployments — superset of
+    // `issueMap` which was keyed off 30-day deployments.
+    const unboundedProdJiraKeys = [...new Set(allProdDeployments.map((d) => d.jiraKey))];
+    const mismatchIssueRows = unboundedProdJiraKeys.length
+      ? await db
+          .select({
+            jiraKey: issues.jiraKey,
+            title: issues.title,
+            status: issues.status,
+            jiraStatusName: issues.jiraStatusName,
+            type: issues.type,
+            brands: issues.brands,
+            assigneeId: issues.assigneeId,
+            boardId: issues.boardId,
+            jiraUpdatedAt: issues.jiraUpdatedAt,
+          })
+          .from(issues)
+          .where(inArray(issues.jiraKey, unboundedProdJiraKeys))
+      : [];
+    const mismatchIssueMap = new Map(mismatchIssueRows.map((i) => [i.jiraKey, i]));
+
+    const mismatchList: Mismatch[] = [];
+    const seenMismatchPairs = new Set<string>(); // `${type}:${jiraKey}` — allows multiple types per key
+
+    function ageSeverity(days: number): Mismatch["severity"] {
+      if (days > 7) return "critical";
+      if (days >= 3) return "warning";
+      return "info";
+    }
+
+    function buildMismatch(
+      d: typeof allProdDeployments[0],
+      issue: typeof mismatchIssueRows[0],
+      type: Mismatch["type"],
+    ): Mismatch {
       const board = boardMap.get(issue.boardId);
       const member = issue.assigneeId ? memberMap.get(issue.assigneeId) : null;
-      const deployedSites = issueDeployedSites.get(d.jiraKey) || [];
+      const deployedSites = issueDeployedSitesUnbounded.get(d.jiraKey) || [];
       const expected = getExpectedSites(issue.brands, allProductionSites);
       const missing = expected ? expected.filter((s) => !deployedSites.includes(s)) : [];
+      const days = daysBetween(d.deployedAt, now);
 
       return {
         jiraKey: d.jiraKey,
@@ -171,52 +228,66 @@ export async function GET(request: Request) {
         siteName: d.siteName,
         siteLabel: d.siteLabel,
         deployedAt: d.deployedAt.toISOString(),
-        daysSinceDeployment: daysBetween(d.deployedAt, now),
+        daysSinceDeployment: days,
         type,
         brands: issue.brands,
         deployedSites,
         expectedSites: expected,
         missingSites: missing,
+        severity: type === "closed_but_deployed" ? "critical" : ageSeverity(days),
       };
     }
 
-    // Pass 1: Production deployed but JIRA status not updated
-    for (const d of allDeployments) {
-      if (d.environment !== "production" && d.environment !== "canonical") continue;
-      const issue = issueMap.get(d.jiraKey);
-      if (!issue) continue;
-      if (EXPECTED_POST_DEPLOY.includes(issue.status)) continue;
-      if (seenMismatchKeys.has(d.jiraKey)) continue;
-      seenMismatchKeys.add(d.jiraKey);
-      mismatchList.push(buildMismatch(d, issue, "production_not_updated"));
+    function pushUnique(m: Mismatch) {
+      const key = `${m.type}:${m.jiraKey}`;
+      if (seenMismatchPairs.has(key)) return;
+      seenMismatchPairs.add(key);
+      mismatchList.push(m);
     }
 
-    // Pass 2: Staging deployed but status still early
-    const EARLY_STATUSES = ["backlog", "todo", "in_progress"];
+    // Pass 1: Production deployed but status not post-deploy (excluding closed)
+    for (const d of allProdDeployments) {
+      const issue = mismatchIssueMap.get(d.jiraKey);
+      if (!issue) continue;
+      if (issue.status === "closed") continue; // handled by Pass 4
+      if (EXPECTED_POST_DEPLOY.includes(issue.status)) continue;
+      pushUnique(buildMismatch(d, issue, "production_not_updated"));
+    }
+
+    // Pass 4 (new): Shipped-cancelled-work — issue marked closed but production-deployed
+    for (const d of allProdDeployments) {
+      const issue = mismatchIssueMap.get(d.jiraKey);
+      if (!issue || issue.status !== "closed") continue;
+      pushUnique(buildMismatch(d, issue, "closed_but_deployed"));
+    }
+
+    // Pass 2: Staging deployed but status still early — scoped to the 30d window
+    // on purpose: a 6-month-old staging branch is an archeology problem, not an
+    // "update your status" nudge.
     for (const d of allDeployments) {
       if (d.environment !== "staging") continue;
       const issue = issueMap.get(d.jiraKey);
       if (!issue || !EARLY_STATUSES.includes(issue.status)) continue;
-      if (seenMismatchKeys.has(d.jiraKey)) continue;
-      seenMismatchKeys.add(d.jiraKey);
-      mismatchList.push(buildMismatch(d, issue, "staging_status_behind"));
+      pushUnique(buildMismatch(d as unknown as typeof allProdDeployments[0], issue as unknown as typeof mismatchIssueRows[0], "staging_status_behind"));
     }
 
-    // Pass 3: Partial rollout — rolling_out/ready_for_live but not all expected sites deployed
-    const ROLLOUT_STATUSES = ["rolling_out", "ready_for_live"];
-    for (const [jiraKey, issue] of issueMap) {
+    // Pass 3: Partial rollout — rolling_out/ready_for_live but not all expected sites
+    for (const [jiraKey, issue] of mismatchIssueMap) {
       if (!ROLLOUT_STATUSES.includes(issue.status)) continue;
-      if (seenMismatchKeys.has(jiraKey)) continue;
-      const completeness = getDeploymentCompleteness(issue.brands, issueDeployedSites.get(jiraKey) || [], allProductionSites);
+      const completeness = getDeploymentCompleteness(
+        issue.brands,
+        issueDeployedSitesUnbounded.get(jiraKey) || [],
+        allProductionSites,
+      );
       if (!completeness || completeness.complete) continue;
-      if (completeness.deployed.length === 0) continue; // Not deployed anywhere yet — not a partial rollout
+      if (completeness.deployed.length === 0) continue;
 
-      seenMismatchKeys.add(jiraKey);
-      const latestDeploy = allDeployments.find((d) => d.jiraKey === jiraKey && (d.environment === "production" || d.environment === "canonical"));
+      const latestDeploy = allProdDeployments.find((d) => d.jiraKey === jiraKey);
       const board = boardMap.get(issue.boardId);
       const member = issue.assigneeId ? memberMap.get(issue.assigneeId) : null;
+      const days = latestDeploy ? daysBetween(latestDeploy.deployedAt, now) : 0;
 
-      mismatchList.push({
+      pushUnique({
         jiraKey,
         title: issue.title,
         status: issue.status,
@@ -230,14 +301,18 @@ export async function GET(request: Request) {
         siteName: null,
         siteLabel: null,
         deployedAt: latestDeploy?.deployedAt.toISOString() || now.toISOString(),
-        daysSinceDeployment: latestDeploy ? daysBetween(latestDeploy.deployedAt, now) : 0,
+        daysSinceDeployment: days,
         type: "partial_rollout",
         brands: issue.brands,
         deployedSites: completeness.deployed,
         expectedSites: completeness.expected,
         missingSites: completeness.missing,
+        severity: ageSeverity(days),
       });
     }
+
+    // Rank oldest first — a 45-day-old mismatch is more urgent than a 2-day-old.
+    mismatchList.sort((a, b) => b.daysSinceDeployment - a.daysSinceDeployment);
 
     // Avg days in staging for pending releases
     const pendingDays: number[] = [];
@@ -395,11 +470,16 @@ export async function GET(request: Request) {
       };
     });
 
-    // ── Site overview (grouped by brand label, not raw site codes) ──────
-    // Group active site codes by their label to avoid duplicates (tm + tilemtn = both "Tile Mountain")
-    const activeSiteCodes = [...new Set(allDeployments.filter((d) => d.siteName).map((d) => d.siteName!))];
+    // ── Site overview ────────────────────────────────────────────────────
+    // Sources the full list of known sites from branch mappings (NOT the 30-day
+    // deployment feed), then looks up the latest staging + production deploy
+    // for each one from the unbounded table. Sites that haven't shipped in
+    // weeks still appear — just flagged as stale rather than hidden.
+    //
+    // `siteNames` was already built from githubBranchMappings earlier.
+    const STALE_THRESHOLD_DAYS = 30;
     const labelToSites = new Map<string, string[]>();
-    for (const code of activeSiteCodes) {
+    for (const code of siteNames) {
       const label = getSiteLabel(code);
       const existing = labelToSites.get(label) || [];
       if (!existing.includes(code)) existing.push(code);
@@ -408,10 +488,37 @@ export async function GET(request: Request) {
 
     const siteOverview: SiteStatus[] = [];
     for (const [label, codes] of [...labelToSites.entries()].sort((a, b) => a[0].localeCompare(b[0]))) {
-      const siteDeployments = allDeployments.filter((d) => d.siteName && codes.includes(d.siteName));
-      const latestStaging = siteDeployments.find((d) => d.environment === "staging");
-      const latestProd = siteDeployments.find((d) => d.environment === "production");
-      const lastDeploy = siteDeployments[0];
+      // Latest staging (unbounded, indexed lookup per label's site codes)
+      const [latestStaging] = await db
+        .select({
+          jiraKey: deployments.jiraKey,
+          deployedAt: deployments.deployedAt,
+          branch: deployments.branch,
+        })
+        .from(deployments)
+        .where(and(eq(deployments.environment, "staging"), inArray(deployments.siteName, codes)))
+        .orderBy(desc(deployments.deployedAt))
+        .limit(1);
+
+      const [latestProd] = await db
+        .select({
+          jiraKey: deployments.jiraKey,
+          deployedAt: deployments.deployedAt,
+          branch: deployments.branch,
+        })
+        .from(deployments)
+        .where(and(eq(deployments.environment, "production"), inArray(deployments.siteName, codes)))
+        .orderBy(desc(deployments.deployedAt))
+        .limit(1);
+
+      const lastDeployCandidates = [latestStaging?.deployedAt, latestProd?.deployedAt].filter(
+        (v): v is Date => v instanceof Date,
+      );
+      const lastDeployAt = lastDeployCandidates.length
+        ? new Date(Math.max(...lastDeployCandidates.map((d) => d.getTime())))
+        : null;
+      const daysSinceLastDeploy = lastDeployAt ? daysBetween(lastDeployAt, now) : null;
+      const isStale = daysSinceLastDeploy !== null && daysSinceLastDeploy > STALE_THRESHOLD_DAYS;
 
       siteOverview.push({
         siteName: codes[0],
@@ -426,7 +533,9 @@ export async function GET(request: Request) {
           deployedAt: latestProd.deployedAt.toISOString(),
           branch: latestProd.branch,
         } : null,
-        lastDeployAt: lastDeploy?.deployedAt.toISOString() || null,
+        lastDeployAt: lastDeployAt?.toISOString() || null,
+        daysSinceLastDeploy,
+        isStale,
       });
     }
 
@@ -456,10 +565,10 @@ export async function GET(request: Request) {
           .where(sql`JSON_CONTAINS(${issues.fixVersions}, ${JSON.stringify(release.name)})`)
           .limit(100);
 
-        // Count deployment coverage
+        // Count deployment coverage (full history, unaffected by 30-day window / UI filters)
         const releaseKeys = releaseIssues.map((i) => i.jiraKey);
-        let deployedStaging = 0;
-        let deployedProduction = 0;
+        const stagingSet = new Set<string>();
+        const productionSet = new Set<string>();
 
         if (releaseKeys.length > 0) {
           const releaseDeps = await db
@@ -467,23 +576,23 @@ export async function GET(request: Request) {
             .from(deployments)
             .where(inArray(deployments.jiraKey, releaseKeys));
 
-          const stagingSet = new Set<string>();
-          const productionSet = new Set<string>();
           for (const d of releaseDeps) {
             if (d.environment === "staging") stagingSet.add(d.jiraKey);
             if (d.environment === "production" || d.environment === "canonical") productionSet.add(d.jiraKey);
           }
-          deployedStaging = stagingSet.size;
-          deployedProduction = productionSet.size;
         }
+        const deployedStaging = stagingSet.size;
+        const deployedProduction = productionSet.size;
 
         // Enrich issues with assignee + board + deployment status
         const enrichedIssues = releaseIssues.map((i) => {
           const board = boardMap.get(i.boardId);
           const member = i.assigneeId ? memberMap.get(i.assigneeId) : null;
-          const depStatus = issueDeployedSites.has(i.jiraKey) ? "production" as const
-            : allDeployments.some((d) => d.jiraKey === i.jiraKey && d.environment === "staging") ? "staging" as const
-            : null;
+          const depStatus: "production" | "staging" | null = productionSet.has(i.jiraKey)
+            ? "production"
+            : stagingSet.has(i.jiraKey)
+              ? "staging"
+              : null;
           return {
             jiraKey: i.jiraKey,
             title: i.title,

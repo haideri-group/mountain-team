@@ -1,8 +1,8 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 import { db } from "@/lib/db";
-import { notifications, issues, team_members } from "@/lib/db/schema";
-import { desc, eq, and, gte, ne, like } from "drizzle-orm";
+import { notifications, issues, team_members, jiraReleases } from "@/lib/db/schema";
+import { desc, eq, and, gte, ne } from "drizzle-orm";
 import { auth } from "@/auth";
 import { withResolvedAvatar } from "@/lib/db/helpers";
 
@@ -28,6 +28,13 @@ export async function GET(request: NextRequest) {
     if (!isAdmin) {
       conditions.push(ne(notifications.type, "user_joined"));
       conditions.push(ne(notifications.type, "capacity"));
+      // Release-scoped notifications are team-lead oriented. Individual
+      // developers don't need "release overdue" in their tray.
+      conditions.push(ne(notifications.type, "release_overdue"));
+      conditions.push(ne(notifications.type, "release_ready"));
+      conditions.push(ne(notifications.type, "release_deployed"));
+      conditions.push(ne(notifications.type, "release_scope_changed"));
+      conditions.push(ne(notifications.type, "release_stale"));
     }
 
     // For non-admin users: find their team_member ID to scope aging notifications
@@ -43,7 +50,22 @@ export async function GET(request: NextRequest) {
 
     if (typeFilter) {
       conditions.push(
-        eq(notifications.type, typeFilter as "aging" | "overdue" | "capacity" | "completed" | "unblocked" | "deployed"),
+        eq(
+          notifications.type,
+          typeFilter as
+            | "aging"
+            | "overdue"
+            | "capacity"
+            | "completed"
+            | "unblocked"
+            | "deployed"
+            | "user_joined"
+            | "release_overdue"
+            | "release_ready"
+            | "release_deployed"
+            | "release_scope_changed"
+            | "release_stale",
+        ),
       );
     }
 
@@ -61,11 +83,12 @@ export async function GET(request: NextRequest) {
       }).slice(0, limit);
     }
 
-    // Enrich with related issue/member data
+    // Enrich with related issue/member/release data
     const enriched = await Promise.all(
       result.map(async (notif) => {
         let relatedIssue = null;
         let relatedMember = null;
+        let relatedRelease: { id: string; name: string; projectKey: string } | null = null;
 
         if (notif.relatedIssueId) {
           const [issue] = await db
@@ -85,7 +108,16 @@ export async function GET(request: NextRequest) {
           relatedMember = member ? withResolvedAvatar(member) : null;
         }
 
-        return { ...notif, relatedIssue, relatedMember };
+        if (notif.relatedReleaseId) {
+          const [release] = await db
+            .select({ id: jiraReleases.id, name: jiraReleases.name, projectKey: jiraReleases.projectKey })
+            .from(jiraReleases)
+            .where(eq(jiraReleases.id, notif.relatedReleaseId))
+            .limit(1);
+          relatedRelease = release || null;
+        }
+
+        return { ...notif, relatedIssue, relatedMember, relatedRelease };
       }),
     );
 

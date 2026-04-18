@@ -7,6 +7,7 @@ import { normalizeIssue } from "@/lib/jira/normalizer";
 import { applyCycleTimeLogic, buildIssueUpsertFields } from "@/lib/sync/issue-sync";
 import { generateNotificationForIssue } from "@/lib/notifications/generator";
 import { refreshReleasesForIssue } from "@/lib/sync/release-sync";
+import { syncReleaseIssuesForIssue } from "@/lib/releases/sync-release-issues";
 import type { JiraIssueRaw } from "@/lib/jira/issues";
 
 // Helper: log webhook event for diagnostics
@@ -161,6 +162,15 @@ export async function POST(request: Request) {
     } catch {
       // Non-fatal — releases will sync on next cron
     }
+
+    // Diff fixVersions and update the release_issues junction table.
+    // Runs AFTER refreshReleasesForIssue so release rows exist to link against.
+    await syncReleaseIssuesForIssue(
+      normalized.jiraKey,
+      existing?.fixVersions ?? null,
+      normalized.fixVersions,
+      normalized.projectKey,
+    );
 
     // Generate notification for this issue change
     try {

@@ -20,11 +20,21 @@ export interface Mismatch {
   siteLabel: string | null;
   deployedAt: string;
   daysSinceDeployment: number;
-  type: "production_not_updated" | "staging_status_behind" | "partial_rollout";
+  type:
+    | "production_not_updated"
+    | "staging_status_behind"
+    | "partial_rollout"
+    | "closed_but_deployed";
   brands: string | null;
   deployedSites: string[];
   expectedSites: string[] | null;
   missingSites: string[];
+  severity: "critical" | "warning" | "info";
+}
+
+export interface SiteStaleness {
+  daysSinceLastDeploy: number | null;
+  isStale: boolean;
 }
 
 export interface PipelineTask {
@@ -83,6 +93,8 @@ export interface SiteStatus {
   latestStaging: { jiraKey: string; deployedAt: string; branch: string } | null;
   latestProduction: { jiraKey: string; deployedAt: string; branch: string } | null;
   lastDeployAt: string | null;
+  daysSinceLastDeploy: number | null;
+  isStale: boolean;
 }
 
 export interface ReleaseIssue {

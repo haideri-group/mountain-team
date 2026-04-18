@@ -18,6 +18,7 @@ export async function Sidebar() {
     { href: "/members", icon: "UserCircle", label: "Members" },
     { href: "/workload", icon: "BarChart3", label: "Workload" },
     { href: "/deployments", icon: "Rocket", label: "Deployments" },
+    { href: "/releases", icon: "Package", label: "Releases" },
     { href: "/reports", icon: "PieChart", label: "Reports" },
   ];
 

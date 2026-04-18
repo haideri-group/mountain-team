@@ -11,6 +11,7 @@ import {
   BarChart3,
   Rocket,
   ShieldCheck,
+  Package,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -18,6 +19,7 @@ const iconMap: Record<string, React.ElementType> = {
   LayoutDashboard,
   BarChart3,
   Rocket,
+  Package,
   Calendar,
   UserCircle,
   PieChart,
