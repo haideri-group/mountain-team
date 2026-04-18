@@ -199,7 +199,12 @@ async function syncIssues(type: IssueSyncType, filterBoardKey?: string): Promise
         await refreshReleasesForIssue(normalized.fixVersions, normalized.projectKey);
       } catch (err) {
         // Non-fatal — release-sync cron will backfill any missed versions.
-        console.warn("refreshReleasesForIssue failed (non-fatal):", err instanceof Error ? err.message : String(err));
+        // Sanitize — refreshReleasesForIssue hits JIRA and its errors can
+        // echo upstream tokens.
+        console.warn(
+          "refreshReleasesForIssue failed (non-fatal):",
+          sanitizeErrorText(err instanceof Error ? err.message : String(err)),
+        );
       }
 
       // Reconcile the junction against the now-persisted fixVersions.

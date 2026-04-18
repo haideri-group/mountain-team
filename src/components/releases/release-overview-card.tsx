@@ -13,11 +13,14 @@ function formatDate(dateStr: string | null): string {
 }
 
 export function ReleaseOverviewCard({ release }: { release: ReleaseListItem }) {
-  // Total must come from issue buckets — falling back to `memberCount`
-  // (the junction count) can disagree with the bucket numbers and push
-  // progress bars past 100% or show "12/3 done".
+  // Use bucket sum as the denominator — it's the only total that's internally
+  // consistent with the three numerators we render. `issuesTotal` from JIRA's
+  // rollup and `memberCount` from the junction can each disagree with the
+  // bucket counts (unmapped statuses, un-synced rollup, etc), so using them
+  // here risks bars past 100% or "12/3 done" numerics. Fall back to 1 only
+  // to avoid divide-by-zero; an empty release renders 0% across the board.
   const bucketSum = release.issuesDone + release.issuesInProgress + release.issuesToDo;
-  const total = release.issuesTotal > 0 ? release.issuesTotal : bucketSum;
+  const total = bucketSum > 0 ? bucketSum : Math.max(release.issuesTotal, 0);
   const donePct = total > 0 ? Math.round((release.issuesDone / total) * 100) : 0;
   const inProgressPct = total > 0 ? Math.round((release.issuesInProgress / total) * 100) : 0;
   const toDoPct = total > 0 ? Math.round((release.issuesToDo / total) * 100) : 0;

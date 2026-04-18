@@ -101,12 +101,17 @@ async function main() {
   };
 
   // ── 1. notifications.type enum ─────────────────────────────────────────
+  // MODIFY COLUMN replaces the entire enum definition, so we must emit the
+  // UNION of current values + new values. Listing only NEW_ENUM_VALUES
+  // would silently drop any enum values the live DB has that aren't in our
+  // expected list (e.g., values added by a later hotfix on another branch).
   const currentEnum = await getEnumValues("notifications", "type");
   const missing = NEW_ENUM_VALUES.filter((v) => !currentEnum.includes(v));
   if (missing.length === 0) {
     console.log("  [skip] notifications.type enum already has all release_* values");
   } else {
-    const quoted = NEW_ENUM_VALUES.map((v) => `'${v}'`).join(", ");
+    const merged = [...new Set([...currentEnum, ...NEW_ENUM_VALUES])];
+    const quoted = merged.map((v) => `'${v}'`).join(", ");
     await run(
       `notifications.type enum (+${missing.length}: ${missing.join(", ")})`,
       `ALTER TABLE \`notifications\` MODIFY COLUMN \`type\` enum(${quoted}) NOT NULL`,

@@ -127,6 +127,14 @@ export function generateReleaseNotes(
   internalLines.push(`**Total issues:** ${issues.length}`);
   internalLines.push(``);
 
+  // Render JIRA keys as markdown links when we know the base URL. Release
+  // notes are consumed out-of-context (handed to PMs, pasted into Slack,
+  // shipped in .md files), so a clickable key beats plain text for
+  // navigation. Falls back to bold plain text if JIRA base URL is unset.
+  const jiraBase = (process.env.NEXT_PUBLIC_JIRA_BASE_URL || "").replace(/\/$/, "");
+  const formatKey = (key: string): string =>
+    jiraBase ? `[**${key}**](${jiraBase}/browse/${key})` : `**${key}**`;
+
   for (const g of INTERNAL_GROUPS) {
     const bucket = internalBuckets.get(g.key) || [];
     if (bucket.length === 0) continue;
@@ -134,7 +142,7 @@ export function generateReleaseNotes(
     internalLines.push(``);
     for (const i of bucket) {
       const who = i.assigneeName ? ` — @${i.assigneeName}` : "";
-      internalLines.push(`- **${i.jiraKey}** · ${i.title}${who}`);
+      internalLines.push(`- ${formatKey(i.jiraKey)} · ${i.title}${who}`);
     }
     internalLines.push(``);
   }

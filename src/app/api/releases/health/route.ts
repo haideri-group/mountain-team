@@ -104,12 +104,16 @@ export async function GET() {
 
     let totalCreep = 0;
     for (const m of allActiveMemberships) {
+      if (!m.addedAt) continue; // defensive — shouldn't happen, column is NOT NULL
       const cutoff = cutoffByRelease.get(m.releaseId);
       if (cutoff !== undefined && m.addedAt.getTime() > cutoff) totalCreep += 1;
     }
+    // Denominator must match the numerator's population: we only counted creep
+    // from releases with a createdAt timestamp, so the rate is per those
+    // releases — not per all active releases (which might be wider).
     const scopeCreepRate =
-      activeReleases.length > 0
-        ? Math.round((totalCreep / activeReleases.length) * 10) / 10
+      releasesWithCreatedAt.length > 0
+        ? Math.round((totalCreep / releasesWithCreatedAt.length) * 10) / 10
         : 0;
 
     // Velocity: releases shipped per ISO week over last 12 weeks.

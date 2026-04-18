@@ -54,6 +54,11 @@ export function buildReadinessIssueCounts(rows: IssueRowForReadiness[]): Readine
         counts.readyForLive += 1;
         break;
       case "toDo":
+      case "other":
+        // Unknown/unmapped statuses (e.g., a new JIRA workflow state we
+        // haven't triaged yet) count as "not done" — the conservative
+        // choice for the score. Dropping them silently would undercount
+        // the total and inflate coverage ratios.
         counts.toDo += 1;
         break;
     }

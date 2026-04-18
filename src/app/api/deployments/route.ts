@@ -165,11 +165,21 @@ export async function GET(request: Request) {
     // Build per-issue production-deployed-sites map from the unbounded set,
     // replacing the 30-day-scoped version for mismatch and completeness checks.
     const issueDeployedSitesUnbounded = new Map<string, string[]>();
+    // Also track the OLDEST prod deploy per issue. That's the right anchor for
+    // mismatch age: "how long has this been broken?" = age of the first deploy
+    // that created the mismatch, not the most recent redeploy. Using newest
+    // would make a stale issue look fresh every time it gets redeployed.
+    const oldestProdByKey = new Map<string, typeof allProdDeployments[0]>();
     for (const d of allProdDeployments) {
-      if (!d.siteName) continue;
-      const sites = issueDeployedSitesUnbounded.get(d.jiraKey) || [];
-      if (!sites.includes(d.siteName)) sites.push(d.siteName);
-      issueDeployedSitesUnbounded.set(d.jiraKey, sites);
+      if (d.siteName) {
+        const sites = issueDeployedSitesUnbounded.get(d.jiraKey) || [];
+        if (!sites.includes(d.siteName)) sites.push(d.siteName);
+        issueDeployedSitesUnbounded.set(d.jiraKey, sites);
+      }
+      const existing = oldestProdByKey.get(d.jiraKey);
+      if (!existing || d.deployedAt.getTime() < existing.deployedAt.getTime()) {
+        oldestProdByKey.set(d.jiraKey, d);
+      }
     }
 
     // Load issue rows for the unbounded production deployments — superset of
@@ -212,7 +222,9 @@ export async function GET(request: Request) {
       const deployedSites = issueDeployedSitesUnbounded.get(d.jiraKey) || [];
       const expected = getExpectedSites(issue.brands, allProductionSites);
       const missing = expected ? expected.filter((s) => !deployedSites.includes(s)) : [];
-      const days = daysBetween(d.deployedAt, now);
+      // Age reflects the ORIGINAL mismatch, not the most recent redeploy.
+      const anchor = oldestProdByKey.get(d.jiraKey) || d;
+      const days = daysBetween(anchor.deployedAt, now);
 
       return {
         jiraKey: d.jiraKey,
@@ -227,7 +239,7 @@ export async function GET(request: Request) {
         environment: d.environment,
         siteName: d.siteName,
         siteLabel: d.siteLabel,
-        deployedAt: d.deployedAt.toISOString(),
+        deployedAt: anchor.deployedAt.toISOString(),
         daysSinceDeployment: days,
         type,
         brands: issue.brands,
@@ -282,10 +294,12 @@ export async function GET(request: Request) {
       if (!completeness || completeness.complete) continue;
       if (completeness.deployed.length === 0) continue;
 
-      const latestDeploy = allProdDeployments.find((d) => d.jiraKey === jiraKey);
+      // Use the OLDEST prod deploy as the mismatch anchor (O(1) via map —
+      // no per-issue linear scan over unbounded history).
+      const anchorDeploy = oldestProdByKey.get(jiraKey);
       const board = boardMap.get(issue.boardId);
       const member = issue.assigneeId ? memberMap.get(issue.assigneeId) : null;
-      const days = latestDeploy ? daysBetween(latestDeploy.deployedAt, now) : 0;
+      const days = anchorDeploy ? daysBetween(anchorDeploy.deployedAt, now) : 0;
 
       pushUnique({
         jiraKey,
@@ -300,7 +314,7 @@ export async function GET(request: Request) {
         environment: "production",
         siteName: null,
         siteLabel: null,
-        deployedAt: latestDeploy?.deployedAt.toISOString() || now.toISOString(),
+        deployedAt: anchorDeploy?.deployedAt.toISOString() || now.toISOString(),
         daysSinceDeployment: days,
         type: "partial_rollout",
         brands: issue.brands,

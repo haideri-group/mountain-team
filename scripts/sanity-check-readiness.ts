@@ -13,10 +13,7 @@ import {
   type ReadinessIssueCounts,
 } from "../src/lib/releases/readiness";
 
-async function main() {
-  if (!process.env.DATABASE_URL) throw new Error("DATABASE_URL not set");
-  const conn = await mysql.createConnection(process.env.DATABASE_URL);
-
+async function run(conn: mysql.Connection): Promise<void> {
   // 10 most recent non-archived unreleased releases
   const [releases] = (await conn.query(
     `SELECT r.id, r.name, r.projectKey, r.releaseDate, r.released, r.createdAt
@@ -95,7 +92,8 @@ async function main() {
       else if (bucket === "inReview") counts.inReview += 1;
       else if (bucket === "readyForTesting") counts.readyForTesting += 1;
       else if (bucket === "readyForLive") counts.readyForLive += 1;
-      else if (bucket === "toDo") counts.toDo += 1;
+      // "toDo" and "other" both count as not-done — same as readiness-compute.ts.
+      else counts.toDo += 1;
 
       if (!i.assigneeId && bucket !== "done") counts.unassigned += 1;
 
@@ -179,10 +177,21 @@ async function main() {
     console.log();
   }
 
-  await conn.end();
+}
+
+async function main() {
+  if (!process.env.DATABASE_URL) throw new Error("DATABASE_URL not set");
+  const conn = await mysql.createConnection(process.env.DATABASE_URL);
+  try {
+    await run(conn);
+  } finally {
+    await conn.end();
+  }
 }
 
 main().catch((err) => {
-  console.error(err);
+  // Only log the error message — avoid dumping the full object which can
+  // contain stack frames that reveal local paths / internals.
+  console.error(err instanceof Error ? err.message : String(err));
   process.exit(1);
 });

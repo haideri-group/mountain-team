@@ -52,6 +52,14 @@ async function main() {
     return (rows as unknown[]).length > 0;
   };
 
+  const constraintExists = async (table: string, name: string) => {
+    const [rows] = await conn.query(
+      "SELECT 1 FROM information_schema.table_constraints WHERE table_schema = ? AND table_name = ? AND constraint_name = ? LIMIT 1",
+      [schema, table, name],
+    );
+    return (rows as unknown[]).length > 0;
+  };
+
   let planned = 0;
   let executed = 0;
   const run = async (label: string, sql: string) => {
@@ -100,13 +108,20 @@ async function main() {
   }
 
   // ── 3. jira_releases.ownerUserId ───────────────────────────────────────
+  // Column and FK are checked INDEPENDENTLY. If a previous partial run added
+  // the column but crashed before the FK, collapsing them into one
+  // conditional branch would silently skip the FK forever.
   if (await columnExists("jira_releases", "ownerUserId")) {
-    console.log("  [skip] jira_releases.ownerUserId already exists");
+    console.log("  [skip] jira_releases.ownerUserId column already exists");
   } else {
     await run(
       "jira_releases.ownerUserId column",
       "ALTER TABLE `jira_releases` ADD COLUMN `ownerUserId` varchar(191) NULL",
     );
+  }
+  if (await constraintExists("jira_releases", "jira_releases_owner_fk")) {
+    console.log("  [skip] jira_releases_owner_fk already exists");
+  } else {
     await run(
       "jira_releases.ownerUserId FK",
       "ALTER TABLE `jira_releases` ADD CONSTRAINT `jira_releases_owner_fk` FOREIGN KEY (`ownerUserId`) REFERENCES `users`(`id`)",

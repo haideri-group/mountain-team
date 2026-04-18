@@ -37,8 +37,12 @@ export async function GET(request: Request) {
       notifications: notifCounts,
     });
   } catch (error) {
+    // Log the sanitized detail server-side for debugging, but never return
+    // it to the caller. Even after JIRA-token redaction, exception messages
+    // can leak implementation details (table names, SQL fragments, internals)
+    // that don't belong in an HTTP response body.
     const message = sanitizeErrorText(error instanceof Error ? error.message : "Sync failed");
     console.error("Cron release sync failed:", message);
-    return NextResponse.json({ error: message }, { status: 500 });
+    return NextResponse.json({ error: "Sync failed" }, { status: 500 });
   }
 }
