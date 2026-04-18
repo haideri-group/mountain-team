@@ -97,34 +97,6 @@ export interface SiteStatus {
   isStale: boolean;
 }
 
-export interface ReleaseIssue {
-  jiraKey: string;
-  title: string;
-  status: string;
-  issueType: string | null;
-  assigneeName: string | null;
-  boardColor: string;
-  deploymentStatus: "production" | "staging" | null;
-}
-
-export interface Release {
-  id: string;
-  name: string;
-  description: string | null;
-  projectKey: string;
-  startDate: string | null;
-  releaseDate: string | null;
-  released: boolean;
-  overdue: boolean;
-  issuesDone: number;
-  issuesInProgress: number;
-  issuesToDo: number;
-  issuesTotal: number;
-  issuesDeployedStaging: number;
-  issuesDeployedProduction: number;
-  issues: ReleaseIssue[];
-}
-
 export interface DeploymentsData {
   metrics: DeploymentMetrics;
   mismatches: Mismatch[];
@@ -137,10 +109,6 @@ export interface DeploymentsData {
   pendingReleases: PendingRelease[];
   recentDeployments: RecentDeployment[];
   siteOverview: SiteStatus[];
-  releases: {
-    upcoming: Release[];
-    recent: Release[];
-  };
   repos: { id: string; fullName: string }[];
   sites: string[];
   boards: { jiraKey: string; name: string; color: string | null }[];
