@@ -71,6 +71,14 @@ export async function GET(
       labels = [];
     }
 
+    // Parse fix versions (release names, e.g. "R 2025-04-15")
+    let fixVersions: string[] = [];
+    try {
+      fixVersions = issue.fixVersions ? JSON.parse(issue.fixVersions) : [];
+    } catch {
+      fixVersions = [];
+    }
+
     // Days in current status (from jiraUpdatedAt to now)
     const daysInCurrentStatus = issue.jiraUpdatedAt
       ? Math.max(
@@ -176,6 +184,7 @@ export async function GET(
         cycleTime: issue.cycleTime,
         storyPoints: issue.storyPoints,
         labels,
+        fixVersions,
         description: issue.description || null,
         jiraCreatedAt: issue.jiraCreatedAt,
         jiraUpdatedAt: issue.jiraUpdatedAt,

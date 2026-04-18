@@ -343,6 +343,25 @@ export function IssueSidebar({
               </span>
             </div>
           )}
+
+          {/* Fix Versions (Releases) — spans both columns */}
+          {issue.fixVersions.length > 0 && (
+            <div className="space-y-1 col-span-2">
+              <p className="text-[9px] font-bold font-mono uppercase tracking-widest text-muted-foreground/60">
+                {issue.fixVersions.length === 1 ? "Release" : "Releases"}
+              </p>
+              <div className="flex flex-wrap gap-1">
+                {issue.fixVersions.map((v) => (
+                  <span
+                    key={v}
+                    className="inline-flex items-center px-2 py-0.5 text-[10px] font-bold font-mono rounded bg-primary/10 text-primary"
+                  >
+                    {v}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Time Tracking — only shown if data exists */}
