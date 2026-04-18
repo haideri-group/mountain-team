@@ -10,17 +10,13 @@ import {
   Loader2,
   SlidersHorizontal,
   X,
-  ChevronDown,
   GitBranch,
-  Package,
 } from "lucide-react";
-import { cn } from "@/lib/utils";
 import { FilterSelect } from "@/components/shared/filter-select";
 import { StatusMismatches } from "./status-mismatches";
 import { DeploymentPipelineView } from "./deployment-pipeline";
 import { PendingReleasesTable } from "./pending-releases-table";
 import { RecentDeploymentsFeed } from "./recent-deployments";
-import { ReleaseProgress } from "./release-progress";
 import { SiteOverviewTable } from "./site-overview";
 import type { DeploymentsData } from "./types";
 
@@ -54,7 +50,6 @@ export function DeploymentsDashboard() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
   const [filters, setFilters] = useState({ environment: "", repo: "", site: "", board: "" });
-  const [releasesExpanded, setReleasesExpanded] = useState(false);
 
   const fetchData = useCallback(async () => {
     setLoading(true);
@@ -189,35 +184,6 @@ export function DeploymentsDashboard() {
           </div>
         ))}
       </div>
-
-      {/* Releases (collapsible, default collapsed) */}
-      {(data.releases.upcoming.length > 0 || data.releases.recent.length > 0) && (
-        <div>
-          <button
-            type="button"
-            onClick={() => setReleasesExpanded((v) => !v)}
-            className="w-full flex items-center gap-2 mb-4 group cursor-pointer"
-          >
-            <Package className="h-4 w-4 text-muted-foreground" />
-            <span className="text-[10px] font-bold font-mono uppercase tracking-wider text-muted-foreground">
-              Releases
-            </span>
-            {data.releases.upcoming.length > 0 && (
-              <span className="text-[10px] font-bold font-mono px-1.5 py-0.5 rounded-full bg-muted/30 text-muted-foreground">
-                {data.releases.upcoming.length}
-              </span>
-            )}
-            <div className="flex-1 h-px bg-muted/30" />
-            <ChevronDown className={cn(
-              "h-4 w-4 text-muted-foreground transition-transform",
-              !releasesExpanded && "-rotate-90",
-            )} />
-          </button>
-          {releasesExpanded && (
-            <ReleaseProgress upcoming={data.releases.upcoming} recent={data.releases.recent} />
-          )}
-        </div>
-      )}
 
       {/* Attention Required */}
       <div>

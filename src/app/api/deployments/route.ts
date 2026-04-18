@@ -1,8 +1,8 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/auth";
 import { db } from "@/lib/db";
-import { deployments, issues, boards, team_members, githubRepos, githubBranchMappings, jiraReleases } from "@/lib/db/schema";
-import { eq, and, desc, gte, inArray, isNotNull, notInArray, sql } from "drizzle-orm";
+import { deployments, issues, boards, team_members, githubRepos, githubBranchMappings } from "@/lib/db/schema";
+import { eq, and, desc, gte, inArray } from "drizzle-orm";
 import { withResolvedAvatars } from "@/lib/db/helpers";
 import { sanitizeErrorText } from "@/lib/jira/client";
 import type { Mismatch, PendingRelease, SiteStatus } from "@/components/deployments/types";
@@ -573,94 +573,6 @@ export async function GET(request: Request) {
       });
     }
 
-    // ── Releases (from jira_releases + deployment coverage) ──────────
-    const allReleases = await db
-      .select()
-      .from(jiraReleases)
-      .where(eq(jiraReleases.archived, false))
-      .orderBy(desc(jiraReleases.releaseDate));
-
-    const thirtyDaysAgoStr = thirtyDaysAgo.toISOString().split("T")[0];
-
-    // For each release, find issues with that fixVersion and their deployment status
-    const enrichedReleases = await Promise.all(
-      allReleases.slice(0, 20).map(async (release) => {
-        // Find issues with this version in fixVersions JSON array
-        const releaseIssues = await db
-          .select({
-            jiraKey: issues.jiraKey,
-            title: issues.title,
-            status: issues.status,
-            type: issues.type,
-            assigneeId: issues.assigneeId,
-            boardId: issues.boardId,
-          })
-          .from(issues)
-          .where(sql`JSON_CONTAINS(${issues.fixVersions}, ${JSON.stringify(release.name)})`)
-          .limit(100);
-
-        // Count deployment coverage (full history, unaffected by 30-day window / UI filters)
-        const releaseKeys = releaseIssues.map((i) => i.jiraKey);
-        const stagingSet = new Set<string>();
-        const productionSet = new Set<string>();
-
-        if (releaseKeys.length > 0) {
-          const releaseDeps = await db
-            .select({ jiraKey: deployments.jiraKey, environment: deployments.environment })
-            .from(deployments)
-            .where(inArray(deployments.jiraKey, releaseKeys));
-
-          for (const d of releaseDeps) {
-            if (d.environment === "staging") stagingSet.add(d.jiraKey);
-            if (d.environment === "production" || d.environment === "canonical") productionSet.add(d.jiraKey);
-          }
-        }
-        const deployedStaging = stagingSet.size;
-        const deployedProduction = productionSet.size;
-
-        // Enrich issues with assignee + board + deployment status
-        const enrichedIssues = releaseIssues.map((i) => {
-          const board = boardMap.get(i.boardId);
-          const member = i.assigneeId ? memberMap.get(i.assigneeId) : null;
-          const depStatus: "production" | "staging" | null = productionSet.has(i.jiraKey)
-            ? "production"
-            : stagingSet.has(i.jiraKey)
-              ? "staging"
-              : null;
-          return {
-            jiraKey: i.jiraKey,
-            title: i.title,
-            status: i.status,
-            issueType: i.type,
-            assigneeName: member?.displayName || null,
-            boardColor: board?.color || "#6b7280",
-            deploymentStatus: depStatus,
-          };
-        });
-
-        return {
-          id: release.id,
-          name: release.name,
-          description: release.description,
-          projectKey: release.projectKey,
-          startDate: release.startDate,
-          releaseDate: release.releaseDate,
-          released: release.released,
-          overdue: release.overdue,
-          issuesDone: release.issuesDone || 0,
-          issuesInProgress: release.issuesInProgress || 0,
-          issuesToDo: release.issuesToDo || 0,
-          issuesTotal: release.issuesTotal || 0,
-          issuesDeployedStaging: deployedStaging,
-          issuesDeployedProduction: deployedProduction,
-          issues: enrichedIssues,
-        };
-      }),
-    );
-
-    const upcomingReleases = enrichedReleases.filter((r) => !r.released);
-    const recentReleases = enrichedReleases.filter((r) => r.released && r.releaseDate && r.releaseDate >= thirtyDaysAgoStr);
-
     return NextResponse.json({
       metrics: {
         deploymentsThisWeek,
@@ -673,10 +585,6 @@ export async function GET(request: Request) {
       pendingReleases,
       recentDeployments,
       siteOverview,
-      releases: {
-        upcoming: upcomingReleases,
-        recent: recentReleases,
-      },
       repos: allRepos.map((r) => ({ id: r.id, fullName: r.fullName })),
       sites: [...new Set(siteNames.map((s) => getSiteLabel(s)))].sort(),
       boards: allBoards.map((b) => ({ jiraKey: b.jiraKey, name: b.name, color: b.color })),
