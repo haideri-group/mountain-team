@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { Mail, Calendar, UserX, ExternalLink, Users, Check, Copy } from "lucide-react";
 import { StatusBadge } from "@/components/shared/status-badge";
+import { APP_TIMEZONE } from "@/lib/config";
 import type { MemberStatus } from "@/types";
 
 interface ProfileHeaderProps {
@@ -29,12 +30,16 @@ function getInitials(name: string): string {
     .toUpperCase();
 }
 
+// Values are stored as date-only strings (YYYY-MM-DD). new Date() parses
+// them as UTC midnight, so formatting in the client TZ can shift by a day
+// for non-PKT users. Pin to APP_TIMEZONE to match the app-wide convention.
 function formatFullDate(dateStr: string | null): string {
   if (!dateStr) return "";
   return new Date(dateStr).toLocaleDateString("en-GB", {
     month: "long",
     day: "numeric",
     year: "numeric",
+    timeZone: APP_TIMEZONE,
   });
 }
 
