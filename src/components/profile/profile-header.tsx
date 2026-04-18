@@ -13,6 +13,7 @@ interface ProfileHeaderProps {
     status: MemberStatus;
     avatarUrl: string | null;
     joinedDate: string | null;
+    orgJoinedDate: string | null;
     departedDate: string | null;
     jiraAccountId: string;
     teamName: string | null;
@@ -106,12 +107,16 @@ export function ProfileHeader({ member }: ProfileHeaderProps) {
               {member.email && (
                 <CopyEmail email={member.email} />
               )}
-              {member.joinedDate && (
+              {(member.orgJoinedDate || member.joinedDate) && (
                 <span className="flex items-center gap-1.5">
                   <Calendar className="h-3.5 w-3.5" />
-                  {isDeparted && member.departedDate
-                    ? `${formatFullDate(member.joinedDate)} — ${formatFullDate(member.departedDate)}`
-                    : `Joined ${formatFullDate(member.joinedDate)}`}
+                  {isDeparted && member.departedDate && member.orgJoinedDate
+                    ? `${formatFullDate(member.orgJoinedDate)} — ${formatFullDate(member.departedDate)}`
+                    : isDeparted && member.departedDate && member.joinedDate
+                    ? `${formatFullDate(member.joinedDate)} — ${formatFullDate(member.departedDate)} (tracked)`
+                    : member.orgJoinedDate
+                    ? `Joined ${formatFullDate(member.orgJoinedDate)}`
+                    : `Tracked since ${formatFullDate(member.joinedDate)}`}
                 </span>
               )}
             </div>

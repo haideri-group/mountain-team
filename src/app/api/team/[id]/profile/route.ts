@@ -193,13 +193,15 @@ export async function GET(
       monthlyData.push({ month: monthStr, count });
     }
 
-    // Tenure (for departed)
+    // Tenure (for departed) — prefer orgJoinedDate (real org start) over joinedDate
+    // (TeamFlow record creation) when available.
     let tenure: string | null = null;
-    if (member.status === "departed" && member.joinedDate) {
+    const tenureStart = member.orgJoinedDate || member.joinedDate;
+    if (member.status === "departed" && tenureStart) {
       const endDate = member.departedDate
         ? new Date(member.departedDate)
         : new Date();
-      const startDate = new Date(member.joinedDate);
+      const startDate = new Date(tenureStart);
       const years = endDate.getFullYear() - startDate.getFullYear();
       const months = endDate.getMonth() - startDate.getMonth();
       const totalMonths = years * 12 + months;
