@@ -9,6 +9,7 @@ import { and, eq, gte, isNotNull, sql } from "drizzle-orm";
  * as "cannot project" rather than zero.
  */
 export async function computeTeamVelocityIssuesPerDay(days = 28): Promise<number | null> {
+  if (!Number.isFinite(days) || days <= 0) return null;
   const cutoff = new Date();
   cutoff.setDate(cutoff.getDate() - days);
   const cutoffStr = cutoff.toISOString().split("T")[0];

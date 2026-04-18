@@ -60,18 +60,28 @@ export async function GET(_request: Request, context: { params: Promise<{ id: st
       .where(eq(releaseChecklistItems.releaseId, id))
       .orderBy(asc(releaseChecklistItems.sortOrder), asc(releaseChecklistItems.createdAt));
 
-    // Seed default template on first view
+    // Seed default template on first view. Wrapped in a transaction and
+    // re-checked inside the tx so two concurrent first-views don't both
+    // run the seed and end up with a double-populated checklist.
     if (items.length === 0) {
-      const toInsert = DEFAULT_TEMPLATE.map((label, i) => ({
-        id: `rcl_${crypto.randomBytes(8).toString("hex")}`,
-        releaseId: id,
-        label,
-        isComplete: false,
-        completedBy: null,
-        completedAt: null,
-        sortOrder: i,
-      }));
-      await db.insert(releaseChecklistItems).values(toInsert);
+      await db.transaction(async (tx) => {
+        const existing = await tx
+          .select({ id: releaseChecklistItems.id })
+          .from(releaseChecklistItems)
+          .where(eq(releaseChecklistItems.releaseId, id))
+          .limit(1);
+        if (existing.length > 0) return; // lost the race — the winner seeded
+        const toInsert = DEFAULT_TEMPLATE.map((label, i) => ({
+          id: `rcl_${crypto.randomBytes(8).toString("hex")}`,
+          releaseId: id,
+          label,
+          isComplete: false,
+          completedBy: null,
+          completedAt: null,
+          sortOrder: i,
+        }));
+        await tx.insert(releaseChecklistItems).values(toInsert);
+      });
       items = await db
         .select()
         .from(releaseChecklistItems)

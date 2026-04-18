@@ -1,4 +1,7 @@
-export type ReleaseStatus = "on_track" | "at_risk" | "slipping" | "overdue" | "released";
+// Re-export the canonical type from the readiness module so both sides share
+// one source of truth.
+export type { ReleaseStatus } from "@/lib/releases/readiness";
+import type { ReleaseStatus } from "@/lib/releases/readiness";
 
 export interface ReleaseReadiness {
   status: ReleaseStatus;

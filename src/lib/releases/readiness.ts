@@ -115,7 +115,7 @@ function addBusinessDays(start: Date, n: number): Date {
 
 // ─── Score ───────────────────────────────────────────────────────────────────
 
-function computeScore(input: ReadinessInput, overdueDays: number): number {
+function computeScore(input: ReadinessInput, overdueDays: number, now: Date): number {
   const { issueCounts: c, scopeCreepCount, coverage, release } = input;
   const total = totalIssues(c);
   if (total === 0) return release.released ? 100 : 80; // empty release — be charitable
@@ -146,7 +146,6 @@ function computeScore(input: ReadinessInput, overdueDays: number): number {
   // Coverage bonus — rewards teams that get to staging early
   const stagingRatio = total > 0 ? coverage.staging / total : 0;
   const dueDate = parseYmd(release.releaseDate);
-  const now = new Date();
   if (stagingRatio > 0.8 && dueDate && now.getTime() <= dueDate.getTime()) {
     score += 5;
   }
@@ -317,7 +316,7 @@ export function computeReadiness(input: ReadinessInput, now: Date = new Date()):
       : 0;
 
   const projection = computeProjection(input, now);
-  const score = computeScore(input, overdueDays);
+  const score = computeScore(input, overdueDays, now);
   const status = pickStatus(input, overdueDays, projection.projectedDaysVsDue);
   const reason = pickReason(input, overdueDays, projection.projectedDaysVsDue);
   const riskFactors = collectRiskFactors(input, overdueDays);
