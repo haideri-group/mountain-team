@@ -87,10 +87,24 @@ function cleanTitle(title: string): string {
   return s;
 }
 
+// Release notes are a changelog — callers want a date, not a timestamp. We
+// deliberately DON'T use `formatSmartDate` here (that helper is for activity
+// timestamps and appends "at 4:38 PM", which is meaningless for a release
+// date stored as YYYY-MM-DD). Output matches the app-wide `formatDateFull`
+// style: Asia/Karachi timezone, short month abbreviation — e.g. "25 Mar 2026".
+// Inlined rather than imported to keep this `lib/` module free of `components/`
+// dependencies.
 function formatDate(d: string | null): string {
   if (!d) return "TBD";
+  // T12:00:00Z guards against a midnight-UTC→yesterday-in-PKT flip when the
+  // input is a pure date string without time.
   const dt = new Date(`${d}T12:00:00Z`);
-  return dt.toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" });
+  return dt.toLocaleDateString("en-GB", {
+    timeZone: "Asia/Karachi",
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  });
 }
 
 export function generateReleaseNotes(
