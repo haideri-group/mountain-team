@@ -12,13 +12,18 @@ export async function Sidebar() {
   const userEmail = session?.user?.email;
   const userName = session?.user?.name;
 
+  // Releases is shown in the nav to admins only for now — the page itself
+  // is still reachable by URL for any logged-in user. Intent: don't
+  // advertise the feature to the wider team until the team-lead workflow
+  // (readiness signals, notification triage, pre-release checklist) has
+  // settled in real use.
   const mainItems = [
     { href: "/overview", icon: "LayoutDashboard", label: "Overview" },
     { href: "/calendar", icon: "Calendar", label: "Calendar" },
     { href: "/members", icon: "UserCircle", label: "Members" },
     { href: "/workload", icon: "BarChart3", label: "Workload" },
     { href: "/deployments", icon: "Rocket", label: "Deployments" },
-    { href: "/releases", icon: "Package", label: "Releases" },
+    ...(isAdmin ? [{ href: "/releases", icon: "Package", label: "Releases" }] : []),
     { href: "/reports", icon: "PieChart", label: "Reports" },
   ];
 
