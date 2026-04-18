@@ -206,24 +206,32 @@ export async function syncSingleMemberAvatar(
   try {
     if (!googleAccessToken || !email) return false;
 
-    const { findPhotoByEmail } = await import("@/lib/google/directory");
-    const photoUrl = await findPhotoByEmail(googleAccessToken, email);
-    if (!photoUrl) return false;
+    const { findPersonByEmail } = await import("@/lib/google/directory");
+    const person = await findPersonByEmail(googleAccessToken, email);
+    if (!person) return false;
 
     const { db } = await import("@/lib/db");
     const { team_members } = await import("@/lib/db/schema");
     const { eq } = await import("drizzle-orm");
     const { isR2Configured } = await import("@/lib/r2/client");
 
-    // Update sourceAvatarUrl
-    await db
-      .update(team_members)
-      .set({ sourceAvatarUrl: photoUrl, avatarHash: null })
-      .where(eq(team_members.id, memberId));
+    const initialUpdates: Record<string, string | null> = {};
+    if (person.photoUrl) {
+      initialUpdates.sourceAvatarUrl = person.photoUrl;
+      initialUpdates.avatarHash = null;
+    }
+    if (person.jobTitle) initialUpdates.role = person.jobTitle;
 
-    // Cache to R2 if configured
-    if (isR2Configured()) {
-      const result = await cacheAvatar(memberId, photoUrl, null, null);
+    if (Object.keys(initialUpdates).length > 0) {
+      await db
+        .update(team_members)
+        .set(initialUpdates)
+        .where(eq(team_members.id, memberId));
+    }
+
+    // Cache to R2 if configured and a photo is available
+    if (person.photoUrl && isR2Configured()) {
+      const result = await cacheAvatar(memberId, person.photoUrl, null, null);
       if (result) {
         await db
           .update(team_members)

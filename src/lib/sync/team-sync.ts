@@ -265,6 +265,7 @@ export async function runTeamSync(googleAccessToken?: string): Promise<{
             if (match.photoUrl) {
               updates.sourceAvatarUrl = match.photoUrl;
             }
+            if (match.jobTitle) updates.role = match.jobTitle;
 
             if (Object.keys(updates).length > 0) {
               await db
