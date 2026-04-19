@@ -10,6 +10,7 @@ import {
 import { eq, and, ne, gte, inArray, desc } from "drizzle-orm";
 import { calculateTaskWeight, WORKLOAD_COUNTED_STATUSES } from "@/lib/workload/snapshots";
 import { withResolvedAvatars } from "@/lib/db/helpers";
+import { requirePublicOrSession } from "@/lib/ip/gate";
 
 // --- Helpers ---
 
@@ -50,7 +51,13 @@ function getTrendDirection(trend: { percentage: number }[]): "up" | "down" | "st
 
 export async function GET(request: NextRequest) {
   try {
-    // Public read-only — no auth required
+    // Public read-only — session OR allowlisted IP. Matches the page-level
+    // proxy gate on /workload so guests can't bypass the allowlist by
+    // calling the JSON endpoint directly.
+    const gate = await requirePublicOrSession(request);
+    if (!gate.allowed) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
 
     const teamParam = request.nextUrl.searchParams.get("team") || "";
 

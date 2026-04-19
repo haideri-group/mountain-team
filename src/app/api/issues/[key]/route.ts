@@ -2,8 +2,8 @@ import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { issues, boards, team_members } from "@/lib/db/schema";
 import { eq, and } from "drizzle-orm";
-import { auth } from "@/auth";
 import { withResolvedAvatar } from "@/lib/db/helpers";
+import { requirePublicOrSession } from "@/lib/ip/gate";
 
 function getInitials(name: string): string {
   return name
@@ -32,11 +32,14 @@ function parseStringArray(raw: string | null): string[] {
 }
 
 export async function GET(
-  _request: Request,
+  request: Request,
   { params }: { params: Promise<{ key: string }> },
 ) {
   try {
-    // Public read-only endpoint — no auth required for GET
+    const gate = await requirePublicOrSession(request);
+    if (!gate.allowed) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
 
     const { key } = await params;
 

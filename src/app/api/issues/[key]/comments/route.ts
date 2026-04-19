@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 import { getAuthHeader, getBaseUrl, sanitizeErrorText } from "@/lib/jira/client";
+import { requirePublicOrSession } from "@/lib/ip/gate";
 
 interface JiraComment {
   id: string;
@@ -27,7 +28,10 @@ export async function GET(
   { params }: { params: Promise<{ key: string }> },
 ) {
   try {
-    // Public read-only endpoint — no auth required
+    const gate = await requirePublicOrSession(request);
+    if (!gate.allowed) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
     const { key } = await params;
     const { searchParams } = request.nextUrl;
 

@@ -4,6 +4,7 @@ import { team_members, issues, boards, deployments } from "@/lib/db/schema";
 import { and, eq, gte, inArray, or, sql } from "drizzle-orm";
 import { withResolvedAvatars } from "@/lib/db/helpers";
 import { calculateTaskWeight, WORKLOAD_COUNTED_STATUSES } from "@/lib/workload/snapshots";
+import { requirePublicOrSession } from "@/lib/ip/gate";
 
 // Statuses the overview treats as "active". Used both in the SQL filter and in
 // the in-memory metrics calc — keep in sync.
@@ -19,9 +20,14 @@ const ACTIVE_STATUSES = [
   "post_live_testing",
 ] as const;
 
-export async function GET() {
+export async function GET(request: Request) {
   try {
-    // Public read-only endpoint — no auth required for GET
+    // Guest-readable endpoint — allowed for logged-in users OR for
+    // requests from IPs in the admin-managed allowlist.
+    const gate = await requirePublicOrSession(request);
+    if (!gate.allowed) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
 
     // Fetch all members (exclude departed by default — client can filter)
     const allMembers = withResolvedAvatars(await db.select().from(team_members));

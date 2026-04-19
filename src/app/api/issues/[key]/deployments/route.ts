@@ -1,12 +1,17 @@
 import { NextResponse } from "next/server";
 import { getDeploymentsForIssue } from "@/lib/github/deployments";
+import { requirePublicOrSession } from "@/lib/ip/gate";
 
 // GET /api/issues/:key/deployments — Deployment pipeline for an issue
 export async function GET(
-  _request: Request,
+  request: Request,
   { params }: { params: Promise<{ key: string }> },
 ) {
   try {
+    const gate = await requirePublicOrSession(request);
+    if (!gate.allowed) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
     const { key } = await params;
     const summary = await getDeploymentsForIssue(key.toUpperCase());
     return NextResponse.json(summary);

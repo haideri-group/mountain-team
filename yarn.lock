@@ -6477,6 +6477,13 @@ __metadata:
   languageName: node
   linkType: hard
 
+"ipaddr.js@npm:^2.3.0":
+  version: 2.3.0
+  resolution: "ipaddr.js@npm:2.3.0"
+  checksum: 10c0/084bab99e2f6875d7a62adc3325e1c64b038a12c9521e35fb967b5e263a8b3afb1b8884dd77c276092331f5d63298b767491e10997ef147c62da01b143780bbd
+  languageName: node
+  linkType: hard
+
 "is-array-buffer@npm:^3.0.4, is-array-buffer@npm:^3.0.5":
   version: 3.0.5
   resolution: "is-array-buffer@npm:3.0.5"
@@ -7500,6 +7507,7 @@ __metadata:
     eslint: "npm:^9"
     eslint-config-next: "npm:16.2.2"
     eslint-config-prettier: "npm:^10.1.8"
+    ipaddr.js: "npm:^2.3.0"
     lucide-react: "npm:^1.7.0"
     mysql2: "npm:^3.9.7"
     next: "npm:16.2.2"

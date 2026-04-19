@@ -28,6 +28,7 @@
     "date-fns": "^4.1.0",
     "dotenv": "^17.4.1",
     "drizzle-orm": "^0.45.2",
+    "ipaddr.js": "^2.3.0",
     "lucide-react": "^1.7.0",
     "mysql2": "^3.9.7",
     "next": "16.2.2",

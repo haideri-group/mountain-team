@@ -375,3 +375,25 @@ export const webhookLogs = mysqlTable("webhook_logs", {
   result: varchar("result", { length: 500 }),
   receivedAt: timestamp("receivedAt").defaultNow(),
 });
+
+// --- IP Allowlist (Phase 20.5) ---
+// Gates guest access to public routes. Logged-in users are always allowed.
+// `cidr` accepts single IPs (e.g. "203.0.113.5", "::1") or CIDR ranges
+// ("203.0.113.0/24", "2001:db8::/32"). Validated + normalized server-side
+// via ipaddr.js before insert.
+export const ipAllowlist = mysqlTable("ip_allowlist", {
+  id: varchar("id", { length: 191 }).primaryKey(),
+  cidr: varchar("cidr", { length: 64 }).notNull(),
+  label: varchar("label", { length: 255 }),
+  enabled: boolean("enabled").default(true).notNull(),
+  createdAt: timestamp("createdAt").defaultNow(),
+  createdBy: varchar("createdBy", { length: 191 }).references(() => users.id),
+}, (table) => [
+  // Dedup boundary — admin CRUD relies on this so POST can surface a
+  // duplicate as "already in the allowlist" and DELETE/toggle operate on
+  // a single row per CIDR.
+  uniqueIndex("uidx_ip_allowlist_cidr").on(table.cidr),
+  // Proxy + API gate read only the enabled rows every ~60s. Narrow index
+  // keeps the scan cheap even if the table grows to hundreds of rules.
+  index("idx_ip_allowlist_enabled").on(table.enabled),
+]);

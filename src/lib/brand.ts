@@ -17,8 +17,13 @@ export const BRAND = {
 } as const;
 
 /**
- * The Summit Logic primary CTA gradient. Use in `style` props where Tailwind
- * gradient utilities can't express a diagonal stop pair cleanly.
+ * Canonical Summit Logic primary CTA gradient. Prefer this over inlining the
+ * `linear-gradient(135deg, #944a00, #ff8400)` literal so a single palette
+ * change flows through every callsite.
+ *
+ * Usage: `style={{ background: BRAND_GRADIENT }}`. Tailwind's gradient
+ * utilities can't cleanly express the diagonal two-stop form, so most
+ * CTA buttons use this constant via `style`.
  *
  *   <button style={{ background: BRAND_GRADIENT }}>...</button>
  */

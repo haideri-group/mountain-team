@@ -9,6 +9,7 @@ import { IssueSyncManager } from "@/components/settings/issue-sync-manager";
 import { GitHubReposManager } from "@/components/settings/github-repos-manager";
 import { StatusMappingManager } from "@/components/settings/status-mapping-manager";
 import { DeploymentBackfillPanel } from "@/components/settings/deployment-backfill-panel";
+import { IpAllowlistManager } from "@/components/settings/ip-allowlist-manager";
 
 export default async function SettingsPage() {
   const session = await auth();
@@ -143,6 +144,11 @@ export default async function SettingsPage() {
             unsyncedCount={unsyncedCount}
             totalTracked={totalTracked}
           />
+        </section>
+
+        {/* IP Allowlist for guest access (Phase 20.5) */}
+        <section>
+          <IpAllowlistManager />
         </section>
 
         {/* Projects / Boards Management */}
