@@ -5,7 +5,7 @@ import {
   releaseSyncLock,
   tryAcquireSyncLock,
 } from "@/lib/sync/concurrency";
-import { consumePendingManual, stampTriggeredBy } from "@/lib/sync/triggers";
+import { consumePendingManual } from "@/lib/sync/triggers";
 
 export async function GET(request: Request) {
   try {
@@ -35,13 +35,15 @@ export async function GET(request: Request) {
     }
 
     try {
+      // Consume BEFORE the runner so we can pass the source directly
+      // into the INSERT — not stamped after the fact. That avoids the
+      // race where the client refetches on SSE and briefly sees the row
+      // sourced as "cron" via the heuristic.
       const pending = consumePendingManual("team_sync");
-      const { logId, result } = await runTeamSync();
-      await stampTriggeredBy(
-        logId,
-        pending ? "manual" : "cron",
-        pending?.userId ?? null,
-      );
+      const { logId, result } = await runTeamSync(undefined, {
+        triggeredBy: pending ? "manual" : "cron",
+        triggeredByUserId: pending?.userId ?? null,
+      });
 
       return NextResponse.json({
         success: true,

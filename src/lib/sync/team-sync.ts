@@ -221,14 +221,21 @@ async function syncTeamMembers(): Promise<TeamSyncResult> {
 
 // --- Public Wrapper ---
 
-export async function runTeamSync(googleAccessToken?: string): Promise<{
+export async function runTeamSync(
+  googleAccessToken?: string,
+  opts?: { triggeredBy?: "cron" | "manual" | null; triggeredByUserId?: string | null },
+): Promise<{
   logId: string;
   result: TeamSyncResult;
 }> {
   const logId = `sync_${Date.now()}`;
   const startedAt = new Date();
 
-  // Create running log entry
+  // Create running log entry — stamp triggeredBy at INSERT so the row
+  // is correctly attributed from the moment it exists. Stamping after
+  // logRunEnd races with the client's SSE-driven refetch, which can
+  // display the row (sourced as "cron" via the heuristic) before the
+  // stamp lands.
   await db.insert(syncLogs).values({
     id: logId,
     type: "team_sync",
@@ -236,6 +243,9 @@ export async function runTeamSync(googleAccessToken?: string): Promise<{
     startedAt,
     memberCount: 0,
     issueCount: 0,
+    triggeredBy: opts?.triggeredBy ?? null,
+    triggeredByUserId:
+      opts?.triggeredBy === "manual" ? (opts?.triggeredByUserId ?? null) : null,
   });
   emitSyncLogChange({
     id: logId,

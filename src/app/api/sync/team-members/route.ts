@@ -9,7 +9,6 @@ import {
   releaseSyncLock,
   tryAcquireSyncLock,
 } from "@/lib/sync/concurrency";
-import { stampTriggeredBy } from "@/lib/sync/triggers";
 
 // POST /api/sync/team-members — Trigger manual sync (admin only)
 export async function POST() {
@@ -39,8 +38,10 @@ export async function POST() {
     try {
       // Pass Google token for email matching if available
       const googleToken = session.user.googleAccessToken;
-      const { logId, result } = await runTeamSync(googleToken);
-      await stampTriggeredBy(logId, "manual", session.user.id ?? null);
+      const { logId, result } = await runTeamSync(googleToken, {
+        triggeredBy: "manual",
+        triggeredByUserId: session.user.id ?? null,
+      });
 
       return NextResponse.json({
         success: true,

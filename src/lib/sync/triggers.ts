@@ -76,9 +76,6 @@ export function markPendingManual(
 ): void {
   const family = SYNC_FAMILY[type];
   markers.set(family, { userId, expiresAt: Date.now() + ttlMs });
-  console.log(
-    `[triggers] MARK family=${family} type=${type} userId=${userId ?? "null"} mapSize=${markers.size}`,
-  );
 }
 
 /** Called by cron-route handlers (`/api/cron/*`) at the top of the
@@ -88,17 +85,12 @@ export function markPendingManual(
 export function consumePendingManual(type: SyncLogType): { userId: string | null } | null {
   const family = SYNC_FAMILY[type];
   const mark = markers.get(family);
-  console.log(
-    `[triggers] CONSUME family=${family} type=${type} hasMark=${!!mark} mapSize=${markers.size}`,
-  );
   if (!mark) return null;
   if (mark.expiresAt < Date.now()) {
     markers.delete(family);
-    console.log(`[triggers] CONSUME expired mark family=${family}`);
     return null;
   }
   markers.delete(family);
-  console.log(`[triggers] CONSUME hit family=${family} userId=${mark.userId ?? "null"}`);
   return { userId: mark.userId };
 }
 
@@ -112,9 +104,6 @@ export async function stampTriggeredBy(
   triggeredBy: "cron" | "manual",
   userId: string | null,
 ): Promise<void> {
-  console.log(
-    `[triggers] STAMP logId=${logId} triggeredBy=${triggeredBy} userId=${userId ?? "null"}`,
-  );
   try {
     await db
       .update(syncLogs)
