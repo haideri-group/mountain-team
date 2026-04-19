@@ -143,13 +143,34 @@ export function CronicleSchedulePanel({ onViewRun, refreshTick }: Props = {}) {
   // Fast 1s poll while ANY event is mid-run. Progress bars advance in
   // near-real-time without the 60s fallback latency. Interval clears
   // itself as soon as every event is idle again.
-  const anyRunning = (data?.events ?? []).some(
-    (e) => e.lastRun?.status === "running",
-  );
+  //
+  // Gated on `!data.unavailable` so a Cronicle outage (where stale events
+  // with status="running" linger in cache) doesn't hammer the API every
+  // second; we fall back to the 60s poll until Cronicle recovers.
+  //
+  // Self-scheduling setTimeout (instead of setInterval) — awaits each
+  // `load()` before queueing the next tick so slow responses can't stack
+  // up concurrent fetches that resolve out of order and overwrite newer
+  // state with stale data.
+  const anyRunning =
+    !data?.unavailable &&
+    (data?.events ?? []).some((e) => e.lastRun?.status === "running");
   useEffect(() => {
     if (!anyRunning) return;
-    const h = setInterval(load, 1000);
-    return () => clearInterval(h);
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+
+    const tick = async () => {
+      await load();
+      if (!cancelled) timer = setTimeout(tick, 1000);
+    };
+
+    timer = setTimeout(tick, 1000);
+
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+    };
   }, [anyRunning, load]);
 
   const runEvent = useCallback(
