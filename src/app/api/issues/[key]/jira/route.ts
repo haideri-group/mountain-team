@@ -1,9 +1,9 @@
 import { NextResponse } from "next/server";
-import { auth } from "@/auth";
 import { getAuthHeader, getBaseUrl, sanitizeErrorText } from "@/lib/jira/client";
 import { db } from "@/lib/db";
 import { issues } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
+import { requirePublicOrSession } from "@/lib/ip/gate";
 
 interface JiraComment {
   id: string;
@@ -27,11 +27,14 @@ interface JiraChangelogHistory {
 }
 
 export async function GET(
-  _request: Request,
+  request: Request,
   { params }: { params: Promise<{ key: string }> },
 ) {
   try {
-    // Public read-only endpoint — no auth required for GET
+    const gate = await requirePublicOrSession(request);
+    if (!gate.allowed) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
 
     const { key } = await params;
     const baseUrl = getBaseUrl();

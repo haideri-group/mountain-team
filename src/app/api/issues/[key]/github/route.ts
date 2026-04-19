@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { auth } from "@/auth";
+import { requirePublicOrSession } from "@/lib/ip/gate";
 import { getAuthHeader, getBaseUrl, sanitizeErrorText } from "@/lib/jira/client";
 
 interface JiraBranch {
@@ -79,11 +79,14 @@ async function fetchDevStatus(
 }
 
 export async function GET(
-  _request: Request,
+  request: Request,
   { params }: { params: Promise<{ key: string }> },
 ) {
   try {
-    // Public read-only endpoint — no auth required for GET
+    const gate = await requirePublicOrSession(request);
+    if (!gate.allowed) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
 
     const { key } = await params;
 

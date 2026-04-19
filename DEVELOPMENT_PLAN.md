@@ -4,7 +4,7 @@
 **Product:** TeamFlow
 **Company:** Tile Mountain
 **Repository:** https://github.com/haidertm/team-flow
-**Last Updated:** April 19, 2026
+**Last Updated:** April 20, 2026
 
 ---
 
@@ -1123,6 +1123,20 @@ Closes the historical deployment-coverage gap. As of this phase's start, 3,902 o
 
 _Status will flip to ✅ Complete once the migration ships, the cron is scheduled in Cronicle, and the first full-coverage sweep has run._
 
+### Phase 20.5: IP Allowlist for Public Routes — 🟡 In progress
+Gates guest access to the currently-public pages (`/overview`, `/issue/[key]`, their read-only GET APIs) behind an admin-managed IP allowlist. Logged-in users are unaffected; auth / forgot-password / webhooks / crons stay open regardless of IP.
+- **New `ip_allowlist` table** (cidr, label, enabled, createdAt, createdBy) — supports both single IPs and CIDR ranges, IPv4 + IPv6.
+- **`src/proxy.ts`** (Next.js 16 convention — replaces `middleware.ts`) enforces page-level access. Guests from unlisted IPs hitting `/overview` or `/issue/[key]` get redirected to `/login?callbackUrl=<path>`.
+- **`requirePublicOrSession(request)`** helper gates public GET APIs (`/api/overview`, `/api/issues/*`, `/api/calendar`) — returns 401 for unlisted guests.
+- **IP resolution** trusts Cloudflare's `CF-Connecting-IP` first, falls back to `x-real-ip` then the leftmost `x-forwarded-for`. Fails closed: undetermined IP → treated as unlisted.
+- **Matching** via `ipaddr.js`, supports CIDR and v4-mapped-in-v6 (`::ffff:1.2.3.4`).
+- **60s in-memory cache** with explicit invalidation on admin mutations — keeps per-request overhead at one hashmap lookup.
+- **Settings UI** (admin-only): table of IPs with enable toggle + delete, add-IP form with CIDR validation, "Your current IP is X / Add my IP" banner so admins don't have to guess their own WAN address.
+- **Bootstrap-safe.** Table seeds with 8 known IPs so the team isn't locked out on first deploy. Auth routes are always exempt, so worst case is guest access temporarily disappears — admins can still log in and add IPs from Settings.
+- **Out of scope (deferred):** audit logging of bounced requests, rate-limited failure counters, geo-based rules.
+
+_Status will flip to ✅ Complete once the table ships, proxy is deployed, and the first "add my IP" flow from Settings has been exercised._
+
 ---
 
 ## 10. Notification Types
@@ -1379,6 +1393,7 @@ mountain-team/
 | 18 | Schema Migration Tooling (PR #39) | — | — | 🟡 Awaiting merge (PR #39 open) |
 | 19 | Releases Command Center (A Foundation → B Insights → C Collaboration → D Bundles) | — | — | 🟡 In progress |
 | 20 | Deployment Backfill Cron | — | — | 🟡 In progress |
+| 20.5 | IP Allowlist for Public Routes | — | — | 🟡 In progress |
 | **Total (original)** | | **30-42 days** | **6-8 weeks** | |
 
 **Note:** Phases 6, 7, and 8 can be parallelized since they all depend on Phase 5 (mock data). Phase 10 requires Phases 3 + 4. Phase 11 requires all prior phases. Phases 12–18 were added to the scope during implementation as new requirements emerged. Phase 19 (Releases Command Center) runs after Phase 18 merges and ships in three waves (A foundation, B insights, C collaboration), with Phase D (bundles) kicking off only after Phase A has been in use for ~2 weeks. Phase 20 (Deployment Backfill Cron) closes the historical deployment-coverage gap for all 4,075 tracked issues; runs every 3 hours in a rate-limit-aware batch, reaches full coverage in ~2.5 days.
