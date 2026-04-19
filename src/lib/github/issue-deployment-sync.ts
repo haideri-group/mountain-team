@@ -7,7 +7,27 @@ import {
   clearCompareCache,
   propagateDeploymentToOtherBranches,
 } from "./deployment-propagation";
+import { githubFetch } from "./client";
 import { getAuthHeader, getBaseUrl, sanitizeErrorText } from "@/lib/jira/client";
+
+/** Shape of the GitHub REST `/repos/{owner}/{repo}/pulls/{number}` response
+ *  fields we consume. Narrowed to the properties actually read below. */
+interface GhPullResponse {
+  number?: number;
+  title?: string | null;
+  html_url?: string | null;
+  merge_commit_sha?: string | null;
+  merged?: boolean;
+  merged_at?: string | null;
+  base?: { ref?: string };
+  head?: { ref?: string };
+  body?: string | null;
+  user?: { login?: string | null };
+}
+
+interface GhSearchResponse {
+  items?: Array<{ number: number }>;
+}
 
 /**
  * Three-strategy deployment fetcher for a single JIRA issue, extracted from
@@ -51,6 +71,11 @@ export async function recordDeploymentsForIssue(
 
   clearCompareCache();
 
+  // Hoisted once and reused across all three strategies — the repo list is
+  // stable within a single sync, so re-querying in each fallback was wasteful.
+  const allRepos = await db.select().from(githubRepos);
+  const repoMap = new Map(allRepos.map((r) => [r.fullName, r.id]));
+
   // --- Strategy 1: JIRA dev-status (merged PRs ? deployment branches) ---
   if (jiraIssueId) {
     try {
@@ -73,8 +98,6 @@ export async function recordDeploymentsForIssue(
         }
 
         if (mergedPRs.length > 0) {
-          const allRepos = await db.select().from(githubRepos);
-          const repoMap = new Map(allRepos.map((r) => [r.fullName, r.id]));
           const mappingsByRepo = new Map<
             string,
             typeof githubBranchMappings.$inferSelect[]
@@ -120,21 +143,13 @@ export async function recordDeploymentsForIssue(
 
             if (!commitSha && prNum && process.env.GITHUB_TOKEN) {
               try {
-                const ghRes = await fetch(
-                  `https://api.github.com/repos/${repoFullName}/pulls/${prNum}`,
-                  {
-                    headers: {
-                      Authorization: `Bearer ${process.env.GITHUB_TOKEN}`,
-                      Accept: "application/vnd.github+json",
-                    },
-                    cache: "no-store",
-                  },
+                // githubFetch captures X-RateLimit-* headers into the shared
+                // counter read by the deployment-backfill circuit breaker.
+                const ghPr = await githubFetch<GhPullResponse>(
+                  `/repos/${repoFullName}/pulls/${prNum}`,
                 );
-                if (ghRes.ok) {
-                  const ghPr = await ghRes.json();
-                  commitSha = ghPr.merge_commit_sha || "";
-                  if (ghPr.merged_at) deployedAt = new Date(ghPr.merged_at);
-                }
+                commitSha = ghPr.merge_commit_sha || "";
+                if (ghPr.merged_at) deployedAt = new Date(ghPr.merged_at);
               } catch (e) {
                 console.warn(
                   "Deployment propagation error:",
@@ -148,7 +163,7 @@ export async function recordDeploymentsForIssue(
               jiraKey,
               repoId,
               branch: destBranch,
-              prNumber: parseInt(pr.id?.replace("#", "") || "0", 10) || null,
+              prNumber: prNum || null,
               prTitle: pr.name || null,
               prUrl: pr.url || null,
               commitSha,
@@ -187,33 +202,26 @@ export async function recordDeploymentsForIssue(
   // --- Strategy 2: GitHub search fallback ---
   if (deploymentsRecorded === 0 && process.env.GITHUB_TOKEN) {
     try {
-      const allRepos = await db.select().from(githubRepos);
       for (const repo of allRepos) {
-        const searchUrl = `https://api.github.com/search/issues?q=${encodeURIComponent(jiraKey)}+repo:${repo.fullName}+is:pr+is:merged&per_page=10`;
-        const searchRes = await fetch(searchUrl, {
-          headers: {
-            Authorization: `Bearer ${process.env.GITHUB_TOKEN}`,
-            Accept: "application/vnd.github+json",
-          },
-          cache: "no-store",
-        });
-
-        if (!searchRes.ok) continue;
-        const searchData = await searchRes.json();
+        let searchData: GhSearchResponse;
+        try {
+          searchData = await githubFetch<GhSearchResponse>(
+            `/search/issues?q=${encodeURIComponent(jiraKey)}+repo:${repo.fullName}+is:pr+is:merged&per_page=10`,
+          );
+        } catch {
+          // Preserve prior behaviour: skip this repo on any search failure.
+          continue;
+        }
 
         for (const item of searchData.items || []) {
-          const prRes = await fetch(
-            `https://api.github.com/repos/${repo.fullName}/pulls/${item.number}`,
-            {
-              headers: {
-                Authorization: `Bearer ${process.env.GITHUB_TOKEN}`,
-                Accept: "application/vnd.github+json",
-              },
-              cache: "no-store",
-            },
-          );
-          if (!prRes.ok) continue;
-          const ghPr = await prRes.json();
+          let ghPr: GhPullResponse;
+          try {
+            ghPr = await githubFetch<GhPullResponse>(
+              `/repos/${repo.fullName}/pulls/${item.number}`,
+            );
+          } catch {
+            continue;
+          }
 
           if (!ghPr.merged || !ghPr.base?.ref) continue;
 
@@ -229,7 +237,7 @@ export async function recordDeploymentsForIssue(
             jiraKey,
             repoId,
             branch: destBranch,
-            prNumber: ghPr.number,
+            prNumber: ghPr.number ?? null,
             prTitle: ghPr.title || null,
             prUrl: ghPr.html_url || null,
             commitSha,
@@ -245,7 +253,7 @@ export async function recordDeploymentsForIssue(
               repoFullName: repo.fullName,
               commitSha,
               sourceBranch: destBranch,
-              prNumber: ghPr.number,
+              prNumber: ghPr.number ?? null,
               prTitle: ghPr.title || null,
               prUrl: ghPr.html_url || null,
               deployedBy: ghPr.user?.login || null,
@@ -274,9 +282,6 @@ export async function recordDeploymentsForIssue(
 
       if (commentsRes.ok) {
         const commentsData = await commentsRes.json();
-        const allRepos = await db.select().from(githubRepos);
-        const repoMap = new Map(allRepos.map((r) => [r.fullName, r.id]));
-
         const prUrlRegex = /https:\/\/github\.com\/([^/]+\/[^/]+)\/pull\/(\d+)/g;
         const seenPrUrls = new Set<string>();
 
@@ -295,18 +300,9 @@ export async function recordDeploymentsForIssue(
             if (!repoId) continue;
 
             try {
-              const prRes = await fetch(
-                `https://api.github.com/repos/${repoFullName}/pulls/${prNumber}`,
-                {
-                  headers: {
-                    Authorization: `Bearer ${process.env.GITHUB_TOKEN}`,
-                    Accept: "application/vnd.github+json",
-                  },
-                  cache: "no-store",
-                },
+              const ghPr = await githubFetch<GhPullResponse>(
+                `/repos/${repoFullName}/pulls/${prNumber}`,
               );
-              if (!prRes.ok) continue;
-              const ghPr = await prRes.json();
               if (!ghPr.merged || !ghPr.base?.ref) continue;
 
               const commitSha = ghPr.merge_commit_sha || "";
