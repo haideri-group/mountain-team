@@ -37,10 +37,20 @@ interface SeedRow {
 
 // Default bootstrap: just localhost so dev environments work immediately.
 // Prod-specific IPs come from the BOOTSTRAP_IP_ALLOWLIST env var below.
-const DEFAULT_SEED: SeedRow[] = [
-  { cidr: "127.0.0.1", label: "Localhost (IPv4)" },
-  { cidr: "::1", label: "Localhost (IPv6)" },
-];
+// Each entry passes through normalizeCidr at construction so DEFAULT_SEED
+// stores the same canonical form the POST route + env parser produce.
+// Without this step, "127.0.0.1" (raw) and "127.0.0.1/32" (canonical)
+// would coexist in the DB — UNIQUE-OK but logically duplicate.
+const DEFAULT_SEED: SeedRow[] = (
+  [
+    { cidr: "127.0.0.1", label: "Localhost (IPv4)" },
+    { cidr: "::1", label: "Localhost (IPv6)" },
+  ] as SeedRow[]
+).map((s) => {
+  const normalized = normalizeCidr(s.cidr);
+  if (!normalized) throw new Error(`DEFAULT_SEED invalid cidr: ${s.cidr}`);
+  return { cidr: normalized, label: s.label };
+});
 
 function parseEnvBootstrap(raw: string | undefined): SeedRow[] {
   if (!raw) return [];
@@ -189,10 +199,37 @@ async function main() {
       );
     }
 
-    // ── 4. seed bootstrap IPs ─────────────────────────────────────────
+    // ── 4. canonicalize any non-canonical cidr rows ───────────────────
+    // Earlier versions of normalizeCidr preserved user input shape, so
+    // "127.0.0.1" was stored raw. Now every form converges to canonical
+    // CIDR ("127.0.0.1/32"). Update any pre-existing raw rows in place
+    // so old and new inserts share one key space. UPDATE IGNORE silently
+    // skips rows whose canonical form already exists — that's the only
+    // realistic conflict here and the right behavior (keep the canonical
+    // row, drop the dupe).
+    const tableNowExists = APPLY || (await tableExists("ip_allowlist"));
+    if (tableNowExists) {
+      const [raw] = (await conn.query(
+        "SELECT id, cidr FROM ip_allowlist WHERE cidr NOT LIKE '%/%'",
+      )) as [Array<{ id: string; cidr: string }>, unknown];
+      if (raw.length === 0) {
+        console.log("  [skip] no non-canonical cidr rows to update");
+      } else {
+        for (const row of raw) {
+          const canonical = normalizeCidr(row.cidr);
+          if (!canonical || canonical === row.cidr) continue;
+          await run(
+            `canonicalize cidr: ${row.cidr} → ${canonical}`,
+            "UPDATE IGNORE `ip_allowlist` SET `cidr` = ? WHERE `id` = ?",
+            [canonical, row.id],
+          );
+        }
+      }
+    }
+
+    // ── 5. seed bootstrap IPs ─────────────────────────────────────────
     // In dry-run on a fresh DB, the table doesn't exist yet — skip the
     // SELECT. On --apply, the CREATE above has already run, so this works.
-    const tableNowExists = APPLY || (await tableExists("ip_allowlist"));
     const existing = new Set<string>();
     if (tableNowExists) {
       const [existingRows] = (await conn.query(

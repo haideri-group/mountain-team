@@ -81,21 +81,23 @@ export function isIpAllowed(ip: string, rules: string[]): boolean {
 }
 
 /**
- * Validate + normalize a CIDR-or-single-IP input for storage.
+ * Validate + normalize a CIDR-or-single-IP input to a canonical CIDR form.
  * Returns the normalized string or null if invalid.
- * Examples of normalization:
- *   "::1"             → "::1"
- *   "001.002.003.004" → "1.2.3.4"
+ *
+ * Always appends the host-route prefix for single IPs (`/32` for v4,
+ * `/128` for v6). Without this, "127.0.0.1" and "127.0.0.1/32" stored as
+ * two rows would both pass the UNIQUE constraint (exact-string key) yet
+ * match the same client IP — creating duplicate-looking rules in the UI.
+ *
+ * Examples:
+ *   "::1"             → "::1/128"
+ *   "001.002.003.004" → "1.2.3.4/32"
+ *   "127.0.0.1/32"    → "127.0.0.1/32"
  *   "2001:db8::/32"   → "2001:db8::/32"
+ *   "203.0.113.0/24"  → "203.0.113.0/24"
  */
 export function normalizeCidr(input: string): string | null {
   const rule = parseRule(input);
   if (!rule) return null;
-  const addrStr = rule.addr.toString();
-  const isFullSingle =
-    (rule.addr.kind() === "ipv4" && rule.prefix === 32) ||
-    (rule.addr.kind() === "ipv6" && rule.prefix === 128);
-  return isFullSingle && !input.includes("/")
-    ? addrStr
-    : `${addrStr}/${rule.prefix}`;
+  return `${rule.addr.toString()}/${rule.prefix}`;
 }
