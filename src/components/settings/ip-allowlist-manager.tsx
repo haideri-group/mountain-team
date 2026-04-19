@@ -10,6 +10,8 @@ import {
   Check,
   Loader2,
   Globe,
+  Pencil,
+  X,
 } from "lucide-react";
 import { BRAND_GRADIENT } from "@/lib/brand";
 
@@ -51,6 +53,8 @@ export function IpAllowlistManager() {
   const [labelInput, setLabelInput] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [pendingById, setPendingById] = useState<Record<string, boolean>>({});
+  const [editingLabelId, setEditingLabelId] = useState<string | null>(null);
+  const [editLabelValue, setEditLabelValue] = useState("");
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -111,18 +115,23 @@ export function IpAllowlistManager() {
   };
 
   const handleToggle = async (rule: IpRule) => {
+    const nextEnabled = !rule.enabled;
     setPendingById((p) => ({ ...p, [rule.id]: true }));
+    setError(null);
     try {
       const res = await fetch(`/api/ip-allowlist/${rule.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ enabled: !rule.enabled }),
+        body: JSON.stringify({ enabled: nextEnabled }),
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
         throw new Error(data.error || `HTTP ${res.status}`);
       }
-      await load();
+      // Patch the single row in place — no full refetch, no table remount.
+      setRules((rs) =>
+        rs.map((r) => (r.id === rule.id ? { ...r, enabled: nextEnabled } : r)),
+      );
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to update rule");
     } finally {
@@ -139,6 +148,7 @@ export function IpAllowlistManager() {
       return;
     }
     setPendingById((p) => ({ ...p, [rule.id]: true }));
+    setError(null);
     try {
       const res = await fetch(`/api/ip-allowlist/${rule.id}`, {
         method: "DELETE",
@@ -147,9 +157,53 @@ export function IpAllowlistManager() {
         const data = await res.json().catch(() => ({}));
         throw new Error(data.error || `HTTP ${res.status}`);
       }
-      await load();
+      // Drop the row locally — no full refetch.
+      setRules((rs) => rs.filter((r) => r.id !== rule.id));
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to delete rule");
+      setPendingById((p) => {
+        const next = { ...p };
+        delete next[rule.id];
+        return next;
+      });
+    }
+  };
+
+  const startEditingLabel = (rule: IpRule) => {
+    setEditingLabelId(rule.id);
+    setEditLabelValue(rule.label || "");
+  };
+
+  const cancelEditingLabel = () => {
+    setEditingLabelId(null);
+    setEditLabelValue("");
+  };
+
+  const saveLabel = async (rule: IpRule) => {
+    const trimmed = editLabelValue.trim();
+    const nextLabel = trimmed.length === 0 ? null : trimmed;
+    if (nextLabel === (rule.label ?? null)) {
+      cancelEditingLabel();
+      return;
+    }
+    setPendingById((p) => ({ ...p, [rule.id]: true }));
+    setError(null);
+    try {
+      const res = await fetch(`/api/ip-allowlist/${rule.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ label: nextLabel }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || `HTTP ${res.status}`);
+      }
+      setRules((rs) =>
+        rs.map((r) => (r.id === rule.id ? { ...r, label: nextLabel } : r)),
+      );
+      cancelEditingLabel();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to update label");
     } finally {
       setPendingById((p) => {
         const next = { ...p };
@@ -287,26 +341,83 @@ export function IpAllowlistManager() {
                   )}
                   <span className="text-sm font-mono truncate">{rule.cidr}</span>
                 </div>
-                <span className="text-xs text-muted-foreground truncate">
-                  {rule.label || "—"}
-                </span>
+                {editingLabelId === rule.id ? (
+                  <div className="flex items-center gap-1 min-w-0">
+                    <input
+                      type="text"
+                      value={editLabelValue}
+                      onChange={(e) => setEditLabelValue(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") saveLabel(rule);
+                        if (e.key === "Escape") cancelEditingLabel();
+                      }}
+                      disabled={!!pendingById[rule.id]}
+                      placeholder="Label"
+                      maxLength={255}
+                      autoFocus
+                      className="h-7 min-w-0 flex-1 px-2 rounded bg-muted/30 text-xs focus:outline-none focus:ring-2 focus:ring-primary/30 disabled:opacity-50"
+                    />
+                    <button
+                      onClick={() => saveLabel(rule)}
+                      disabled={!!pendingById[rule.id]}
+                      className="p-1 rounded text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-950/30 disabled:opacity-50"
+                      aria-label="Save label"
+                    >
+                      <Check className="h-3.5 w-3.5" />
+                    </button>
+                    <button
+                      onClick={cancelEditingLabel}
+                      disabled={!!pendingById[rule.id]}
+                      className="p-1 rounded text-muted-foreground hover:bg-muted/30 disabled:opacity-50"
+                      aria-label="Cancel"
+                    >
+                      <X className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-1 min-w-0 group/label">
+                    <span className="text-xs text-muted-foreground truncate">
+                      {rule.label || "—"}
+                    </span>
+                    <button
+                      onClick={() => startEditingLabel(rule)}
+                      disabled={!!pendingById[rule.id]}
+                      className="p-0.5 rounded text-muted-foreground/0 group-hover/label:text-muted-foreground hover:bg-muted/30 transition-all shrink-0"
+                      aria-label="Edit label"
+                      title="Edit label"
+                    >
+                      <Pencil className="h-3 w-3" />
+                    </button>
+                  </div>
+                )}
                 <span className="text-[11px] text-muted-foreground font-mono whitespace-nowrap">
                   {formatWhen(rule.createdAt)}
                 </span>
-                <button
-                  onClick={() => handleToggle(rule)}
-                  disabled={!!pendingById[rule.id]}
-                  className={`relative w-10 h-5 rounded-full transition-colors disabled:opacity-50 ${
-                    rule.enabled ? "bg-emerald-500" : "bg-muted"
-                  }`}
-                  aria-label={rule.enabled ? "Disable rule" : "Enable rule"}
-                >
-                  <span
-                    className={`absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition-transform ${
-                      rule.enabled ? "translate-x-5" : "translate-x-0.5"
+                <div className="inline-flex items-center gap-2 shrink-0">
+                  {pendingById[rule.id] && (
+                    <Loader2
+                      aria-hidden
+                      className="h-3.5 w-3.5 text-muted-foreground animate-spin"
+                    />
+                  )}
+                  <button
+                    onClick={() => handleToggle(rule)}
+                    disabled={!!pendingById[rule.id]}
+                    role="switch"
+                    aria-checked={rule.enabled}
+                    aria-label={rule.enabled ? "Disable rule" : "Enable rule"}
+                    className={`inline-flex items-center h-5 w-9 shrink-0 rounded-full p-0.5 transition-colors disabled:cursor-not-allowed disabled:opacity-60 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 ${
+                      rule.enabled ? "bg-primary" : "bg-muted-foreground/25"
                     }`}
-                  />
-                </button>
+                  >
+                    <span
+                      aria-hidden
+                      className={`inline-block h-4 w-4 rounded-full bg-white shadow-sm transition-transform ${
+                        rule.enabled ? "translate-x-4" : "translate-x-0"
+                      }`}
+                    />
+                  </button>
+                </div>
                 <button
                   onClick={() => handleDelete(rule)}
                   disabled={!!pendingById[rule.id]}
