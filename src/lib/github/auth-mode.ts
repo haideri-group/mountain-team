@@ -119,12 +119,16 @@ export function captureRateLimitForMode(mode: AuthMode, res: Response): void {
   else patRate = snap;
 }
 
-/** Last-seen rate limit for the currently-active auth mode.
- *  Consumed by the deployment-backfill circuit breaker. */
+/** Last-seen rate limit for the auth mode that ACTUALLY served recent
+ *  requests — not the one `selectMode()` would pick next. Those diverge
+ *  when App token exchange fails and requests transparently fall back to
+ *  PAT: `selectMode()` still returns "app" (env is configured), but the
+ *  real quota being drawn down is PAT's. Following `lastUsedMode` makes
+ *  the backfill circuit breaker observe the bucket we're truly
+ *  consuming. Returns null only on cold start (no request yet). */
 export function getActiveRateLimit(): RateLimitSnapshot | null {
-  const mode = selectMode();
-  if (mode === "app") return appRate;
-  if (mode === "pat") return patRate;
+  if (lastUsedMode === "app") return appRate;
+  if (lastUsedMode === "pat") return patRate;
   return null;
 }
 
