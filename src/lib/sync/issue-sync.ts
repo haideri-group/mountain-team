@@ -289,6 +289,12 @@ export async function runIssueSync(
   updateProgress({ phase: "fetching", message: boardKey ? `Syncing ${boardKey}...` : "Starting sync..." });
 
   const startedAt = new Date();
+  const insertTriggeredBy = opts?.triggeredBy ?? null;
+  const insertUserId =
+    opts?.triggeredBy === "manual" ? (opts?.triggeredByUserId ?? null) : null;
+  console.log(
+    `[runIssueSync] logId=${logId} type=${type} opts=${JSON.stringify(opts ?? null)} → inserting triggeredBy=${insertTriggeredBy ?? "NULL"} userId=${insertUserId ?? "NULL"}`,
+  );
   await db.insert(syncLogs).values({
     id: logId,
     type,
@@ -296,9 +302,8 @@ export async function runIssueSync(
     startedAt,
     issueCount: 0,
     memberCount: 0,
-    triggeredBy: opts?.triggeredBy ?? null,
-    triggeredByUserId:
-      opts?.triggeredBy === "manual" ? (opts?.triggeredByUserId ?? null) : null,
+    triggeredBy: insertTriggeredBy,
+    triggeredByUserId: insertUserId,
   });
   emitSyncLogChange({
     id: logId,

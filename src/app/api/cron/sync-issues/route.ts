@@ -63,6 +63,9 @@ export async function GET(request: Request) {
       // source + user directly into the runner so the INSERT itself
       // carries the correct triggeredBy — no after-the-fact UPDATE race.
       const pending = consumePendingManual(syncType);
+      console.log(
+        `[cron/sync-issues] syncType=${syncType} pending=${JSON.stringify(pending)}`,
+      );
       const { logId, result } = await runIssueSync(syncType, undefined, {
         triggeredBy: pending ? "manual" : "cron",
         triggeredByUserId: pending?.userId ?? null,

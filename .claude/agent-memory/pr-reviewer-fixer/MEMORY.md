@@ -1,0 +1,14 @@
+- [ImageResponse font limits](project_imageresponse_font_limits.md) — `next/og` Satori cannot resolve system-ui or non-400 fontWeight; strip silent no-ops in icon/og routes.
+- [/api/sync/* auth convention](feedback_sync_route_convention.md) — POST is admin-only, GET is any authenticated user; reject CodeAnt "make GET admin-only" flags on individual routes.
+- [BRAND_GRADIENT constant](reference_brand_gradient.md) — primary CTA gradient lives at `src/lib/brand.ts`; ~20 pre-existing callsites still use the inline literal.
+- [jiraUpdatedAt MySQL parsing](reference_jira_updated_format.md) — stored as raw JIRA string with `+0000` offset; MySQL has no `%z`, use `STR_TO_DATE(LEFT(x, 23), '%Y-%m-%dT%H:%i:%s.%f')`.
+- [githubFetch wrapper + shared rate-limit counter](reference_github_fetch_wrapper.md) — all GH calls in `src/lib/github/**` must use `githubFetch`; raw `fetch()` bypasses `lastRateLimit` and the backfill circuit breaker. Throws on non-2xx (needs try/catch to preserve skip-on-failure).
+- [IP allowlist gotchas](reference_ip_allowlist_gotchas.md) — Phase 20.5 invariants: cache generation counter, fail-closed gates, matcher excludes /api entirely, v4-mapped IPv6 symmetry, UNIQUE cidr constraint.
+- [sync_logs concurrency guard](reference_sync_log_concurrency.md) — DB-backed "running" mutex MUST include staleness recovery (6h cutoff, reclaim + mark failed), else any crash deadlocks all future runs.
+- [Brand resolver partial-resolution gotcha](reference_brand_resolver_partial.md) — `getExpectedSites` silently drops unknown brands; any `.complete` short-circuit must also check `allResolved`.
+- [deployments table cross-repo scope](reference_deployments_repo_scope.md) — no unique on `(jiraKey, commitSha)` — repo-scoped callers must filter `repoId` in every `deployments` SELECT.
+- [CodeRabbit null-health pattern](feedback_coderabbit_null_health_pattern.md) — don't accept "flip modeIsHealthy(null) → false" diffs; keep cold-start heuristic and add failure-cooldown instead.
+- [Critical-path fetch timeout](feedback_critical_path_fetch_timeout.md) — any coalesced `inFlight` `fetch()` (token exchange, OAuth refresh) needs AbortController; a hung call strands every waiter.
+- [parseInt env NaN trap](feedback_parseint_env_nan_trap.md) — `parseInt(process.env.FOO || "200", 10)` swallows garbage as NaN; wrap with `Number.isFinite + >= 0` before using in comparisons.
+- [HeadersInit spread foot-gun](feedback_headers_init_spread.md) — object-spreading `init.headers` drops `Headers` instances and malforms tuple arrays; pipe through `new Headers(...)` in a wrapper helper.
+- [Rate-limit OOO replacement](feedback_rate_limit_ooo_replacement.md) — cached `remaining` must use `Math.min` within a reset window; blind replacement lets stale higher values inflate quota.

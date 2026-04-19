@@ -101,6 +101,9 @@ export async function POST(
   // the sync_log row gets stamped `triggeredBy='manual'` instead of
   // inheriting the default `cron`. 60s TTL is plenty of headroom —
   // Cronicle typically dispatches within 1–3 seconds of run_event.
+  console.log(
+    `[run-now] eventId=${id} eventUrl=${eventUrl} representativeType=${representativeType ?? "null"} sessionUserId=${session.user.id ?? "UNDEFINED"}`,
+  );
   if (representativeType) {
     markPendingManual(representativeType, session.user.id ?? null);
   }
