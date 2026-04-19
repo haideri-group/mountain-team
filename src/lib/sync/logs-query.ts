@@ -378,9 +378,15 @@ export async function findSyncLogIdNearTime(input: {
  *  types, if one exists — regardless of whether Cronicle has a
  *  corresponding job entry. Used by the schedule panel's progress
  *  projection so that a Run-Now-invoked sync (which doesn't go through
- *  Cronicle) still shows its live progress bar under the event title. */
+ *  Cronicle) still shows its live progress bar under the event title.
+ *
+ *  Ignores rows older than 1 hour — those are almost certainly stuck
+ *  (process crashed, dev server killed, etc.) and would keep the
+ *  panel's 1s progress poll running indefinitely. The Reclaim banner
+ *  handles stuck rows through a separate path. */
 export async function findRunningSyncLog(
   types: SyncLogType[],
+  maxAgeSec = 3600,
 ): Promise<{ id: string; type: SyncLogType; startedAt: Date } | null> {
   if (types.length === 0) return null;
   const [row] = await db
@@ -391,7 +397,11 @@ export async function findRunningSyncLog(
     })
     .from(syncLogs)
     .where(
-      and(eq(syncLogs.status, "running"), inArray(syncLogs.type, types)),
+      and(
+        eq(syncLogs.status, "running"),
+        inArray(syncLogs.type, types),
+        sql`${syncLogs.startedAt} > NOW() - INTERVAL ${maxAgeSec} SECOND`,
+      ),
     )
     .orderBy(desc(syncLogs.startedAt))
     .limit(1);
