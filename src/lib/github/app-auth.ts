@@ -61,6 +61,14 @@ function signAppJwt(appId: string, privateKey: string): string {
   return `${signingInput}.${signature}`;
 }
 
+/** Hard cap on how long the installation-token exchange can stall before
+ *  we bail out. This call sits on the critical path of every App-mode
+ *  GitHub request; without a ceiling a hung DNS / GitHub outage blocks
+ *  the coalesced `inFlight` promise indefinitely and every waiter hangs
+ *  with it. 10s is well above the typical p99 (~200ms) and generous
+ *  enough for a transient slow response. */
+const TOKEN_EXCHANGE_TIMEOUT_MS = 10_000;
+
 async function fetchInstallationToken(): Promise<CachedToken> {
   if (!isAppAuthConfigured()) {
     throw new Error("GitHub App env vars not fully configured");
@@ -74,18 +82,41 @@ async function fetchInstallationToken(): Promise<CachedToken> {
 
   const jwt = signAppJwt(appId, privateKey);
 
-  const res = await fetch(
-    `https://api.github.com/app/installations/${installationId}/access_tokens`,
-    {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${jwt}`,
-        Accept: "application/vnd.github+json",
-        "X-GitHub-Api-Version": "2022-11-28",
-      },
-      cache: "no-store",
-    },
+  const controller = new AbortController();
+  const timeoutId = setTimeout(
+    () => controller.abort(),
+    TOKEN_EXCHANGE_TIMEOUT_MS,
   );
+  let res: Response;
+  try {
+    res = await fetch(
+      `https://api.github.com/app/installations/${installationId}/access_tokens`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${jwt}`,
+          Accept: "application/vnd.github+json",
+          "X-GitHub-Api-Version": "2022-11-28",
+        },
+        cache: "no-store",
+        signal: controller.signal,
+      },
+    );
+  } catch (err) {
+    // AbortError from our timeout → rewrap as a clear timeout error so
+    // the auth-mode layer logs something actionable before falling back.
+    if (
+      err instanceof Error &&
+      (err.name === "AbortError" || controller.signal.aborted)
+    ) {
+      throw new Error(
+        `GitHub App installation-token exchange timed out after ${TOKEN_EXCHANGE_TIMEOUT_MS}ms`,
+      );
+    }
+    throw err;
+  } finally {
+    clearTimeout(timeoutId);
+  }
 
   if (!res.ok) {
     const text = await res.text();
