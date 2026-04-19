@@ -301,6 +301,7 @@ export function GlobalSearch() {
           aria-label="Search members and issues"
           aria-autocomplete="list"
           aria-controls="search-results"
+          suppressHydrationWarning
           className={cn(
             "flex-1 min-w-0 bg-transparent text-sm text-foreground placeholder:text-muted-foreground",
             "focus:outline-none",
