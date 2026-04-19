@@ -5,6 +5,7 @@ import {
   getAuthForRequest,
   isAppAuthConfigured as isAppConfigured,
 } from "./auth-mode";
+import { clearInstallationTokenCache } from "./app-auth";
 
 // --- Config ---
 
@@ -41,6 +42,37 @@ export async function getGitHubRequestHeaders(): Promise<{
   };
 }
 
+/** Low-level fetch with one-retry on App 401. Installation tokens can
+ *  go stale between requests (key rotation, permissions revoked at the
+ *  org) and our cache would keep serving them for up to 55 min. On a
+ *  401 from App auth, clear the cache and try once more — the retry
+ *  refetches a fresh token (or falls through to PAT if App is broken
+ *  entirely). Rate-limit capture happens for both attempts. */
+export async function githubRawFetch(
+  url: string,
+  init?: RequestInit,
+): Promise<{ res: Response; mode: "app" | "pat" }> {
+  let { headers, mode } = await getGitHubRequestHeaders();
+  let res = await fetch(url, {
+    ...init,
+    headers: { ...(init?.headers || {}), ...headers },
+    cache: "no-store",
+  });
+  captureRateLimitForMode(mode, res);
+
+  if (res.status === 401 && mode === "app") {
+    clearInstallationTokenCache();
+    ({ headers, mode } = await getGitHubRequestHeaders());
+    res = await fetch(url, {
+      ...init,
+      headers: { ...(init?.headers || {}), ...headers },
+      cache: "no-store",
+    });
+    captureRateLimitForMode(mode, res);
+  }
+  return { res, mode };
+}
+
 // --- Sanitize ---
 
 function sanitizeErrorText(text: string): string {
@@ -70,10 +102,7 @@ export async function githubFetch<T>(path: string): Promise<T> {
     ? path
     : `https://api.github.com${path}`;
 
-  const { headers, mode } = await getGitHubRequestHeaders();
-  const res = await fetch(url, { headers, cache: "no-store" });
-
-  captureRateLimitForMode(mode, res);
+  const { res } = await githubRawFetch(url);
 
   if (!res.ok) {
     const text = await res.text();
@@ -94,10 +123,7 @@ export async function githubFetchAll<T>(path: string, maxPages = 10): Promise<T[
   let page = 0;
 
   while (url && page < maxPages) {
-    const { headers, mode } = await getGitHubRequestHeaders();
-    const res: Response = await fetch(url, { headers, cache: "no-store" });
-
-    captureRateLimitForMode(mode, res);
+    const { res } = await githubRawFetch(url);
 
     if (!res.ok) {
       const text = await res.text();

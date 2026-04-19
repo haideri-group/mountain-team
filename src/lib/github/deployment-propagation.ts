@@ -3,8 +3,7 @@ import { deployments, githubBranchMappings } from "@/lib/db/schema";
 import { and, eq } from "drizzle-orm";
 import { recordDeployment } from "./deployments";
 import { sanitizeErrorText } from "@/lib/jira/client";
-import { getGitHubRequestHeaders } from "./client";
-import { captureRateLimitForMode } from "./auth-mode";
+import { githubRawFetch } from "./client";
 
 /**
  * GitHub `compare` and branch-deploy-date helpers, plus the
@@ -49,12 +48,9 @@ export async function cachedCompare(
   const key = `${repoFullName}:${base}...${head}`;
   if (ghCompareCache.has(key)) return ghCompareCache.get(key)!;
 
-  const { headers, mode } = await getGitHubRequestHeaders();
-  const res = await fetch(
+  const { res } = await githubRawFetch(
     `https://api.github.com/repos/${repoFullName}/compare/${base}...${head}`,
-    { headers, cache: "no-store" },
   );
-  captureRateLimitForMode(mode, res);
   if (!res.ok) return null;
 
   const data = await res.json();
@@ -78,12 +74,9 @@ async function getBranchCommits(
   const cached = branchCommitsCache.get(key);
   if (cached) return cached as GhCommitSummary[];
 
-  const { headers, mode } = await getGitHubRequestHeaders();
-  const res = await fetch(
+  const { res } = await githubRawFetch(
     `https://api.github.com/repos/${repoFullName}/commits?sha=${encodeURIComponent(branchPattern)}&per_page=20`,
-    { headers, cache: "no-store" },
   );
-  captureRateLimitForMode(mode, res);
   if (!res.ok) return null;
   const commits = (await res.json()) as GhCommitSummary[];
   if (branchCommitsCache.size >= BRANCH_COMMITS_CACHE_MAX) branchCommitsCache.clear();

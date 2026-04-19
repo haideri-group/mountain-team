@@ -98,9 +98,19 @@ export async function getAuthForRequest(): Promise<{
 }
 
 /** Update the tracked rate-limit snapshot for whichever auth mode just
- *  made a request. Silently no-ops if headers are absent. */
+ *  made a request. Only core-bucket responses update the snapshot;
+ *  search and graphql endpoints have their own smaller quotas (e.g.
+ *  30/min for search) and would corrupt the core state — see
+ *  `x-ratelimit-resource` header (GitHub sends `core`, `search`, or
+ *  `graphql`). Silently no-ops if headers are absent or non-core. */
 export function captureRateLimitForMode(mode: AuthMode, res: Response): void {
   if (mode === "none") return;
+  const resource = res.headers.get("x-ratelimit-resource");
+  // GitHub returns `x-ratelimit-resource` on every authenticated response.
+  // If it's missing, err on the side of ignoring the update — unknown
+  // resource is safer than corrupting the core snapshot.
+  if (resource !== "core") return;
+
   const remaining = res.headers.get("x-ratelimit-remaining");
   const limit = res.headers.get("x-ratelimit-limit");
   const reset = res.headers.get("x-ratelimit-reset");
@@ -124,12 +134,23 @@ export function captureRateLimitForMode(mode: AuthMode, res: Response): void {
  *  when App token exchange fails and requests transparently fall back to
  *  PAT: `selectMode()` still returns "app" (env is configured), but the
  *  real quota being drawn down is PAT's. Following `lastUsedMode` makes
- *  the backfill circuit breaker observe the bucket we're truly
- *  consuming. Returns null only on cold start (no request yet). */
+ *  the backfill circuit breaker observe the bucket we're truly consuming.
+ *
+ *  Returns null when:
+ *    - no request has been made yet (cold start)
+ *    - the snapshot's `resetAt` has already passed (stale — the next
+ *      successful call will refresh it; meanwhile treat as "unknown"
+ *      so the breaker doesn't trip on pre-reset counters). */
 export function getActiveRateLimit(): RateLimitSnapshot | null {
-  if (lastUsedMode === "app") return appRate;
-  if (lastUsedMode === "pat") return patRate;
-  return null;
+  const snap =
+    lastUsedMode === "app"
+      ? appRate
+      : lastUsedMode === "pat"
+        ? patRate
+        : null;
+  if (!snap) return null;
+  if (snap.resetAt.getTime() <= Date.now()) return null;
+  return snap;
 }
 
 /** Diagnostic view of both auth modes and their rate-limit state. */
