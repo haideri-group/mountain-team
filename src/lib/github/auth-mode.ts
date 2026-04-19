@@ -13,10 +13,18 @@ export { isAppAuthConfigured };
  * its window resets, rather than sticking on PAT forever.
  */
 
-const FALLBACK_FLOOR = Number.parseInt(
-  process.env.GITHUB_APP_FALLBACK_FLOOR || "200",
+/** Hard floor on App's remaining quota — once App drops below this, flip
+ *  to PAT even though the App window isn't exhausted. Env-tunable, but
+ *  guarded so a garbage value (empty string, "abc", negative) doesn't
+ *  silently disable the failover by producing NaN. */
+const parsedFallbackFloor = Number.parseInt(
+  process.env.GITHUB_APP_FALLBACK_FLOOR || "",
   10,
 );
+const FALLBACK_FLOOR =
+  Number.isFinite(parsedFallbackFloor) && parsedFallbackFloor >= 0
+    ? parsedFallbackFloor
+    : 200;
 
 export type AuthMode = "app" | "pat" | "none";
 
@@ -29,6 +37,12 @@ interface RateLimitSnapshot {
 let appRate: RateLimitSnapshot | null = null;
 let patRate: RateLimitSnapshot | null = null;
 let lastUsedMode: AuthMode = "none";
+/** When App token exchange (or timeout) fails, mark App unavailable for
+ *  a short cooldown so `selectMode()` stops paying a failed exchange on
+ *  every subsequent request. 60s is enough to ride out a transient
+ *  network blip without stranding callers on PAT when App is healthy. */
+let appUnavailableUntil: number = 0;
+const APP_FAILURE_COOLDOWN_MS = 60_000;
 
 /** Whether PAT env is populated (and isn't a placeholder). */
 function isPatConfigured(): boolean {
@@ -45,16 +59,26 @@ function modeIsHealthy(snap: RateLimitSnapshot | null): boolean {
   return snap.remaining > FALLBACK_FLOOR;
 }
 
+/** True when App is within its failure cooldown window — set whenever
+ *  `getAuthForRequest()` catches a thrown installation-token exchange. */
+function isAppInCooldown(): boolean {
+  return appUnavailableUntil > Date.now();
+}
+
 /** Choose which auth mode to use for the NEXT request.
- *  Prefer App when healthy. Fall back to PAT when App is unconfigured OR
- *  exhausted. Flip back to App automatically once its window resets. */
+ *  Prefer App when healthy AND not in post-failure cooldown. Fall back
+ *  to PAT when App is unconfigured, exhausted, or cooling down after a
+ *  recent failure. Flip back to App automatically once its window
+ *  resets or the cooldown expires. */
 function selectMode(): AuthMode {
   const appOk = isAppAuthConfigured();
   const patOk = isPatConfigured();
+  const appAvailable = appOk && !isAppInCooldown();
 
-  if (appOk && modeIsHealthy(appRate)) return "app";
+  if (appAvailable && modeIsHealthy(appRate)) return "app";
   if (patOk && modeIsHealthy(patRate)) return "pat";
-  // Both exhausted but at least one exists → return it (caller surfaces 403).
+  // PAT unhealthy/unavailable — fall through to App even if cooling down,
+  // since the alternative is "none". Caller surfaces 403 on exhaustion.
   if (appOk) return "app";
   if (patOk) return "pat";
   return "none";
@@ -77,10 +101,15 @@ export async function getAuthForRequest(): Promise<{
   if (mode === "app") {
     try {
       const token = await getInstallationToken();
+      // Success — clear any stale cooldown from a prior failure.
+      appUnavailableUntil = 0;
       return { header: `Bearer ${token}`, mode };
     } catch (err) {
-      // App token exchange failed (malformed key, network blip, etc.).
-      // Fall through to PAT if available.
+      // App token exchange failed (malformed key, network blip, timeout).
+      // Mark App unavailable for a short window so we stop paying a
+      // failed exchange on every subsequent request. Fall through to
+      // PAT if available.
+      appUnavailableUntil = Date.now() + APP_FAILURE_COOLDOWN_MS;
       console.warn(
         "GitHub App token exchange failed — falling back to PAT:",
         err instanceof Error ? err.message : String(err),
@@ -155,13 +184,17 @@ export function getActiveRateLimit(): RateLimitSnapshot | null {
 
 /** Diagnostic view of both auth modes and their rate-limit state. */
 export function getAuthModeStatus() {
+  const appConfigured = isAppAuthConfigured();
+  const appCoolingDown = isAppInCooldown();
   return {
     selectedMode: selectMode(),
     lastUsedMode,
     app: {
-      configured: isAppAuthConfigured(),
+      configured: appConfigured,
       rateLimit: appRate ? { ...appRate } : null,
-      healthy: modeIsHealthy(appRate),
+      healthy: appConfigured && !appCoolingDown && modeIsHealthy(appRate),
+      cooldownUntil:
+        appCoolingDown ? new Date(appUnavailableUntil) : null,
     },
     pat: {
       configured: isPatConfigured(),
