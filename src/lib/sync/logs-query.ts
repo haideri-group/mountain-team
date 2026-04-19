@@ -247,19 +247,26 @@ export interface Summary24h {
   stuckOver1h: number;
 }
 
-/** Summary strip data. Single query returns all five counts. */
+/** Summary strip data. Single query returns all five counts.
+ *
+ *  Uses MySQL-native `NOW() - INTERVAL` math instead of JS Date params.
+ *  Rationale: when the Node process's local timezone differs from the
+ *  mysql2 driver's assumed server timezone (e.g. Node in Pakistan GMT+5,
+ *  server datetimes mis-interpreted as local by the driver), JS Date
+ *  values serialize with a 5h offset and comparisons report rows as
+ *  "stuck" that aren't. Keeping the arithmetic entirely within MySQL
+ *  eliminates the driver's timezone round-trip — `startedAt` and
+ *  `NOW()` live in the same timezone context, so the comparison is
+ *  always consistent regardless of driver / OS locale. */
 export async function summarize24h(): Promise<Summary24h> {
-  const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
-  const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000);
-
   const [row] = await db
     .select({
-      total: sql<number>`SUM(CASE WHEN ${syncLogs.startedAt} >= ${since} THEN 1 ELSE 0 END)`,
-      completed: sql<number>`SUM(CASE WHEN ${syncLogs.startedAt} >= ${since} AND ${syncLogs.status} = 'completed' THEN 1 ELSE 0 END)`,
-      failed: sql<number>`SUM(CASE WHEN ${syncLogs.startedAt} >= ${since} AND ${syncLogs.status} = 'failed' THEN 1 ELSE 0 END)`,
-      running: sql<number>`SUM(CASE WHEN ${syncLogs.startedAt} >= ${since} AND ${syncLogs.status} = 'running' THEN 1 ELSE 0 END)`,
+      total: sql<number>`SUM(CASE WHEN ${syncLogs.startedAt} >= NOW() - INTERVAL 24 HOUR THEN 1 ELSE 0 END)`,
+      completed: sql<number>`SUM(CASE WHEN ${syncLogs.startedAt} >= NOW() - INTERVAL 24 HOUR AND ${syncLogs.status} = 'completed' THEN 1 ELSE 0 END)`,
+      failed: sql<number>`SUM(CASE WHEN ${syncLogs.startedAt} >= NOW() - INTERVAL 24 HOUR AND ${syncLogs.status} = 'failed' THEN 1 ELSE 0 END)`,
+      running: sql<number>`SUM(CASE WHEN ${syncLogs.startedAt} >= NOW() - INTERVAL 24 HOUR AND ${syncLogs.status} = 'running' THEN 1 ELSE 0 END)`,
       activeNow: sql<number>`SUM(CASE WHEN ${syncLogs.status} = 'running' THEN 1 ELSE 0 END)`,
-      stuckOver1h: sql<number>`SUM(CASE WHEN ${syncLogs.status} = 'running' AND ${syncLogs.startedAt} < ${oneHourAgo} THEN 1 ELSE 0 END)`,
+      stuckOver1h: sql<number>`SUM(CASE WHEN ${syncLogs.status} = 'running' AND ${syncLogs.startedAt} < NOW() - INTERVAL 1 HOUR THEN 1 ELSE 0 END)`,
     })
     .from(syncLogs);
 
@@ -318,14 +325,20 @@ export async function findSyncLogIdNearTime(input: {
   return best?.id ?? null;
 }
 
-/** Returns every row currently `status='running'` older than `graceMs`. */
+/** Returns every row currently `status='running'` older than `graceMs`.
+ *  Uses MySQL-native `NOW() - INTERVAL` so the age comparison isn't
+ *  skewed by mysql2 driver timezone round-trips (see notes on
+ *  `summarize24h`). */
 export async function findStuckRunning(graceMs: number): Promise<LogRow[]> {
-  const cutoff = new Date(Date.now() - graceMs);
+  const graceSec = Math.max(1, Math.floor(graceMs / 1000));
   const rows = await db
     .select()
     .from(syncLogs)
     .where(
-      and(eq(syncLogs.status, "running"), lte(syncLogs.startedAt, cutoff)),
+      and(
+        eq(syncLogs.status, "running"),
+        sql`${syncLogs.startedAt} <= NOW() - INTERVAL ${graceSec} SECOND`,
+      ),
     )
     .orderBy(desc(syncLogs.startedAt));
   return rows.map(toLogRow);

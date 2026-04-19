@@ -409,9 +409,14 @@ export async function runDeploymentBackfill(): Promise<BackfillRunResult> {
   // mark it failed, and proceed with this run. Without this, a process kill
   // between `logRunStart()` and `logRunEnd()` would leave a permanent
   // "running" row and block every future cron/admin invocation.
-  const STALE_CUTOFF_MS = 6 * 60 * 60 * 1000;
+  // MySQL-native age check so the comparison isn't skewed by mysql2
+  // driver timezone round-trips (see notes in logs-query.summarize24h).
+  const STALE_CUTOFF_SEC = 6 * 60 * 60;
   const [alreadyRunningLog] = await db
-    .select({ id: syncLogs.id, startedAt: syncLogs.startedAt })
+    .select({
+      id: syncLogs.id,
+      isStale: sql<number>`CASE WHEN ${syncLogs.startedAt} IS NULL OR ${syncLogs.startedAt} <= NOW() - INTERVAL ${STALE_CUTOFF_SEC} SECOND THEN 1 ELSE 0 END`,
+    })
     .from(syncLogs)
     .where(
       and(
@@ -422,11 +427,7 @@ export async function runDeploymentBackfill(): Promise<BackfillRunResult> {
     .limit(1);
 
   if (alreadyRunningLog) {
-    const startedAtMs = alreadyRunningLog.startedAt
-      ? new Date(alreadyRunningLog.startedAt).getTime()
-      : 0;
-    const isStale =
-      startedAtMs <= 0 || Date.now() - startedAtMs > STALE_CUTOFF_MS;
+    const isStale = Number(alreadyRunningLog.isStale) === 1;
 
     if (!isStale) {
       return {
