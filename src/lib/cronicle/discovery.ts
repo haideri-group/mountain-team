@@ -70,6 +70,15 @@ export async function listTeamFlowEvents(): Promise<CronicleEvent[]> {
   return events;
 }
 
+/** Force the next `listTeamFlowEvents` / `listEventHistory` call to
+ *  hit Cronicle fresh. Call this after mutating actions (e.g. triggering
+ *  a run) so the UI sees the new state on its next poll instead of
+ *  serving the pre-mutation snapshot for up to a minute. */
+export function invalidateScheduleCache(): void {
+  scheduleCache = null;
+  historyCache.clear();
+}
+
 /** Per-event history, cached 30s per eventId. */
 export async function listEventHistory(
   eventId: string,

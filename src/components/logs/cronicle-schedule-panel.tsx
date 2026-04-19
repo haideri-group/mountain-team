@@ -123,8 +123,13 @@ export function CronicleSchedulePanel({ onViewRun }: Props = {}) {
         const body = await res.json().catch(() => ({}));
         if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);
         setToast({ kind: "ok", msg: `Triggered "${title}"` });
-        // Refresh the schedule so the new "last run" reflects.
-        setTimeout(load, 1500);
+        // Brief burst of refreshes so both "running" and "completed"
+        // states surface promptly: 2s (Cronicle registers the job),
+        // 6s and 12s (catches fast jobs like Team Sync ~2-10s). Normal
+        // 60s interval picks up longer-running jobs.
+        setTimeout(load, 2000);
+        setTimeout(load, 6000);
+        setTimeout(load, 12_000);
       } catch (e) {
         setToast({
           kind: "err",

@@ -1,7 +1,10 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/auth";
 import { cronicleGet, isCronicleConfigured } from "@/lib/cronicle/client";
-import { listTeamFlowEvents } from "@/lib/cronicle/discovery";
+import {
+  invalidateScheduleCache,
+  listTeamFlowEvents,
+} from "@/lib/cronicle/discovery";
 
 /**
  * POST /api/automations/cronicle/events/[id]/run
@@ -73,6 +76,10 @@ export async function POST(
       { status: 502 },
     );
   }
+
+  // Drop the schedule + history caches so the UI's next refetch sees
+  // the new job in Cronicle's history instead of the pre-trigger snapshot.
+  invalidateScheduleCache();
 
   const jobIds = res.data.ids ?? [];
   return NextResponse.json({
