@@ -168,16 +168,24 @@ export async function propagateDeploymentToOtherBranches(params: {
   if (otherBranches.length === 0) return 0;
 
   // Pre-check: if the deployments table already has rows for this
-  // (jiraKey, commitSha) across every target branch, skip propagation
-  // entirely. Without this, a second backfill run re-checks the same
-  // commit against 7+ branches — each branch doing 1 commits fetch + up
-  // to 20 compare calls. That's ~170 GitHub API calls to confirm rows
-  // we already have.
+  // (repoId, jiraKey, commitSha) across every target branch, skip
+  // propagation entirely. Without this, a second backfill run re-checks
+  // the same commit against 7+ branches — each branch doing 1 commits
+  // fetch + up to 20 compare calls. That's ~170 GitHub API calls to
+  // confirm rows we already have.
+  //
+  // Scope the lookup to params.repoId because otherBranches is also
+  // repo-scoped (loaded from githubBranchMappings WHERE repoId = X). If a
+  // different tracked repo happened to have rows for the same jiraKey +
+  // commitSha (unlikely but possible with shared branch names or a
+  // commit backported across repos), dropping the repoId filter would
+  // falsely mark this repo's branches as covered and skip real work.
   const existing = await db
     .select({ branch: deployments.branch })
     .from(deployments)
     .where(
       and(
+        eq(deployments.repoId, params.repoId),
         eq(deployments.jiraKey, params.jiraKey),
         eq(deployments.commitSha, params.commitSha),
       ),

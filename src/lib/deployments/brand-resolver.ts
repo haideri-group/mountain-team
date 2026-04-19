@@ -75,6 +75,61 @@ export function getExpectedSites(
 }
 
 /**
+ * Like `getExpectedSites`, but also reports which parsed brands failed to
+ * resolve against BRAND_SITE_MAP. Used by callers that need to distinguish
+ * "every brand resolved and every site is deployed" from "some brands were
+ * unknown, what did resolve is deployed" — the latter must NOT be treated
+ * as full coverage (e.g., to suppress backfill).
+ *
+ * `unresolvedBrands` is the raw brand string (original case/spelling), so
+ * it can be surfaced for diagnostics.
+ */
+export function getExpectedSitesWithResolution(
+  brandsStr: string | null,
+  allProductionSites: string[],
+): {
+  sites: string[] | null;
+  unresolvedBrands: string[];
+  allResolved: boolean;
+} {
+  if (!brandsStr) return { sites: null, unresolvedBrands: [], allResolved: true };
+
+  const brands = parseBrands(brandsStr);
+  if (brands.length === 0) {
+    return { sites: null, unresolvedBrands: [], allResolved: true };
+  }
+
+  // "All Brands" is always fully resolved.
+  if (brands.some((b) => b.toLowerCase() === "all brands")) {
+    return {
+      sites: allProductionSites,
+      unresolvedBrands: [],
+      allResolved: true,
+    };
+  }
+
+  const sites = new Set<string>();
+  const unresolvedBrands: string[] = [];
+  for (const brand of brands) {
+    const mapped = BRAND_SITE_MAP[brand];
+    if (!mapped) {
+      unresolvedBrands.push(brand);
+      continue;
+    }
+    // "Wholesale" maps to [] — it's resolved (known brand) but contributes
+    // no sites. That's an intentional zero-site brand, not an unknown one,
+    // so we do NOT add it to unresolvedBrands.
+    for (const s of mapped) sites.add(s);
+  }
+
+  return {
+    sites: sites.size > 0 ? [...sites].sort() : null,
+    unresolvedBrands,
+    allResolved: unresolvedBrands.length === 0,
+  };
+}
+
+/**
  * Compares expected deployment sites (from brands) against actual deployed sites.
  *
  * @returns Completeness info, or null if brands is not set
@@ -89,8 +144,16 @@ export function getDeploymentCompleteness(
   missing: string[];
   complete: boolean;
   percentage: number;
+  // `allResolved === false` means at least one parsed brand was not in
+  // BRAND_SITE_MAP (typo, new brand, etc.) — `expected` therefore only
+  // reflects the brands that DID resolve. Callers that use `complete` to
+  // short-circuit work (backfill skip, etc.) MUST also require
+  // `allResolved`, otherwise a typo can fake full coverage.
+  allResolved: boolean;
+  unresolvedBrands: string[];
 } | null {
-  const expected = getExpectedSites(brandsStr, allProductionSites);
+  const resolution = getExpectedSitesWithResolution(brandsStr, allProductionSites);
+  const expected = resolution.sites;
   if (!expected || expected.length === 0) return null;
 
   const deployedSet = new Set(deployedSiteNames);
@@ -103,6 +166,8 @@ export function getDeploymentCompleteness(
     missing,
     complete: missing.length === 0,
     percentage: Math.round((deployed.length / expected.length) * 100),
+    allResolved: resolution.allResolved,
+    unresolvedBrands: resolution.unresolvedBrands,
   };
 }
 

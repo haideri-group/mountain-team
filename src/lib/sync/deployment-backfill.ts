@@ -238,9 +238,18 @@ async function selectQueue(limit: number): Promise<QueueCandidate[]> {
   for (const c of candidates) {
     const deployed = [...(deployedByKey.get(c.jiraKey) ?? new Set<string>())];
     const completeness = getDeploymentCompleteness(c.brands, deployed, allProductionSites);
-    // completeness === null means brands unknown — keep (can't tell).
-    // completeness.complete === true means every expected site is recorded.
-    if (completeness && completeness.complete) {
+    // completeness === null  → brands unknown/empty → keep (can't tell).
+    // completeness.complete  → every resolved brand's expected sites are recorded.
+    // completeness.allResolved → every parsed brand resolved via BRAND_SITE_MAP.
+    //
+    // We only short-circuit when BOTH are true. If `allResolved` is false
+    // (typo, newly-added brand) then `expected` only reflects the brands
+    // that did resolve, so `complete` can be true even though we haven't
+    // checked sites for the unresolved brands. Suppressing backfill in
+    // that case would hide missing deployments until the 6h P3 mark (or
+    // forever, for done/closed issues). Safer to let the backfill run
+    // and pay the GitHub cost on a rare typo than silently skip.
+    if (completeness && completeness.complete && completeness.allResolved) {
       alreadyCoveredIds.push(c.id);
       continue;
     }
