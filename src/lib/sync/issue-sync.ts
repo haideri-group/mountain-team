@@ -14,6 +14,7 @@ import {
 import { normalizeIssue, calculateCycleTime, loadStatusMappingCache, invalidateStatusMappingCache } from "@/lib/jira/normalizer";
 import { sanitizeErrorText } from "@/lib/jira/client";
 import { recordDeploymentsForIssue } from "@/lib/github/issue-deployment-sync";
+import { clearCompareCache } from "@/lib/github/deployment-propagation";
 import { upsertWorklogs, fetchIssueWorklogs } from "@/lib/sync/worklog-sync";
 import { reconcileReleaseIssues } from "@/lib/releases/sync-release-issues";
 import { refreshReleasesForIssue } from "@/lib/sync/release-sync";
@@ -499,6 +500,10 @@ export async function syncSingleIssue(
     console.warn("Worklog sync failed (non-fatal):", err instanceof Error ? err.message : String(err));
   }
 
+  // Clear the shared compare/branch-commits caches at the start of each
+  // per-issue sync — this path processes exactly one issue, so fresh state
+  // is the right default.
+  clearCompareCache();
   const deploymentSync = await recordDeploymentsForIssue({
     jiraKey: normalized.jiraKey,
     jiraIssueId: raw.id,

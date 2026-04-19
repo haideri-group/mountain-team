@@ -3,6 +3,7 @@ import { issues, deployments, syncLogs, githubBranchMappings } from "@/lib/db/sc
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { fetchSingleIssue } from "@/lib/jira/issues";
 import { recordDeploymentsForIssue } from "@/lib/github/issue-deployment-sync";
+import { clearCompareCache } from "@/lib/github/deployment-propagation";
 import {
   getLastKnownRateLimit,
   getRateLimit,
@@ -216,41 +217,56 @@ async function selectQueue(limit: number): Promise<QueueCandidate[]> {
     deploymentsSyncedAt: r.deploymentsSyncedAt,
   }));
 
-  // JS-side completion refinement — drop done/closed issues whose expected
-  // sites (from brands) are already fully covered by existing deployments.
-  // Applies to every priority bucket because a done issue can reach P2/P4/P5
-  // and still be fully deployed.
-  const doneClosedKeys = candidates
-    .filter((c) => c.status === "done" || c.status === "closed")
-    .map((c) => c.jiraKey);
-  if (doneClosedKeys.length === 0) return candidates.slice(0, limit);
-
+  // JS-side completion refinement — drop ANY issue whose expected sites
+  // (from brands) are already fully covered by existing deployments.
+  // Applies to every priority bucket and every status: if the table shows
+  // full coverage, re-running the fetch just burns GitHub quota confirming
+  // rows we already have.
+  //
+  // For each skipped issue we also stamp `deploymentsSyncedAt = now()` so
+  // the priority queue deprioritizes it on the next run — done/closed
+  // fully-covered issues then get excluded by the SQL pre-filter, active
+  // ones resurface at the 6h mark via P3 and get re-checked cheaply.
+  const allKeys = candidates.map((c) => c.jiraKey);
+  if (allKeys.length === 0) return [];
   const allProductionSites = await getAllProductionSites();
-  const deployedByKey = await getDeployedSiteNamesForKeys(doneClosedKeys);
+  const deployedByKey = await getDeployedSiteNamesForKeys(allKeys);
 
   const filtered: QueueCandidate[] = [];
+  const alreadyCoveredIds: string[] = [];
+
   for (const c of candidates) {
-    if (c.status === "done" || c.status === "closed") {
-      const deployed = [...(deployedByKey.get(c.jiraKey) ?? new Set<string>())];
-      const completeness = getDeploymentCompleteness(c.brands, deployed, allProductionSites);
-      // completeness === null means brands unknown — keep the row (can't tell)
-      // completeness.complete === true means every expected site is deployed
-      if (completeness && completeness.complete) continue;
-      // Also drop done/closed issues whose brands map to no expected sites.
-      // `getExpectedSites` returns `null` (not `[]`) when `sites.size === 0`,
-      // so we can't just check `expected.length === 0` — inspect the parsed
-      // brands directly. `Wholesale` is the only brand in BRAND_SITE_MAP with
-      // an empty site list today; any brand that maps to `[]` falls here.
-      if (c.brands) {
-        const brands = c.brands
-          .split(",")
-          .map((b) => b.trim().toLowerCase())
-          .filter(Boolean);
-        if (brands.length > 0 && brands.every((b) => b === "wholesale")) continue;
+    const deployed = [...(deployedByKey.get(c.jiraKey) ?? new Set<string>())];
+    const completeness = getDeploymentCompleteness(c.brands, deployed, allProductionSites);
+    // completeness === null means brands unknown — keep (can't tell).
+    // completeness.complete === true means every expected site is recorded.
+    if (completeness && completeness.complete) {
+      alreadyCoveredIds.push(c.id);
+      continue;
+    }
+    // `getExpectedSites` returns `null` (not `[]`) when brands map to no
+    // sites — Wholesale is the only such brand today. Skip those too.
+    if (c.brands) {
+      const brands = c.brands
+        .split(",")
+        .map((b) => b.trim().toLowerCase())
+        .filter(Boolean);
+      if (brands.length > 0 && brands.every((b) => b === "wholesale")) {
+        alreadyCoveredIds.push(c.id);
+        continue;
       }
     }
     filtered.push(c);
     if (filtered.length >= limit) break;
+  }
+
+  // Bulk-stamp the already-covered issues so the priority queue stops
+  // surfacing them on every run.
+  if (alreadyCoveredIds.length > 0) {
+    await db
+      .update(issues)
+      .set({ deploymentsSyncedAt: new Date() })
+      .where(inArray(issues.id, alreadyCoveredIds));
   }
 
   return filtered.slice(0, limit);
@@ -376,6 +392,11 @@ export async function runDeploymentBackfill(): Promise<BackfillRunResult> {
   }
 
   runInFlight = true;
+
+  // Fresh compare + branch-commits caches for this run. Within the run
+  // they persist across issues so two issues that share a commit or
+  // branch pay one GitHub round-trip total.
+  clearCompareCache();
 
   resetProgress();
   updateProgress({
