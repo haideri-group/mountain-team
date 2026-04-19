@@ -3,17 +3,11 @@ import { getInstallationToken, isAppAuthConfigured } from "./app-auth";
 export { isAppAuthConfigured };
 
 /**
- * Dual-auth selector: prefer GitHub App, fall back to PAT whenever the
- * App is unavailable — for ANY reason, including:
+ * Dual-auth selector: prefer GitHub App, fall back to PAT when the App
+ * is unavailable for any reason:
  *   - App env vars missing / private key malformed
  *   - Installation-token exchange errored out (4xx/5xx)
  *   - App's rate-limit budget is exhausted (remaining < floor)
- *
- * Policy call: this is an internal tool for one small team, not a
- * multi-tenant service. Using the owner's PAT as a bucket-hopping
- * fallback is an acceptable resilience pattern here. If this ever
- * gets generalized into a product, revisit — the ToS posture is
- * different at scale.
  *
  * Rate-limit state is tracked per mode so we flip back to App once
  * its window resets, rather than sticking on PAT forever.
