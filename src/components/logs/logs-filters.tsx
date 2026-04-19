@@ -42,12 +42,18 @@ export function LogsFilters({
   value: LogsFiltersValue;
   onChange: (next: LogsFiltersValue) => void;
 }) {
+  // Browser form-autofill extensions (Chrome autofill, LastPass, 1Password,
+  // Form Filler, etc.) inject `fdprocessedid="..."` onto form controls
+  // after SSR HTML arrives but before React hydrates. React then flags a
+  // hydration mismatch on every select/input. Suppressing on each control
+  // silences the noise without hiding real mismatches elsewhere.
   return (
     <div className="flex flex-wrap items-center gap-2">
       <select
         value={value.type}
         onChange={(e) => onChange({ ...value, type: e.target.value as LogsFiltersValue["type"] })}
         className="h-9 rounded-lg bg-background px-3 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-[#ff8400]/30"
+        suppressHydrationWarning
       >
         {TYPE_OPTIONS.map((o) => (
           <option key={o.value} value={o.value}>{o.label}</option>
@@ -57,6 +63,7 @@ export function LogsFilters({
         value={value.status}
         onChange={(e) => onChange({ ...value, status: e.target.value as LogsFiltersValue["status"] })}
         className="h-9 rounded-lg bg-background px-3 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-[#ff8400]/30"
+        suppressHydrationWarning
       >
         {STATUS_OPTIONS.map((o) => (
           <option key={o.value} value={o.value}>{o.label}</option>
@@ -66,6 +73,7 @@ export function LogsFilters({
         value={value.source}
         onChange={(e) => onChange({ ...value, source: e.target.value as LogsFiltersValue["source"] })}
         className="h-9 rounded-lg bg-background px-3 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-[#ff8400]/30"
+        suppressHydrationWarning
       >
         {SOURCE_OPTIONS.map((o) => (
           <option key={o.value} value={o.value}>{o.label}</option>
@@ -77,6 +85,7 @@ export function LogsFilters({
         onChange={(e) => onChange({ ...value, from: e.target.value })}
         className="h-9 rounded-lg bg-background px-3 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-[#ff8400]/30"
         placeholder="From"
+        suppressHydrationWarning
       />
       <input
         type="date"
@@ -84,6 +93,7 @@ export function LogsFilters({
         onChange={(e) => onChange({ ...value, to: e.target.value })}
         className="h-9 rounded-lg bg-background px-3 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-[#ff8400]/30"
         placeholder="To"
+        suppressHydrationWarning
       />
     </div>
   );

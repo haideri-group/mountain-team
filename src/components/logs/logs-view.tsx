@@ -213,6 +213,7 @@ export function LogsView() {
           onClick={load}
           disabled={refreshing}
           className="flex items-center gap-2 px-4 h-9 rounded-lg bg-muted/40 hover:bg-muted/60 text-sm font-mono uppercase tracking-wider transition-colors disabled:opacity-50"
+          suppressHydrationWarning
         >
           <RefreshCw className={`h-3.5 w-3.5 ${refreshing ? "animate-spin" : ""}`} />
           Reload
@@ -247,6 +248,7 @@ export function LogsView() {
                   setPage(1);
                 }}
                 className="h-8 rounded-lg bg-background px-2 text-xs font-mono focus:outline-none focus:ring-2 focus:ring-[#ff8400]/30"
+                suppressHydrationWarning
               >
                 {PAGE_SIZE_OPTIONS.map((n) => (
                   <option key={n} value={n}>{n}</option>
@@ -257,6 +259,7 @@ export function LogsView() {
               onClick={() => setPage((p) => Math.max(1, p - 1))}
               disabled={page <= 1 || refreshing}
               className="px-3 h-8 rounded-lg bg-muted/40 hover:bg-muted/60 disabled:opacity-50"
+              suppressHydrationWarning
             >
               Prev
             </button>
@@ -264,6 +267,7 @@ export function LogsView() {
               onClick={() => setPage((p) => Math.min(data.totalPages, p + 1))}
               disabled={page >= data.totalPages || refreshing}
               className="px-3 h-8 rounded-lg bg-muted/40 hover:bg-muted/60 disabled:opacity-50"
+              suppressHydrationWarning
             >
               Next
             </button>
