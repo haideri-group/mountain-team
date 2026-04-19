@@ -186,8 +186,8 @@ export function LogsDrawer({ open, detail, loading, onClose, onMarkFailed }: Pro
 
             {/* Cronicle correlation */}
             {detail.cronicle && (
-              <Section title="Cronicle">
-                <KV label="Event" value={detail.cronicle.eventTitle} />
+              <Section title="Scheduler Record">
+                <KV label="Job" value={detail.cronicle.eventTitle} />
                 <KV label="Job ID" value={detail.cronicle.jobId} />
                 <KV
                   label="Fired at"
@@ -213,24 +213,24 @@ export function LogsDrawer({ open, detail, loading, onClose, onMarkFailed }: Pro
                   rel="noreferrer"
                   className="mt-3 inline-flex items-center gap-1.5 text-xs font-mono text-[#ff8400] hover:underline"
                 >
-                  Open in Cronicle <ExternalLink className="h-3 w-3" />
+                  Open in external scheduler <ExternalLink className="h-3 w-3" />
                 </a>
               </Section>
             )}
 
             {!detail.cronicle && detail.cronicleUnavailable && (
-              <Section title="Cronicle">
+              <Section title="Scheduler Record">
                 <p className="text-xs text-muted-foreground">
-                  Cronicle is not reachable or not configured — showing app record only.
+                  The external scheduler is not reachable or not configured — showing app record only.
                 </p>
               </Section>
             )}
 
             {!detail.cronicle && !detail.cronicleUnavailable && (
-              <Section title="Cronicle">
+              <Section title="Scheduler Record">
                 <p className="text-xs text-muted-foreground">
-                  No matching Cronicle job within ±60s of this run. Manual triggers and
-                  first-time runs may not have a Cronicle correlation.
+                  No matching scheduled job within ±60s of this run. Manual triggers and
+                  first-time runs may not have a scheduler correlation.
                 </p>
               </Section>
             )}

@@ -141,15 +141,20 @@ export function CronicleSchedulePanel() {
   return (
     <div className="rounded-xl bg-card overflow-hidden">
       <div className="flex items-center justify-between p-4">
-        <div className="flex items-center gap-2">
-          <Calendar className="h-4 w-4 text-muted-foreground" />
-          <h2 className="text-sm font-bold font-mono uppercase tracking-wider">
-            Cronicle Schedule
-          </h2>
+        <div>
+          <div className="flex items-center gap-2">
+            <Calendar className="h-4 w-4 text-muted-foreground" />
+            <h2 className="text-sm font-bold font-mono uppercase tracking-wider">
+              Scheduled Crons
+            </h2>
+          </div>
+          <p className="mt-1 text-[11px] text-muted-foreground">
+            TeamFlow jobs managed by the external scheduler. Click Run to fire one on demand.
+          </p>
         </div>
         {data && !data.unavailable && (
           <span className="text-[10px] font-mono text-muted-foreground">
-            {data.events.length} TeamFlow event{data.events.length === 1 ? "" : "s"}
+            {data.events.length} job{data.events.length === 1 ? "" : "s"}
           </span>
         )}
       </div>
@@ -172,15 +177,18 @@ export function CronicleSchedulePanel() {
 
       {!loading && data?.unavailable && (
         <div className="px-4 pb-4 text-xs text-muted-foreground">
-          Cronicle is not reachable or not configured
-          {data.reason ? ` (${data.reason})` : ""}. The rest of the page still works using
-          app-side sync records.
+          The scheduler is not reachable or not configured
+          {data.reason ? ` (${data.reason})` : ""}. Check that{" "}
+          <span className="font-mono">CRONICLE_BASE_URL</span>,{" "}
+          <span className="font-mono">CRONICLE_API_KEY</span>, and{" "}
+          <span className="font-mono">CRONICLE_TEAMFLOW_CATEGORY_ID</span> are set in the
+          running process&apos;s environment, then restart the dev server / redeploy.
         </div>
       )}
 
       {!loading && data && !data.unavailable && data.events.length === 0 && (
         <div className="px-4 pb-4 text-xs text-muted-foreground">
-          No events in the TeamFlow Cronicle category. Check{" "}
+          No jobs found under this category. Check{" "}
           <span className="font-mono">CRONICLE_TEAMFLOW_CATEGORY_ID</span>.
         </div>
       )}
