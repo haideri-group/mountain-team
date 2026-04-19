@@ -57,6 +57,11 @@ export interface RecordDeploymentsForIssueInput {
   /** JIRA numeric issue id. Required to query the dev-status endpoint.
    *  If omitted, strategy 1 is skipped and we fall through to gh-search. */
   jiraIssueId?: string | null;
+  /** When true, propagated branches stamp `baseDeployedAt` instead of
+   *  walking the branch to find the exact merge-commit date. Saves ~21
+   *  GitHub calls per branch. Used by the bulk backfill; per-issue Sync
+   *  button leaves this false for accurate per-branch deploy dates. */
+  approximateDates?: boolean;
 }
 
 /**
@@ -69,7 +74,7 @@ export interface RecordDeploymentsForIssueInput {
 export async function recordDeploymentsForIssue(
   input: RecordDeploymentsForIssueInput,
 ): Promise<DeploymentSyncResult> {
-  const { jiraKey, jiraIssueId } = input;
+  const { jiraKey, jiraIssueId, approximateDates } = input;
   let deploymentsRecorded = 0;
   let path: DeploymentSyncPath = "none";
 
@@ -187,6 +192,7 @@ export async function recordDeploymentsForIssue(
                 deployedBy: pr.author?.name || null,
                 baseDeployedAt: deployedAt,
                 branchMappings: mappingsByRepo.get(repoId),
+                approximateDates,
               });
             }
           }
@@ -260,6 +266,7 @@ export async function recordDeploymentsForIssue(
               prUrl: ghPr.html_url || null,
               deployedBy: ghPr.user?.login || null,
               baseDeployedAt: deployedAt,
+              approximateDates,
             });
           }
         }
@@ -335,6 +342,7 @@ export async function recordDeploymentsForIssue(
                   prUrl,
                   deployedBy: ghPr.user?.login || null,
                   baseDeployedAt: deployedAt,
+                  approximateDates,
                 });
               }
             } catch (e) {
