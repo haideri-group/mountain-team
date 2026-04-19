@@ -51,7 +51,7 @@ export interface CronicleJob {
   event_start?: number;     // epoch seconds (when Cronicle thinks the event fired)
   time_end?: number;
   elapsed?: number;         // seconds
-  code: number;             // 0 = success, non-zero = error code
+  code?: number;            // 0 = success, non-zero = error code; missing on in-flight or partial records
   description?: string;     // human-readable status message
   perf?: {
     scale?: number;

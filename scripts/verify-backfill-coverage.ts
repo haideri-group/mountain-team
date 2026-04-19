@@ -86,10 +86,16 @@ async function main() {
     console.log(`  The bar shows \"${syncedCount}/${totalTracked} synced\" = ${pct(syncedCount)}.`);
     console.log(`  That's 'issues touched by the backfill (or per-issue sync, or selector bulk-stamp)',`);
     console.log(`  NOT 'issues that have deployment data in the deployments table'.`);
-    if (withAnyDeployment !== syncedCount) {
+    // Gate on the actual discrepancy buckets — `withAnyDeployment` and
+    // `syncedCount` can be equal even when both mismatch buckets are
+    // non-zero (they cancel out), which would suppress real inconsistencies.
+    if (syncedButNoDeployment > 0 || unsyncedButHasDeployment > 0) {
       console.log();
+      // Use the directly computed `syncedButNoDeployment` — subtracting
+      // `withAnyDeployment - syncedCount` can go negative when unsynced
+      // issues already have deployments.
       console.log(
-        `  ${syncedCount - withAnyDeployment} of the ${syncedCount} 'synced' issues have NO deployment rows.`,
+        `  ${syncedButNoDeployment} of the ${syncedCount} 'synced' issues have NO deployment rows.`,
       );
       console.log(
         `  ${unsyncedButHasDeployment} of the ${unsyncedCount} 'unsynced' issues DO have deployment rows.`,

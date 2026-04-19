@@ -33,6 +33,7 @@ const SOURCE_OPTIONS: Array<{ value: LogsFiltersValue["source"]; label: string }
   { value: "all", label: "Any source" },
   { value: "cron", label: "Cron-triggered" },
   { value: "manual", label: "Manual" },
+  { value: "unknown", label: "Ambiguous" },
 ];
 
 export function LogsFilters({

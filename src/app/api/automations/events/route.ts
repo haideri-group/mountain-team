@@ -27,7 +27,13 @@ export async function GET(request: Request) {
 
   const stream = new ReadableStream({
     start(controller) {
+      // Two flags: `closed` tracks the CONTROLLER state so safeEnqueue stops
+      // trying to write; `cleanedUp` gates cleanup() idempotently so a
+      // controller.enqueue failure (which flips `closed = true`) doesn't
+      // cause the subsequent abort-driven cleanup to short-circuit and
+      // leak the keepalive timer + event-bus subscription.
       let closed = false;
+      let cleanedUp = false;
 
       const safeEnqueue = (chunk: string) => {
         if (closed) return;
@@ -60,14 +66,17 @@ export async function GET(request: Request) {
       }, KEEPALIVE_MS);
 
       const cleanup = () => {
-        if (closed) return;
-        closed = true;
+        if (cleanedUp) return;
+        cleanedUp = true;
         clearInterval(keepaliveTimer);
         unsubscribe();
-        try {
-          controller.close();
-        } catch {
-          // already closed
+        if (!closed) {
+          closed = true;
+          try {
+            controller.close();
+          } catch {
+            // already closed
+          }
         }
       };
 

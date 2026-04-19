@@ -156,16 +156,27 @@ export async function listSyncLogs(params: ListSyncLogsParams = {}): Promise<{
   if (params.source === "manual") {
     conditions.push(eq(syncLogs.type, "manual"));
   } else if (params.source === "cron") {
-    // Everything except 'manual' (best available heuristic until we add
-    // a proper triggeredBy column).
+    // Types whose writer is (in practice) the scheduled cron. The
+    // ambiguous `full` / `incremental` / `deployment_backfill` rows are
+    // labelled `"unknown"` by inferSource and are intentionally excluded
+    // here so a "cron-triggered" filter isn't silently polluted by
+    // admin-fired bursts.
     conditions.push(
       inArray(syncLogs.type, [
-        "full",
-        "incremental",
         "team_sync",
         "worklog_sync",
         "timedoctor_sync",
         "release_sync",
+      ]),
+    );
+  } else if (params.source === "unknown") {
+    // Mirror inferSource(): these three types can fire from either a
+    // cron or an admin button, so "unknown" filters to exactly the
+    // rows the table labels as such.
+    conditions.push(
+      inArray(syncLogs.type, [
+        "full",
+        "incremental",
         "deployment_backfill",
       ]),
     );
