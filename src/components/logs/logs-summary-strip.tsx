@@ -14,6 +14,9 @@ interface Summary {
 
 interface Props {
   onReclaimAll: () => Promise<void>;
+  /** Parent increments this on any SSE sync_log change — we refetch the
+   *  summary on every bump. */
+  refreshTick?: number;
 }
 
 function successRate(s: Summary): number {
@@ -21,7 +24,7 @@ function successRate(s: Summary): number {
   return Math.round((s.completed / s.total) * 100);
 }
 
-export function LogsSummaryStrip({ onReclaimAll }: Props) {
+export function LogsSummaryStrip({ onReclaimAll, refreshTick }: Props) {
   const [summary, setSummary] = useState<Summary | null>(null);
   const [loading, setLoading] = useState(true);
   const [reclaiming, setReclaiming] = useState(false);
@@ -42,10 +45,16 @@ export function LogsSummaryStrip({ onReclaimAll }: Props) {
 
   useEffect(() => {
     load();
-    // Refresh summary every 30s while the page is open.
-    const handle = setInterval(load, 30_000);
+    // Event-driven refresh: parent bumps `refreshTick` on any SSE
+    // sync_log event. A 60s fallback still runs in case SSE is blocked
+    // by an intermediary proxy.
+    const handle = setInterval(load, 60_000);
     return () => clearInterval(handle);
   }, [load]);
+
+  useEffect(() => {
+    if (refreshTick !== undefined && refreshTick > 0) load();
+  }, [refreshTick, load]);
 
   const handleReclaim = useCallback(async () => {
     setReclaiming(true);

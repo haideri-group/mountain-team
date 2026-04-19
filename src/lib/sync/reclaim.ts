@@ -3,6 +3,7 @@ import { db } from "@/lib/db";
 import { syncLogs } from "@/lib/db/schema";
 import { and, eq, inArray, lte } from "drizzle-orm";
 import type { SyncLogType } from "./logs-query";
+import { emitSyncLogChange } from "./events";
 
 /**
  * Generalizes `scripts/reclaim-stuck-backfill.ts` to every sync type.
@@ -59,21 +60,35 @@ export async function reclaimStuckRuns(
   // Find first, so we can return the ids to the caller — MySQL UPDATE
   // doesn't natively give us the affected ids back.
   const stuck = await db
-    .select({ id: syncLogs.id })
+    .select({ id: syncLogs.id, type: syncLogs.type })
     .from(syncLogs)
     .where(and(...conditions));
 
   if (stuck.length === 0) return { reclaimed: 0, ids: [] };
 
   const ids = stuck.map((r) => r.id);
+  const completedAt = new Date();
   await db
     .update(syncLogs)
     .set({
       status: "failed",
-      completedAt: new Date(),
+      completedAt,
       error: reason,
     })
     .where(inArray(syncLogs.id, ids));
+
+  // Emit one event per reclaimed row so subscribers can update their
+  // row-level UI (not just invalidate a whole list).
+  for (const r of stuck) {
+    emitSyncLogChange({
+      id: r.id,
+      type: r.type as SyncLogType,
+      status: "failed",
+      startedAt: null,
+      completedAt: completedAt.toISOString(),
+      transition: "finished",
+    });
+  }
 
   return { reclaimed: ids.length, ids };
 }
@@ -108,14 +123,23 @@ export async function reclaimSingleRun(
     return { ok: false, reason: "within_grace" };
   }
 
+  const completedAt = new Date();
   await db
     .update(syncLogs)
     .set({
       status: "failed",
-      completedAt: new Date(),
+      completedAt,
       error: reason,
     })
     .where(eq(syncLogs.id, options.id));
+  emitSyncLogChange({
+    id: options.id,
+    type: row.type as SyncLogType,
+    status: "failed",
+    startedAt: null,
+    completedAt: completedAt.toISOString(),
+    transition: "finished",
+  });
 
   return { ok: true };
 }

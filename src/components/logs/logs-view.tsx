@@ -38,6 +38,11 @@ export function LogsView() {
   const [detail, setDetail] = useState<LogDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
 
+  // Bumped every time the SSE stream emits a sync_log change. Child
+  // panels subscribe via the `refreshTick` prop so their `useEffect`
+  // refetches automatically.
+  const [refreshTick, setRefreshTick] = useState(0);
+
   const query = useMemo(() => {
     const params = new URLSearchParams();
     params.set("page", String(page));
@@ -71,6 +76,32 @@ export function LogsView() {
   useEffect(() => {
     load();
   }, [load]);
+
+  // Subscribe to server-side event stream. On any sync_log transition,
+  // refetch the table (via `load()`) and bump the shared refresh tick
+  // that summary + schedule panels listen on.
+  useEffect(() => {
+    const es = new EventSource("/api/automations/events");
+    es.addEventListener("message", (e) => {
+      try {
+        const evt = JSON.parse(e.data);
+        if (evt.event === "syncLog") {
+          load();
+          setRefreshTick((t) => t + 1);
+          // If the drawer is open on this row, refresh its detail too.
+          if (selectedId === evt.id) loadDetail(evt.id);
+        }
+      } catch {
+        // malformed event — ignore
+      }
+    });
+    // EventSource auto-reconnects on transient network errors; no manual
+    // retry loop needed.
+    return () => es.close();
+  }, [load, selectedId]);
+  // Note on the dependency above: `load` is stable-by-query; `selectedId`
+  // lets the drawer auto-refresh on its row's event. `loadDetail` is
+  // stable (empty deps), safe to omit.
 
   const loadDetail = useCallback(async (id: string) => {
     setDetailLoading(true);
@@ -145,9 +176,9 @@ export function LogsView() {
 
   return (
     <div className="space-y-6">
-      <LogsSummaryStrip onReclaimAll={onReclaimAll} />
+      <LogsSummaryStrip onReclaimAll={onReclaimAll} refreshTick={refreshTick} />
 
-      <CronicleSchedulePanel onViewRun={onRowClick} />
+      <CronicleSchedulePanel onViewRun={onRowClick} refreshTick={refreshTick} />
 
       <div className="flex items-center justify-between gap-4">
         <LogsFilters value={filters} onChange={handleFilterChange} />

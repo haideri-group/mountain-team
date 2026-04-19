@@ -3,6 +3,7 @@ import { issues, deployments, syncLogs, githubBranchMappings } from "@/lib/db/sc
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { fetchSingleIssue } from "@/lib/jira/issues";
 import { recordDeploymentsForIssue } from "@/lib/github/issue-deployment-sync";
+import { emitSyncLogChange } from "./events";
 import { clearCompareCache } from "@/lib/github/deployment-propagation";
 import {
   getLastKnownRateLimit,
@@ -296,11 +297,20 @@ function sleep(ms: number): Promise<void> {
 
 async function logRunStart(): Promise<string> {
   const id = `synclog_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  const startedAt = new Date();
   await db.insert(syncLogs).values({
     id,
     type: "deployment_backfill",
     status: "running",
-    startedAt: new Date(),
+    startedAt,
+  });
+  emitSyncLogChange({
+    id,
+    type: "deployment_backfill",
+    status: "running",
+    startedAt: startedAt.toISOString(),
+    completedAt: null,
+    transition: "started",
   });
   return id;
 }
@@ -310,15 +320,25 @@ async function logRunEnd(
   result: BackfillRunResult,
   error?: string,
 ): Promise<void> {
+  const completedAt = new Date();
+  const status = error ? "failed" : "completed";
   await db
     .update(syncLogs)
     .set({
-      status: error ? "failed" : "completed",
-      completedAt: new Date(),
+      status,
+      completedAt,
       issueCount: result.processed,
       error: error ? sanitizeErrorText(error).slice(0, 1000) : null,
     })
     .where(eq(syncLogs.id, id));
+  emitSyncLogChange({
+    id,
+    type: "deployment_backfill",
+    status,
+    startedAt: null,
+    completedAt: completedAt.toISOString(),
+    transition: "finished",
+  });
 }
 
 // --- Concurrency guard ---

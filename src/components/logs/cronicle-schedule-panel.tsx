@@ -84,9 +84,12 @@ function statusIcon(s: string) {
 
 interface Props {
   onViewRun?: (syncLogId: string) => void;
+  /** Parent increments this on any SSE sync_log change — we refetch the
+   *  schedule on every bump so last-run icons update instantly. */
+  refreshTick?: number;
 }
 
-export function CronicleSchedulePanel({ onViewRun }: Props = {}) {
+export function CronicleSchedulePanel({ onViewRun, refreshTick }: Props = {}) {
   const [data, setData] = useState<Response | null>(null);
   const [loading, setLoading] = useState(true);
   const [runningIds, setRunningIds] = useState<Record<string, boolean>>({});
@@ -107,9 +110,14 @@ export function CronicleSchedulePanel({ onViewRun }: Props = {}) {
 
   useEffect(() => {
     load();
+    // 60s fallback poll in case the SSE stream is blocked / dropped.
     const handle = setInterval(load, 60_000);
     return () => clearInterval(handle);
   }, [load]);
+
+  useEffect(() => {
+    if (refreshTick !== undefined && refreshTick > 0) load();
+  }, [refreshTick, load]);
 
   const runEvent = useCallback(
     async (eventId: string, title: string) => {

@@ -15,6 +15,7 @@ import { normalizeIssue, calculateCycleTime, loadStatusMappingCache, invalidateS
 import { sanitizeErrorText } from "@/lib/jira/client";
 import { recordDeploymentsForIssue } from "@/lib/github/issue-deployment-sync";
 import { clearCompareCache } from "@/lib/github/deployment-propagation";
+import { emitSyncLogChange } from "./events";
 import { upsertWorklogs, fetchIssueWorklogs } from "@/lib/sync/worklog-sync";
 import { reconcileReleaseIssues } from "@/lib/releases/sync-release-issues";
 import { refreshReleasesForIssue } from "@/lib/sync/release-sync";
@@ -255,12 +256,22 @@ export async function runIssueSync(type: IssueSyncType, boardKey?: string): Prom
   resetProgress();
   updateProgress({ phase: "fetching", message: boardKey ? `Syncing ${boardKey}...` : "Starting sync..." });
 
+  const startedAt = new Date();
   await db.insert(syncLogs).values({
     id: logId,
     type,
     status: "running",
+    startedAt,
     issueCount: 0,
     memberCount: 0,
+  });
+  emitSyncLogChange({
+    id: logId,
+    type,
+    status: "running",
+    startedAt: startedAt.toISOString(),
+    completedAt: null,
+    transition: "started",
   });
 
   try {
@@ -271,15 +282,24 @@ export async function runIssueSync(type: IssueSyncType, boardKey?: string): Prom
       message: `Complete: ${result.inserted} new, ${result.updated} updated`,
     });
 
+    const completedAt = new Date();
     await db
       .update(syncLogs)
       .set({
         status: "completed",
-        completedAt: new Date(),
+        completedAt,
         issueCount: result.total,
         error: result.errors.length > 0 ? result.errors.join("; ") : null,
       })
       .where(eq(syncLogs.id, logId));
+    emitSyncLogChange({
+      id: logId,
+      type,
+      status: "completed",
+      startedAt: null,
+      completedAt: completedAt.toISOString(),
+      transition: "finished",
+    });
 
     // Generate notifications after successful sync
     // Post-sync hooks — always sanitize before logging. These handlers touch
@@ -328,14 +348,23 @@ export async function runIssueSync(type: IssueSyncType, boardKey?: string): Prom
       message: error instanceof Error ? error.message : "Sync failed",
     });
 
+    const completedAt = new Date();
     await db
       .update(syncLogs)
       .set({
         status: "failed",
-        completedAt: new Date(),
+        completedAt,
         error: error instanceof Error ? error.message : "Unknown error",
       })
       .where(eq(syncLogs.id, logId));
+    emitSyncLogChange({
+      id: logId,
+      type,
+      status: "failed",
+      startedAt: null,
+      completedAt: completedAt.toISOString(),
+      transition: "finished",
+    });
 
     throw error;
   }
