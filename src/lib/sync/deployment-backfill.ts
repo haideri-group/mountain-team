@@ -3,6 +3,7 @@ import { issues, deployments, syncLogs, githubBranchMappings } from "@/lib/db/sc
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { fetchSingleIssue } from "@/lib/jira/issues";
 import { recordDeploymentsForIssue } from "@/lib/github/issue-deployment-sync";
+import { emitSyncLogChange } from "./events";
 import { clearCompareCache } from "@/lib/github/deployment-propagation";
 import {
   getLastKnownRateLimit,
@@ -73,7 +74,19 @@ const defaultProgress: DeploymentBackfillProgress = {
 
 let currentProgress: DeploymentBackfillProgress = { ...defaultProgress };
 
+// Which sync_logs row the current progress snapshot belongs to. The
+// /automations detail endpoint uses this to gate liveProgress so opening
+// an unrelated (stale) running row doesn't surface this run's progress.
+let activeLogId: string | null = null;
+
 export function getDeploymentBackfillProgress(): DeploymentBackfillProgress {
+  return { ...currentProgress };
+}
+
+export function getDeploymentBackfillProgressForLogId(
+  logId: string,
+): DeploymentBackfillProgress | null {
+  if (activeLogId !== logId) return null;
   return { ...currentProgress };
 }
 
@@ -83,6 +96,7 @@ function updateProgress(update: Partial<DeploymentBackfillProgress>) {
 
 function resetProgress() {
   currentProgress = { ...defaultProgress };
+  activeLogId = null;
 }
 
 // --- Result ---
@@ -296,11 +310,20 @@ function sleep(ms: number): Promise<void> {
 
 async function logRunStart(): Promise<string> {
   const id = `synclog_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  const startedAt = new Date();
   await db.insert(syncLogs).values({
     id,
     type: "deployment_backfill",
     status: "running",
-    startedAt: new Date(),
+    startedAt,
+  });
+  emitSyncLogChange({
+    id,
+    type: "deployment_backfill",
+    status: "running",
+    startedAt: startedAt.toISOString(),
+    completedAt: null,
+    transition: "started",
   });
   return id;
 }
@@ -310,15 +333,25 @@ async function logRunEnd(
   result: BackfillRunResult,
   error?: string,
 ): Promise<void> {
+  const completedAt = new Date();
+  const status = error ? "failed" : "completed";
   await db
     .update(syncLogs)
     .set({
-      status: error ? "failed" : "completed",
-      completedAt: new Date(),
+      status,
+      completedAt,
       issueCount: result.processed,
       error: error ? sanitizeErrorText(error).slice(0, 1000) : null,
     })
     .where(eq(syncLogs.id, id));
+  emitSyncLogChange({
+    id,
+    type: "deployment_backfill",
+    status,
+    startedAt: null,
+    completedAt: completedAt.toISOString(),
+    transition: "finished",
+  });
 }
 
 // --- Concurrency guard ---
@@ -415,6 +448,7 @@ export async function runDeploymentBackfill(): Promise<BackfillRunResult> {
   });
 
   const logId = await logRunStart();
+  activeLogId = logId;
 
   try {
     // Pre-flight: poll /rate_limit. This endpoint does NOT count against

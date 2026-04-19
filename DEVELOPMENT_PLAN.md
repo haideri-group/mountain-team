@@ -4,7 +4,7 @@
 **Product:** TeamFlow
 **Company:** Tile Mountain
 **Repository:** https://github.com/haidertm/team-flow
-**Last Updated:** April 20, 2026
+**Last Updated:** April 19, 2026
 
 ---
 
@@ -1137,6 +1137,21 @@ Gates guest access to the currently-public pages (`/overview`, `/issue/[key]`, t
 
 _Status will flip to ✅ Complete once the table ships, proxy is deployed, and the first "add my IP" flow from Settings has been exercised._
 
+### Phase 21: Sync Logs + Cronicle Correlation — 🟡 In progress
+Closes the cron-visibility gap that surfaced during the Phase 20 rollout. Today, answering "did yesterday's issue sync actually work? is the deployment backfill stuck?" requires ad-hoc DB queries and cross-referencing the Cronicle UI — there's no unified admin view. Phase 21 ships a `/logs` page that merges both signals.
+- **Admin-only `/logs` page** (`redirect("/overview")` for non-admins, matches `/users` + `/settings`). Filterable table of every `sync_logs` row + detail drawer per row.
+- **Summary strip** at the top — 24h counts (total / ✓ / ✗ / running), currently-active runs, banner when any row is stuck `running` > 1h.
+- **Cronicle correlation via category discovery** — new env `CRONICLE_TEAMFLOW_CATEGORY_ID=cmo5r1nzj04` lets admins add events to Cronicle under the TeamFlow category without code changes. Sync type → URL path map identifies which event to look up; event history matched to a `sync_logs` row within ±60s of `startedAt`.
+- **Cronicle schedule panel** (separate panel on the page): lists TeamFlow events with schedule + last-fire + next-fire, independent of whether they produced a `sync_logs` row — useful for "configured but not firing" debugging.
+- **Live progress in drawer** for in-flight runs: reuses `getDeploymentBackfillProgress()` + `getSyncProgress()` from existing in-memory state, 1s polling while drawer is open on a `status=running` row.
+- **Two admin mutations**: "Mark as failed" on a single stuck row + "Reclaim all stuck" bulk action. Both guarded by a 2-min grace window so genuinely-in-progress runs are never touched. Generalizes `scripts/reclaim-stuck-backfill.ts` across every sync type.
+- **External-service resilience**: Cronicle calls wrapped in 10s `AbortSignal.timeout`, graceful fallback on failure, single warn log, dismissible banner. Page renders fully from `sync_logs` alone when Cronicle is unreachable.
+- **Security**: `CRONICLE_API_KEY` is `import "server-only"` guarded; response stripped to `CronicleEventPublic` shape before crossing the client boundary; every `error` field routed through `sanitizeErrorText` to redact Bearer/Basic/token patterns.
+- **Additive migration only** — new indexes on `sync_logs (type, startedAt)` and `(status, startedAt)` for summary + stuck-row queries. No schema/data changes.
+- **Out of scope (deferred):** SSE/WebSocket live tail, CSV export, per-row Cronicle job-log bodies, webhook_logs unification, SLO/heatmap dashboards, retry/replay action, proper `syncLogs.triggeredBy` column (v1 infers `source` heuristically).
+
+_Status will flip to ✅ Complete once merged, index migration applied in prod, Cronicle panel verifies listing ≥ 4 TeamFlow events, and one stuck row has been successfully reclaimed through the UI._
+
 ---
 
 ## 10. Notification Types
@@ -1394,6 +1409,7 @@ mountain-team/
 | 19 | Releases Command Center (A Foundation → B Insights → C Collaboration → D Bundles) | — | — | 🟡 In progress |
 | 20 | Deployment Backfill Cron | — | — | 🟡 In progress |
 | 20.5 | IP Allowlist for Public Routes | — | — | 🟡 In progress |
+| 21 | Sync Logs + Cronicle Correlation | — | — | 🟡 In progress |
 | **Total (original)** | | **30-42 days** | **6-8 weeks** | |
 
 **Note:** Phases 6, 7, and 8 can be parallelized since they all depend on Phase 5 (mock data). Phase 10 requires Phases 3 + 4. Phase 11 requires all prior phases. Phases 12–18 were added to the scope during implementation as new requirements emerged. Phase 19 (Releases Command Center) runs after Phase 18 merges and ships in three waves (A foundation, B insights, C collaboration), with Phase D (bundles) kicking off only after Phase A has been in use for ~2 weeks. Phase 20 (Deployment Backfill Cron) closes the historical deployment-coverage gap for all 4,075 tracked issues; runs every 3 hours in a rate-limit-aware batch, reaches full coverage in ~2.5 days.

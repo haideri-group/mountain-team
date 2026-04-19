@@ -129,7 +129,14 @@ export const syncLogs = mysqlTable("sync_logs", {
   memberCount: int("memberCount").default(0),
   error: text("error"),
   createdAt: timestamp("createdAt").defaultNow(),
-});
+}, (table) => [
+  // `/logs` page filters + sorts primarily by (type, startedAt). Summary
+  // strip also needs fast "recent per type" lookup. Without this, every
+  // filter call on a growing table is a full scan.
+  index("idx_sync_logs_type_started").on(table.type, table.startedAt),
+  // "stuck running rows" + 24h summary count hit (status, startedAt).
+  index("idx_sync_logs_status_started").on(table.status, table.startedAt),
+]);
 
 export const statusMappings = mysqlTable("status_mappings", {
   id: varchar("id", { length: 191 }).primaryKey(),

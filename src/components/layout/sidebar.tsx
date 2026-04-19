@@ -30,6 +30,7 @@ export async function Sidebar() {
   const systemItems = isAdmin
     ? [
         { href: "/users", icon: "ShieldCheck", label: "Users" },
+        { href: "/automations", icon: "ScrollText", label: "Automations" },
         { href: "/settings", icon: "Settings", label: "Settings" },
       ]
     : [];

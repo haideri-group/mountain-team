@@ -3,6 +3,11 @@ import { db } from "@/lib/db";
 import { syncLogs } from "@/lib/db/schema";
 import { desc, inArray } from "drizzle-orm";
 import { runIssueSync, type IssueSyncType } from "@/lib/sync/issue-sync";
+import {
+  getActiveLock,
+  releaseSyncLock,
+  tryAcquireSyncLock,
+} from "@/lib/sync/concurrency";
 
 export async function GET(request: Request) {
   try {
@@ -39,18 +44,35 @@ export async function GET(request: Request) {
       }
     }
 
-    const { logId, result } = await runIssueSync(syncType);
+    // Family-aware lock: an in-flight `manual` or `full` run will defer
+    // the scheduled `incremental` — all three land in the same `issue`
+    // family, so we don't double-hit JIRA.
+    if (!tryAcquireSyncLock(syncType)) {
+      const lock = getActiveLock(syncType);
+      return NextResponse.json({
+        success: true,
+        deferred: true,
+        reason: "already_running",
+        runningSince: lock?.startedAt.toISOString() ?? null,
+      });
+    }
 
-    return NextResponse.json({
-      success: true,
-      syncType,
-      logId,
-      inserted: result.inserted,
-      updated: result.updated,
-      skippedNoBoard: result.skippedNoBoard,
-      total: result.total,
-      errors: result.errors,
-    });
+    try {
+      const { logId, result } = await runIssueSync(syncType);
+
+      return NextResponse.json({
+        success: true,
+        syncType,
+        logId,
+        inserted: result.inserted,
+        updated: result.updated,
+        skippedNoBoard: result.skippedNoBoard,
+        total: result.total,
+        errors: result.errors,
+      });
+    } finally {
+      releaseSyncLock(syncType);
+    }
   } catch (error) {
     console.error("Cron issue sync failed:", error);
     return NextResponse.json(

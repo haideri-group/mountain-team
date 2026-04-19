@@ -1,6 +1,7 @@
 import { db } from "@/lib/db";
 import { team_members, syncLogs } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
+import { emitSyncLogChange } from "./events";
 import {
   fetchAllTeamMembers,
   fetchJiraUserDetails,
@@ -225,14 +226,24 @@ export async function runTeamSync(googleAccessToken?: string): Promise<{
   result: TeamSyncResult;
 }> {
   const logId = `sync_${Date.now()}`;
+  const startedAt = new Date();
 
   // Create running log entry
   await db.insert(syncLogs).values({
     id: logId,
     type: "team_sync",
     status: "running",
+    startedAt,
     memberCount: 0,
     issueCount: 0,
+  });
+  emitSyncLogChange({
+    id: logId,
+    type: "team_sync",
+    status: "running",
+    startedAt: startedAt.toISOString(),
+    completedAt: null,
+    transition: "started",
   });
 
   try {
@@ -344,28 +355,46 @@ export async function runTeamSync(googleAccessToken?: string): Promise<{
     }
 
     // Update log to completed
+    const completedAt = new Date();
     await db
       .update(syncLogs)
       .set({
         status: "completed",
-        completedAt: new Date(),
+        completedAt,
         memberCount: result.total,
         error:
           result.errors.length > 0 ? result.errors.join("; ") : null,
       })
       .where(eq(syncLogs.id, logId));
+    emitSyncLogChange({
+      id: logId,
+      type: "team_sync",
+      status: "completed",
+      startedAt: null,
+      completedAt: completedAt.toISOString(),
+      transition: "finished",
+    });
 
     return { logId, result };
   } catch (error) {
     // Update log to failed
+    const completedAt = new Date();
     await db
       .update(syncLogs)
       .set({
         status: "failed",
-        completedAt: new Date(),
+        completedAt,
         error: error instanceof Error ? error.message : "Unknown error",
       })
       .where(eq(syncLogs.id, logId));
+    emitSyncLogChange({
+      id: logId,
+      type: "team_sync",
+      status: "failed",
+      startedAt: null,
+      completedAt: completedAt.toISOString(),
+      transition: "finished",
+    });
 
     throw error;
   }

@@ -8,6 +8,7 @@ import {
   type TDWorklogEntry,
 } from "@/lib/timedoctor/client";
 import crypto from "crypto";
+import { emitSyncLogChange } from "./events";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -166,37 +167,65 @@ export async function runTimeDoctorSync(
   sinceDays = 7,
 ): Promise<{ logId: string; result: TDSyncResult }> {
   const logId = crypto.randomUUID();
+  const startedAt = new Date();
 
   await db.insert(syncLogs).values({
     id: logId,
     type: "timedoctor_sync",
     status: "running",
+    startedAt,
+  });
+  emitSyncLogChange({
+    id: logId,
+    type: "timedoctor_sync",
+    status: "running",
+    startedAt: startedAt.toISOString(),
+    completedAt: null,
+    transition: "started",
   });
 
   try {
     const result = await syncTimeDoctorEntries(sinceDays);
 
+    const completedAt = new Date();
     await db
       .update(syncLogs)
       .set({
         status: "completed",
-        completedAt: new Date(),
+        completedAt,
         issueCount: result.entriesUpserted,
         memberCount: result.usersMatched,
         error: result.errors.length > 0 ? result.errors.slice(0, 5).join("; ") : null,
       })
       .where(eq(syncLogs.id, logId));
+    emitSyncLogChange({
+      id: logId,
+      type: "timedoctor_sync",
+      status: "completed",
+      startedAt: null,
+      completedAt: completedAt.toISOString(),
+      transition: "finished",
+    });
 
     return { logId, result };
   } catch (err) {
+    const completedAt = new Date();
     await db
       .update(syncLogs)
       .set({
         status: "failed",
-        completedAt: new Date(),
+        completedAt,
         error: err instanceof Error ? err.message : String(err),
       })
       .where(eq(syncLogs.id, logId));
+    emitSyncLogChange({
+      id: logId,
+      type: "timedoctor_sync",
+      status: "failed",
+      startedAt: null,
+      completedAt: completedAt.toISOString(),
+      transition: "finished",
+    });
 
     throw err;
   }

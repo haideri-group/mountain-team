@@ -12,6 +12,7 @@ import { eq } from "drizzle-orm";
 import { getAuthHeader, getBaseUrl, sanitizeErrorText } from "@/lib/jira/client";
 import { fetchWithRetry } from "@/lib/jira/issues";
 import crypto from "crypto";
+import { emitSyncLogChange } from "./events";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -159,36 +160,64 @@ export async function syncReleases(): Promise<ReleaseSyncResult> {
 
 export async function runReleaseSync(): Promise<{ logId: string; result: ReleaseSyncResult }> {
   const logId = crypto.randomUUID();
+  const startedAt = new Date();
 
   await db.insert(syncLogs).values({
     id: logId,
     type: "release_sync",
     status: "running",
+    startedAt,
+  });
+  emitSyncLogChange({
+    id: logId,
+    type: "release_sync",
+    status: "running",
+    startedAt: startedAt.toISOString(),
+    completedAt: null,
+    transition: "started",
   });
 
   try {
     const result = await syncReleases();
 
+    const completedAt = new Date();
     await db
       .update(syncLogs)
       .set({
         status: "completed",
-        completedAt: new Date(),
+        completedAt,
         issueCount: result.versionsUpserted,
         error: result.errors.length > 0 ? result.errors.slice(0, 5).join("; ") : null,
       })
       .where(eq(syncLogs.id, logId));
+    emitSyncLogChange({
+      id: logId,
+      type: "release_sync",
+      status: "completed",
+      startedAt: null,
+      completedAt: completedAt.toISOString(),
+      transition: "finished",
+    });
 
     return { logId, result };
   } catch (err) {
+    const completedAt = new Date();
     await db
       .update(syncLogs)
       .set({
         status: "failed",
-        completedAt: new Date(),
+        completedAt,
         error: sanitizeErrorText(err instanceof Error ? err.message : String(err)),
       })
       .where(eq(syncLogs.id, logId));
+    emitSyncLogChange({
+      id: logId,
+      type: "release_sync",
+      status: "failed",
+      startedAt: null,
+      completedAt: completedAt.toISOString(),
+      transition: "finished",
+    });
 
     throw err;
   }
