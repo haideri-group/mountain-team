@@ -216,7 +216,10 @@ export function getAuthModeStatus() {
     pat: {
       configured: isPatConfigured(),
       rateLimit: patRate ? { ...patRate } : null,
-      healthy: modeIsHealthy(patRate),
+      // Mirror the shape used for `app.healthy`: a mode that isn't
+      // configured can't be "healthy" regardless of `modeIsHealthy`'s
+      // null-snapshot-as-healthy default.
+      healthy: isPatConfigured() && modeIsHealthy(patRate),
     },
     fallbackFloor: FALLBACK_FLOOR,
   };
