@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { AlertTriangle, Zap } from "lucide-react";
+import { BRAND_GRADIENT } from "@/lib/brand";
 
 interface Summary {
   total: number;
@@ -26,20 +27,21 @@ function successRate(s: Summary): number {
 
 export function LogsSummaryStrip({ onReclaimAll, refreshTick }: Props) {
   const [summary, setSummary] = useState<Summary | null>(null);
-  const [loading, setLoading] = useState(true);
+  // Two flags so background refreshes (SSE, 60s fallback poll) don't flash
+  // the KPI tiles back to "—" while the new data is being fetched.
+  const [initialLoading, setInitialLoading] = useState(true);
   const [reclaiming, setReclaiming] = useState(false);
   const [reclaimError, setReclaimError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
-    setLoading(true);
     try {
       const res = await fetch("/api/automations/summary", { cache: "no-store" });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       setSummary(await res.json());
     } catch {
-      setSummary(null);
+      // keep last-good summary on screen rather than blanking to null
     } finally {
-      setLoading(false);
+      setInitialLoading(false);
     }
   }, []);
 
@@ -72,29 +74,29 @@ export function LogsSummaryStrip({ onReclaimAll, refreshTick }: Props) {
   return (
     <div className="rounded-xl bg-card overflow-hidden">
       <div className="grid grid-cols-2 md:grid-cols-5 gap-px bg-muted/40">
-        <Kpi label="Last 24h" value={summary?.total ?? "—"} loading={loading} />
+        <Kpi label="Last 24h" value={summary?.total ?? "—"} loading={initialLoading && summary === null} />
         <Kpi
           label="Completed"
           value={summary?.completed ?? "—"}
-          loading={loading}
+          loading={initialLoading && summary === null}
           tone="success"
         />
         <Kpi
           label="Failed"
           value={summary?.failed ?? "—"}
-          loading={loading}
+          loading={initialLoading && summary === null}
           tone={summary && summary.failed > 0 ? "danger" : undefined}
         />
         <Kpi
           label="Running now"
           value={summary?.activeNow ?? "—"}
-          loading={loading}
+          loading={initialLoading && summary === null}
           tone={summary && summary.activeNow > 0 ? "warning" : undefined}
         />
         <Kpi
           label="Success rate"
           value={summary ? `${successRate(summary)}%` : "—"}
-          loading={loading}
+          loading={initialLoading && summary === null}
         />
       </div>
 
@@ -112,7 +114,7 @@ export function LogsSummaryStrip({ onReclaimAll, refreshTick }: Props) {
             onClick={handleReclaim}
             disabled={reclaiming}
             className="flex items-center gap-1.5 px-4 h-8 rounded-full text-xs font-bold font-mono uppercase tracking-wider text-white shadow-md transition-all disabled:opacity-50"
-            style={{ background: "linear-gradient(135deg, #944a00, #ff8400)" }}
+            style={{ background: BRAND_GRADIENT }}
           >
             <Zap className="h-3 w-3" />
             {reclaiming ? "Reclaiming…" : "Reclaim all stuck"}

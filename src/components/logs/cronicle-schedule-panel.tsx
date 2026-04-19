@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { BRAND_GRADIENT } from "@/lib/brand";
 import {
   Calendar,
   CheckCircle2,
@@ -59,18 +60,27 @@ function formatEpoch(sec: number | null): string {
 }
 
 function formatTiming(t: CronicleEventPublic["timing"]): string {
-  const h = t.hours ?? [];
-  const m = t.minutes ?? [];
+  const h = [...(t.hours ?? [])].sort((a, b) => a - b);
+  const m = [...(t.minutes ?? [])].sort((a, b) => a - b);
   if (h.length === 0 || m.length === 0) return "—";
   if (h.length === 1 && m.length === 1) {
     const hh = String(h[0]).padStart(2, "0");
     const mm = String(m[0]).padStart(2, "0");
     return `daily at ${hh}:${mm} UTC`;
   }
-  // Multi-hour same-minute pattern (e.g. the 3-hourly backfill)
+  // Multi-hour same-minute pattern — only valid as "every Nh" when the
+  // hours are uniformly spaced. `[1, 2]` is NOT every 12h; `[0, 3, 6, 9,
+  // 12, 15, 18, 21]` IS every 3h. Check the step set; fall back to the
+  // explicit list if non-uniform.
   if (m.length === 1 && h.length > 1) {
     const mm = String(m[0]).padStart(2, "0");
-    return `every ${24 / h.length}h at :${mm} UTC`;
+    const steps = new Set(h.slice(1).map((hour, i) => hour - h[i]));
+    const uniformStep = steps.size === 1 ? [...steps][0] : null;
+    if (uniformStep !== null && (24 / uniformStep) === h.length) {
+      return `every ${uniformStep}h at :${mm} UTC`;
+    }
+    // Explicit list: "01:00, 02:00 UTC"
+    return h.map((hh) => `${String(hh).padStart(2, "0")}:${mm}`).join(", ") + " UTC";
   }
   return `${h.length} × ${m.length} times/day UTC`;
 }
@@ -91,20 +101,23 @@ interface Props {
 
 export function CronicleSchedulePanel({ onViewRun, refreshTick }: Props = {}) {
   const [data, setData] = useState<Response | null>(null);
-  const [loading, setLoading] = useState(true);
+  // Only gate on initialLoading; background refreshes keep the existing
+  // `data` visible so the panel doesn't blank to "Loading…" every SSE event.
+  const [initialLoading, setInitialLoading] = useState(true);
   const [runningIds, setRunningIds] = useState<Record<string, boolean>>({});
   const [toast, setToast] = useState<{ kind: "ok" | "err" | "warn"; msg: string } | null>(null);
 
   const load = useCallback(async () => {
-    setLoading(true);
     try {
       const res = await fetch("/api/automations/cronicle/events", { cache: "no-store" });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       setData(await res.json());
     } catch {
-      setData({ events: [], unavailable: true });
+      // Only clobber data if we don't already have it — avoid flipping from
+      // "shows jobs" to "unavailable" on a transient blip.
+      setData((prev) => prev ?? { events: [], unavailable: true });
     } finally {
-      setLoading(false);
+      setInitialLoading(false);
     }
   }, []);
 
@@ -201,11 +214,11 @@ export function CronicleSchedulePanel({ onViewRun, refreshTick }: Props = {}) {
         </div>
       )}
 
-      {loading && (
+      {initialLoading && data === null && (
         <div className="p-4 text-sm text-muted-foreground">Loading…</div>
       )}
 
-      {!loading && data?.unavailable && (
+      {!initialLoading && data?.unavailable && data.events.length === 0 && (
         <div className="px-4 pb-4 text-xs text-muted-foreground">
           The scheduler is not reachable or not configured
           {data.reason ? ` (${data.reason})` : ""}. Check that{" "}
@@ -216,14 +229,21 @@ export function CronicleSchedulePanel({ onViewRun, refreshTick }: Props = {}) {
         </div>
       )}
 
-      {!loading && data && !data.unavailable && data.events.length === 0 && (
+      {!initialLoading && data?.unavailable && data.events.length > 0 && (
+        <div className="mx-4 mb-3 px-3 py-2 rounded-md bg-amber-500/10 text-amber-700 dark:text-amber-400 text-[11px]">
+          Scheduler unreachable — showing last-known data. Last-run / next-run
+          timestamps may be stale.
+        </div>
+      )}
+
+      {data && !data.unavailable && data.events.length === 0 && (
         <div className="px-4 pb-4 text-xs text-muted-foreground">
           No jobs found under this category. Check{" "}
           <span className="font-mono">CRONICLE_TEAMFLOW_CATEGORY_ID</span>.
         </div>
       )}
 
-      {!loading && data && data.events.length > 0 && (
+      {data && data.events.length > 0 && (
         <div className="border-t border-muted/40">
           <div className="hidden md:grid grid-cols-[2fr_1.5fr_1fr_1fr_auto] gap-3 px-4 py-2 text-[10px] font-bold font-mono uppercase tracking-wider text-muted-foreground bg-muted/20">
             <span>Event</span>
@@ -275,7 +295,7 @@ export function CronicleSchedulePanel({ onViewRun, refreshTick }: Props = {}) {
                 onClick={() => runEvent(e.id, e.title)}
                 disabled={!!runningIds[e.id] || !e.enabled}
                 className="inline-flex items-center gap-1.5 px-3 h-8 rounded-full text-[11px] font-bold font-mono uppercase tracking-wider text-white shadow-md transition-all disabled:opacity-50"
-                style={{ background: "linear-gradient(135deg, #944a00, #ff8400)" }}
+                style={{ background: BRAND_GRADIENT }}
                 title={e.enabled ? "Trigger this cron now via Cronicle" : "Event is disabled in Cronicle"}
               >
                 {runningIds[e.id] ? (

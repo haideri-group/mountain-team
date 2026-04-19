@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { RefreshCw } from "lucide-react";
 import { LogsSummaryStrip } from "./logs-summary-strip";
 import { LogsFilters, type LogsFiltersValue } from "./logs-filters";
@@ -31,7 +31,11 @@ export function LogsView() {
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState<number>(20);
   const [data, setData] = useState<ListResponse | null>(null);
-  const [loading, setLoading] = useState(true);
+  // Two-flag pattern: `initialLoading` drives the first-paint skeleton;
+  // background refreshes leave `data` on screen so SSE-driven reloads
+  // don't blank the table. Only shows a subtle "refreshing…" pip.
+  const [initialLoading, setInitialLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -53,10 +57,10 @@ export function LogsView() {
     if (filters.from) params.set("from", filters.from);
     if (filters.to) params.set("to", filters.to);
     return params.toString();
-  }, [filters, page]);
+  }, [filters, page, pageSize]);
 
   const load = useCallback(async () => {
-    setLoading(true);
+    setRefreshing(true);
     setError(null);
     try {
       const res = await fetch(`/api/automations?${query}`, { cache: "no-store" });
@@ -69,7 +73,8 @@ export function LogsView() {
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load");
     } finally {
-      setLoading(false);
+      setInitialLoading(false);
+      setRefreshing(false);
     }
   }, [query]);
 
@@ -77,31 +82,17 @@ export function LogsView() {
     load();
   }, [load]);
 
-  // Subscribe to server-side event stream. On any sync_log transition,
-  // refetch the table (via `load()`) and bump the shared refresh tick
-  // that summary + schedule panels listen on.
+  // Subscribe to server-side event stream exactly once per mount. We read
+  // the latest `load` / `selectedId` / `loadDetail` via refs so changing
+  // filters or the selected row does NOT re-open the EventSource.
+  const loadRef = useRef(load);
+  const selectedIdRef = useRef(selectedId);
   useEffect(() => {
-    const es = new EventSource("/api/automations/events");
-    es.addEventListener("message", (e) => {
-      try {
-        const evt = JSON.parse(e.data);
-        if (evt.event === "syncLog") {
-          load();
-          setRefreshTick((t) => t + 1);
-          // If the drawer is open on this row, refresh its detail too.
-          if (selectedId === evt.id) loadDetail(evt.id);
-        }
-      } catch {
-        // malformed event — ignore
-      }
-    });
-    // EventSource auto-reconnects on transient network errors; no manual
-    // retry loop needed.
-    return () => es.close();
-  }, [load, selectedId]);
-  // Note on the dependency above: `load` is stable-by-query; `selectedId`
-  // lets the drawer auto-refresh on its row's event. `loadDetail` is
-  // stable (empty deps), safe to omit.
+    loadRef.current = load;
+  });
+  useEffect(() => {
+    selectedIdRef.current = selectedId;
+  });
 
   const loadDetail = useCallback(async (id: string) => {
     setDetailLoading(true);
@@ -119,8 +110,39 @@ export function LogsView() {
     }
   }, []);
 
+  const loadDetailRef = useRef(loadDetail);
+  useEffect(() => {
+    loadDetailRef.current = loadDetail;
+  });
+
+  // SSE subscription — opened exactly once per page mount. Handler reads
+  // from refs so filter / page / row-click changes don't tear down the
+  // connection. Auto-reconnects on transient network errors natively.
+  useEffect(() => {
+    const es = new EventSource("/api/automations/events");
+    es.addEventListener("message", (e) => {
+      try {
+        const evt = JSON.parse(e.data);
+        if (evt.event === "syncLog") {
+          loadRef.current();
+          setRefreshTick((t) => t + 1);
+          if (selectedIdRef.current === evt.id) {
+            loadDetailRef.current(evt.id);
+          }
+        }
+      } catch {
+        // malformed event — ignore
+      }
+    });
+    return () => es.close();
+  }, []);
+
   const onRowClick = useCallback(
     (id: string) => {
+      // Clear previous row's detail immediately so the drawer shows the
+      // skeleton instead of briefly rendering stale content from the last
+      // opened row while the new fetch is in flight.
+      setDetail(null);
       setSelectedId(id);
       loadDetail(id);
     },
@@ -162,10 +184,15 @@ export function LogsView() {
   );
 
   const onReclaimAll = useCallback(async () => {
+    // Match the banner's "stuck for more than 1 hour" semantic. Server
+    // default is 2 min (safe lower bound); we pass 1h explicitly so the
+    // button can't accidentally reclaim a long-running sync (e.g. a
+    // legitimate 45-min deployment backfill).
+    const ONE_HOUR_MS = 60 * 60 * 1000;
     const res = await fetch(`/api/automations/reclaim`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({}),
+      body: JSON.stringify({ graceMs: ONE_HOUR_MS }),
     });
     if (!res.ok) {
       const body = await res.json().catch(() => ({}));
@@ -184,10 +211,10 @@ export function LogsView() {
         <LogsFilters value={filters} onChange={handleFilterChange} />
         <button
           onClick={load}
-          disabled={loading}
+          disabled={refreshing}
           className="flex items-center gap-2 px-4 h-9 rounded-lg bg-muted/40 hover:bg-muted/60 text-sm font-mono uppercase tracking-wider transition-colors disabled:opacity-50"
         >
-          <RefreshCw className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} />
+          <RefreshCw className={`h-3.5 w-3.5 ${refreshing ? "animate-spin" : ""}`} />
           Reload
         </button>
       </div>
@@ -200,7 +227,7 @@ export function LogsView() {
 
       <LogsTable
         rows={data?.rows ?? []}
-        loading={loading}
+        loading={initialLoading && data === null}
         onRowClick={onRowClick}
       />
 
@@ -228,14 +255,14 @@ export function LogsView() {
             </label>
             <button
               onClick={() => setPage((p) => Math.max(1, p - 1))}
-              disabled={page <= 1 || loading}
+              disabled={page <= 1 || refreshing}
               className="px-3 h-8 rounded-lg bg-muted/40 hover:bg-muted/60 disabled:opacity-50"
             >
               Prev
             </button>
             <button
               onClick={() => setPage((p) => Math.min(data.totalPages, p + 1))}
-              disabled={page >= data.totalPages || loading}
+              disabled={page >= data.totalPages || refreshing}
               className="px-3 h-8 rounded-lg bg-muted/40 hover:bg-muted/60 disabled:opacity-50"
             >
               Next
