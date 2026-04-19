@@ -6,7 +6,6 @@ import {
   releaseSyncLock,
   tryAcquireSyncLock,
 } from "@/lib/sync/concurrency";
-import { stampTriggeredBy } from "@/lib/sync/triggers";
 
 export async function POST(request: Request) {
   try {
@@ -30,8 +29,10 @@ export async function POST(request: Request) {
     }
 
     try {
-      const { logId, result } = await runWorklogSync(days);
-      await stampTriggeredBy(logId, "manual", session.user.id ?? null);
+      const { logId, result } = await runWorklogSync(days, {
+        triggeredBy: "manual",
+        triggeredByUserId: session.user.id ?? null,
+      });
 
       return NextResponse.json({
         success: true,

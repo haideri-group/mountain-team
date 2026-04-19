@@ -257,7 +257,10 @@ export async function syncWorklogs(sinceDays = 7): Promise<WorklogSyncResult> {
 
 // ─── Entry point with logging ────────────────────────────────────────────────
 
-export async function runWorklogSync(sinceDays = 7): Promise<{ logId: string; result: WorklogSyncResult }> {
+export async function runWorklogSync(
+  sinceDays = 7,
+  opts?: { triggeredBy?: "cron" | "manual" | null; triggeredByUserId?: string | null },
+): Promise<{ logId: string; result: WorklogSyncResult }> {
   const logId = crypto.randomUUID();
   const startedAt = new Date();
 
@@ -266,6 +269,9 @@ export async function runWorklogSync(sinceDays = 7): Promise<{ logId: string; re
     type: "worklog_sync",
     status: "running",
     startedAt,
+    triggeredBy: opts?.triggeredBy ?? null,
+    triggeredByUserId:
+      opts?.triggeredBy === "manual" ? (opts?.triggeredByUserId ?? null) : null,
   });
   emitSyncLogChange({
     id: logId,

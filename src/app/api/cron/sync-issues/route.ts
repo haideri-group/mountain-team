@@ -8,7 +8,7 @@ import {
   releaseSyncLock,
   tryAcquireSyncLock,
 } from "@/lib/sync/concurrency";
-import { consumePendingManual, stampTriggeredBy } from "@/lib/sync/triggers";
+import { consumePendingManual } from "@/lib/sync/triggers";
 
 export async function GET(request: Request) {
   try {
@@ -59,16 +59,14 @@ export async function GET(request: Request) {
     }
 
     try {
-      // Consume any "Run Now" marker set by the /automations panel.
-      // If present, this HTTP fire was dispatched by Cronicle in
-      // response to an admin click — stamp the sync_log row with
-      // `manual` + the clicking admin's userId so the Source column
-      // can render "manual (Name)".
+      // Consume any "Run Now" marker set by the /automations panel, pass
+      // source + user directly into the runner so the INSERT itself
+      // carries the correct triggeredBy — no after-the-fact UPDATE race.
       const pending = consumePendingManual(syncType);
-      const triggeredBy = pending ? "manual" : "cron";
-
-      const { logId, result } = await runIssueSync(syncType);
-      await stampTriggeredBy(logId, triggeredBy, pending?.userId ?? null);
+      const { logId, result } = await runIssueSync(syncType, undefined, {
+        triggeredBy: pending ? "manual" : "cron",
+        triggeredByUserId: pending?.userId ?? null,
+      });
 
       return NextResponse.json({
         success: true,

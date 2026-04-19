@@ -7,7 +7,6 @@ import {
   releaseSyncLock,
   tryAcquireSyncLock,
 } from "@/lib/sync/concurrency";
-import { stampTriggeredBy } from "@/lib/sync/triggers";
 
 // POST /api/sync/board?key=GOLC — Sync a single board (admin only)
 export async function POST(request: NextRequest) {
@@ -42,8 +41,10 @@ export async function POST(request: NextRequest) {
     }
 
     try {
-      const { logId, result } = await runIssueSync("manual", boardKey.toUpperCase());
-      await stampTriggeredBy(logId, "manual", session.user.id ?? null);
+      const { logId, result } = await runIssueSync("manual", boardKey.toUpperCase(), {
+        triggeredBy: "manual",
+        triggeredByUserId: session.user.id ?? null,
+      });
 
       return NextResponse.json({
         success: true,

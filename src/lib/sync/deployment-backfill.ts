@@ -327,7 +327,10 @@ function sleep(ms: number): Promise<void> {
 
 // --- Sync log persistence ---
 
-async function logRunStart(): Promise<string> {
+async function logRunStart(
+  triggeredBy: "cron" | "manual" | null,
+  triggeredByUserId: string | null,
+): Promise<string> {
   const id = `synclog_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
   const startedAt = new Date();
   await db.insert(syncLogs).values({
@@ -335,6 +338,8 @@ async function logRunStart(): Promise<string> {
     type: "deployment_backfill",
     status: "running",
     startedAt,
+    triggeredBy,
+    triggeredByUserId: triggeredBy === "manual" ? triggeredByUserId : null,
   });
   emitSyncLogChange({
     id,
@@ -381,7 +386,9 @@ export function isBackfillRunning(): boolean {
 
 // --- Main runner ---
 
-export async function runDeploymentBackfill(): Promise<BackfillRunResult> {
+export async function runDeploymentBackfill(
+  opts?: { triggeredBy?: "cron" | "manual" | null; triggeredByUserId?: string | null },
+): Promise<BackfillRunResult> {
   const startedAt = Date.now();
   const cfg = getConfig();
 
@@ -478,7 +485,10 @@ export async function runDeploymentBackfill(): Promise<BackfillRunResult> {
     startedAt: new Date().toISOString(),
   });
 
-  const logId = await logRunStart();
+  const logId = await logRunStart(
+    opts?.triggeredBy ?? null,
+    opts?.triggeredByUserId ?? null,
+  );
   bstate.activeLogId = logId;
   result.logId = logId;
 

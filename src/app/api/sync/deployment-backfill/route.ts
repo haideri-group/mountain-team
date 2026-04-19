@@ -14,7 +14,6 @@ import {
   releaseSyncLock,
   tryAcquireSyncLock,
 } from "@/lib/sync/concurrency";
-import { stampTriggeredBy } from "@/lib/sync/triggers";
 
 /**
  * Admin endpoint for the Phase 20 deployment backfill.
@@ -50,10 +49,10 @@ export async function POST() {
     }
 
     try {
-      const result = await runDeploymentBackfill();
-      if (result.logId) {
-        await stampTriggeredBy(result.logId, "manual", session.user.id ?? null);
-      }
+      const result = await runDeploymentBackfill({
+        triggeredBy: "manual",
+        triggeredByUserId: session.user.id ?? null,
+      });
 
       return NextResponse.json({
         success: true,

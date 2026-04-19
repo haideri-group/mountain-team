@@ -275,7 +275,11 @@ async function syncIssues(type: IssueSyncType, filterBoardKey?: string): Promise
 
 // --- Public Wrapper ---
 
-export async function runIssueSync(type: IssueSyncType, boardKey?: string): Promise<{
+export async function runIssueSync(
+  type: IssueSyncType,
+  boardKey?: string,
+  opts?: { triggeredBy?: "cron" | "manual" | null; triggeredByUserId?: string | null },
+): Promise<{
   logId: string;
   result: IssueSyncResult;
 }> {
@@ -292,6 +296,9 @@ export async function runIssueSync(type: IssueSyncType, boardKey?: string): Prom
     startedAt,
     issueCount: 0,
     memberCount: 0,
+    triggeredBy: opts?.triggeredBy ?? null,
+    triggeredByUserId:
+      opts?.triggeredBy === "manual" ? (opts?.triggeredByUserId ?? null) : null,
   });
   emitSyncLogChange({
     id: logId,
