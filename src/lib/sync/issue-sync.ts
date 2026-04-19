@@ -42,45 +42,57 @@ export interface SyncProgress {
   issuesTotal: number;
 }
 
-let currentProgress: SyncProgress = {
-  phase: "idle",
-  message: "",
-  issuesFetched: 0,
-  issuesProcessed: 0,
-  issuesTotal: 0,
+// Cache the singleton on globalThis so the writer (cron route segment)
+// and the reader (/api/automations/cronicle/events → discovery.ts)
+// share state across route-segment module instances. Without this, the
+// writer sets activeLogId in its module copy and the reader sees null
+// from its own copy — no progress bar, no live progress.
+interface IssueSyncState {
+  currentProgress: SyncProgress;
+  activeLogId: string | null;
+}
+const globalForSync = globalThis as unknown as {
+  _issueSyncState?: IssueSyncState;
 };
-
-// Which sync_logs row the `currentProgress` snapshot belongs to. The
-// /automations detail endpoint gates the liveProgress payload on this so
-// opening a stale `running` row (from a crashed prior process) doesn't
-// show the CURRENT sync's progress attributed to the wrong row.
-let activeLogId: string | null = null;
+if (!globalForSync._issueSyncState) {
+  globalForSync._issueSyncState = {
+    currentProgress: {
+      phase: "idle",
+      message: "",
+      issuesFetched: 0,
+      issuesProcessed: 0,
+      issuesTotal: 0,
+    },
+    activeLogId: null,
+  };
+}
+const state = globalForSync._issueSyncState;
 
 export function getSyncProgress(): SyncProgress {
-  return { ...currentProgress };
+  return { ...state.currentProgress };
 }
 
 /** Returns the in-flight progress IFF it belongs to the sync_logs row
  *  with the given id. Used by `/api/automations/[id]` to prevent
  *  cross-run confusion. */
 export function getSyncProgressForLogId(logId: string): SyncProgress | null {
-  if (activeLogId !== logId) return null;
-  return { ...currentProgress };
+  if (state.activeLogId !== logId) return null;
+  return { ...state.currentProgress };
 }
 
 function resetProgress() {
-  currentProgress = {
+  state.currentProgress = {
     phase: "idle",
     message: "",
     issuesFetched: 0,
     issuesProcessed: 0,
     issuesTotal: 0,
   };
-  activeLogId = null;
+  state.activeLogId = null;
 }
 
 function updateProgress(update: Partial<SyncProgress>) {
-  currentProgress = { ...currentProgress, ...update };
+  state.currentProgress = { ...state.currentProgress, ...update };
 }
 
 // --- Core Sync ---
@@ -269,7 +281,7 @@ export async function runIssueSync(type: IssueSyncType, boardKey?: string): Prom
 }> {
   const logId = `sync_${Date.now()}`;
   resetProgress();
-  activeLogId = logId;
+  state.activeLogId = logId;
   updateProgress({ phase: "fetching", message: boardKey ? `Syncing ${boardKey}...` : "Starting sync..." });
 
   const startedAt = new Date();

@@ -72,31 +72,47 @@ const defaultProgress: DeploymentBackfillProgress = {
   currentJiraKey: null,
 };
 
-let currentProgress: DeploymentBackfillProgress = { ...defaultProgress };
-
-// Which sync_logs row the current progress snapshot belongs to. The
-// /automations detail endpoint uses this to gate liveProgress so opening
-// an unrelated (stale) running row doesn't surface this run's progress.
-let activeLogId: string | null = null;
+// Shared state on globalThis so writers (cron route) and readers
+// (events projection in a different route segment) see the same
+// currentProgress / activeLogId / runInFlight. Next.js dev can
+// instantiate modules twice across route bundles; without this the
+// cron route would update its copy while the panel projector reads
+// a stale null from its own copy — no live progress, no bar.
+interface BackfillState {
+  currentProgress: DeploymentBackfillProgress;
+  activeLogId: string | null;
+  runInFlight: boolean;
+}
+const globalForBackfill = globalThis as unknown as {
+  _backfillState?: BackfillState;
+};
+if (!globalForBackfill._backfillState) {
+  globalForBackfill._backfillState = {
+    currentProgress: { ...defaultProgress },
+    activeLogId: null,
+    runInFlight: false,
+  };
+}
+const bstate = globalForBackfill._backfillState;
 
 export function getDeploymentBackfillProgress(): DeploymentBackfillProgress {
-  return { ...currentProgress };
+  return { ...bstate.currentProgress };
 }
 
 export function getDeploymentBackfillProgressForLogId(
   logId: string,
 ): DeploymentBackfillProgress | null {
-  if (activeLogId !== logId) return null;
-  return { ...currentProgress };
+  if (bstate.activeLogId !== logId) return null;
+  return { ...bstate.currentProgress };
 }
 
 function updateProgress(update: Partial<DeploymentBackfillProgress>) {
-  currentProgress = { ...currentProgress, ...update };
+  bstate.currentProgress = { ...bstate.currentProgress, ...update };
 }
 
 function resetProgress() {
-  currentProgress = { ...defaultProgress };
-  activeLogId = null;
+  bstate.currentProgress = { ...defaultProgress };
+  bstate.activeLogId = null;
 }
 
 // --- Result ---
@@ -356,10 +372,8 @@ async function logRunEnd(
 
 // --- Concurrency guard ---
 
-let runInFlight = false;
-
 export function isBackfillRunning(): boolean {
-  return runInFlight;
+  return bstate.runInFlight;
 }
 
 // --- Main runner ---
@@ -378,7 +392,7 @@ export async function runDeploymentBackfill(): Promise<BackfillRunResult> {
     checkpointAtJiraKey: null,
   };
 
-  if (runInFlight) {
+  if (bstate.runInFlight) {
     return {
       ...result,
       deferred: true,
@@ -433,7 +447,7 @@ export async function runDeploymentBackfill(): Promise<BackfillRunResult> {
       .where(eq(syncLogs.id, alreadyRunningLog.id));
   }
 
-  runInFlight = true;
+  bstate.runInFlight = true;
 
   // Fresh compare + branch-commits caches for this run. Within the run
   // they persist across issues so two issues that share a commit or
@@ -448,7 +462,7 @@ export async function runDeploymentBackfill(): Promise<BackfillRunResult> {
   });
 
   const logId = await logRunStart();
-  activeLogId = logId;
+  bstate.activeLogId = logId;
 
   try {
     // Pre-flight: poll /rate_limit. This endpoint does NOT count against
@@ -574,6 +588,6 @@ export async function runDeploymentBackfill(): Promise<BackfillRunResult> {
     await logRunEnd(logId, result, msg);
     throw e;
   } finally {
-    runInFlight = false;
+    bstate.runInFlight = false;
   }
 }
