@@ -24,5 +24,7 @@ export const BRAND = {
  * Usage: `style={{ background: BRAND_GRADIENT }}`. Tailwind's gradient
  * utilities can't cleanly express the diagonal two-stop form, so most
  * CTA buttons use this constant via `style`.
+ *
+ *   <button style={{ background: BRAND_GRADIENT }}>...</button>
  */
 export const BRAND_GRADIENT = `linear-gradient(135deg, ${BRAND.primaryDark}, ${BRAND.primary})`;
