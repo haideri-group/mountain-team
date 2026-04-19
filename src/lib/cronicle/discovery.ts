@@ -343,12 +343,35 @@ export async function projectEventPublic(
             processed !== null && total !== null && total > 0
               ? Math.min(100, Math.round((processed / total) * 100))
               : null;
+          // Linear-extrapolation ETA: rate = processed / elapsed,
+          // remaining = total - processed, eta = remaining / rate.
+          // Skip when the signal is too noisy to be useful:
+          //   - no total (indeterminate bar),
+          //   - nothing processed yet (fetching phase),
+          //   - < 5s elapsed (extrapolation is meaningless),
+          //   - already at 100%.
+          let etaSeconds: number | null = null;
+          if (
+            runningSyncLog &&
+            processed !== null &&
+            processed > 0 &&
+            total !== null &&
+            total > processed
+          ) {
+            const elapsedMs = Date.now() - runningSyncLog.startedAt.getTime();
+            if (elapsedMs >= 5_000) {
+              const rate = processed / (elapsedMs / 1000); // items per sec
+              const remaining = total - processed;
+              etaSeconds = Math.round(remaining / rate);
+            }
+          }
           progress = {
             phase: String(raw.phase ?? "running"),
             message: String(raw.message ?? ""),
             processed,
             total,
             pct,
+            etaSeconds,
           };
         } else {
           // Sync IS running, but we can't see its in-memory progress:
@@ -357,13 +380,15 @@ export async function projectEventPublic(
           //   - sync family that doesn't publish progress (team_sync,
           //     release_sync, worklog_sync, timedoctor_sync).
           // Fall back to an indeterminate bar so the admin can tell
-          // the run is in flight without live counts.
+          // the run is in flight without live counts. No ETA possible
+          // without counts.
           progress = {
             phase: "running",
             message: "In progress",
             processed: null,
             total: null,
             pct: null,
+            etaSeconds: null,
           };
         }
       }

@@ -97,6 +97,11 @@ export interface CronicleEventPublic {
       total: number | null;
       /** 0–100 when `total > 0`, else null (indeterminate). */
       pct: number | null;
+      /** Linear-extrapolation ETA in seconds. Null when: indeterminate
+       *  (no total), the run just started (< 5s elapsed — rate is noisy),
+       *  or no progress has been made yet (processed = 0 / in fetching
+       *  phase). Client renders "~Xm Ys" when present. */
+      etaSeconds: number | null;
     } | null;
   } | null;
   nextRun: number | null;           // epoch seconds, server-computed from timing

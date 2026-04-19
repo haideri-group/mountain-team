@@ -37,6 +37,7 @@ interface CronicleEventPublic {
       processed: number | null;
       total: number | null;
       pct: number | null;
+      etaSeconds: number | null;
     } | null;
   } | null;
   nextRun: number | null;
@@ -379,7 +380,20 @@ interface RunningProgressProps {
     processed: number | null;
     total: number | null;
     pct: number | null;
+    etaSeconds: number | null;
   };
+}
+
+function formatEta(sec: number): string {
+  if (sec < 60) return `${sec}s`;
+  if (sec < 3600) {
+    const m = Math.floor(sec / 60);
+    const s = sec % 60;
+    return s > 0 ? `${m}m ${s}s` : `${m}m`;
+  }
+  const h = Math.floor(sec / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  return m > 0 ? `${h}h ${m}m` : `${h}h`;
 }
 
 /**
@@ -388,14 +402,20 @@ interface RunningProgressProps {
  *   - Indeterminate: `pct` is null (total unknown yet) — renders an
  *     animated stripe so the admin knows something is happening even
  *     before total count is available.
+ *
+ * Appends "~ETA" when determinate and the rate estimate is stable.
  */
 function RunningProgress({ progress }: RunningProgressProps) {
-  const { processed, total, pct, phase, message } = progress;
+  const { processed, total, pct, phase, message, etaSeconds } = progress;
   const hasCounts = processed !== null && total !== null && total > 0;
   const determinate = pct !== null;
-  const label = hasCounts
+  const base = hasCounts
     ? `${processed!.toLocaleString()} / ${total!.toLocaleString()}${determinate ? ` · ${pct}%` : ""}`
     : message || phase;
+  const label =
+    etaSeconds !== null && etaSeconds > 0
+      ? `${base} · ~${formatEta(etaSeconds)} left`
+      : base;
   return (
     <div className="mt-1.5 space-y-1">
       <div className="h-1 w-full rounded-full bg-muted/60 overflow-hidden">
