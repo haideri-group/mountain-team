@@ -386,8 +386,12 @@ function RunningProgress({ progress }: RunningProgressProps) {
             }}
           />
         ) : (
+          // Indeterminate: narrow brand pill slides left-to-right
+          // continuously. Keyframes live in globals.css so the component
+          // stays declarative; `motion-reduce:animate-none` respects OS
+          // "reduce motion" accessibility preference.
           <div
-            className="h-full w-1/3 rounded-full animate-pulse"
+            className="h-full w-1/3 rounded-full animate-progress-marquee motion-reduce:animate-none motion-reduce:mx-auto"
             style={{ background: BRAND_GRADIENT }}
           />
         )}
