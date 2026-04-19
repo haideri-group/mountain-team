@@ -504,6 +504,15 @@ export async function syncSingleIssue(
     jiraIssueId: raw.id,
   });
   const deploymentsRecorded = deploymentSync.deploymentsRecorded;
+
+  // Stamp after the deployment fetch so the backfill queue skips this
+  // issue on its next pass — matches the semantic documented on the
+  // `issues.deploymentsSyncedAt` column.
+  await db
+    .update(issues)
+    .set({ deploymentsSyncedAt: new Date() })
+    .where(eq(issues.jiraKey, normalized.jiraKey));
+
   const deploymentMsg = deploymentsRecorded > 0 ? `, ${deploymentsRecorded} deployment(s) recorded` : "";
   const worklogMsg = worklogsRecorded > 0 ? `, ${worklogsRecorded} worklog(s) synced` : "";
 
