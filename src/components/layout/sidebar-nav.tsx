@@ -12,6 +12,7 @@ import {
   Rocket,
   ShieldCheck,
   Package,
+  ScrollText,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -24,6 +25,7 @@ const iconMap: Record<string, React.ElementType> = {
   UserCircle,
   PieChart,
   ShieldCheck,
+  ScrollText,
   Settings,
 };
 

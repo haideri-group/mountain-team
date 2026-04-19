@@ -1,0 +1,293 @@
+"use client";
+
+import { useState } from "react";
+import { X, ExternalLink, AlertTriangle, CheckCircle2, Loader2 } from "lucide-react";
+import { StatusPill } from "./status-pill";
+
+export interface LogDetail {
+  log: {
+    id: string;
+    type: string;
+    status: string;
+    startedAt: string;
+    completedAt: string | null;
+    durationMs: number | null;
+    issueCount: number;
+    memberCount: number;
+    source: string;
+    error: string | null;
+  };
+  liveProgress?: {
+    phase: string;
+    message: string;
+    issuesTotal?: number;
+    issuesProcessed?: number;
+    deploymentsRecorded?: number;
+    rateLimitRemaining?: number | null;
+    currentJiraKey?: string | null;
+  } | null;
+  cronicle?: {
+    eventId: string;
+    eventTitle: string;
+    jobId: string;
+    cronicleStart: number;
+    cronicleEnd: number | null;
+    status: string;
+    description?: string;
+    elapsed?: number;
+    jobDetailsUrl: string;
+    performance?: Record<string, number | undefined>;
+  } | null;
+  cronicleUnavailable?: boolean;
+  canReclaim: boolean;
+}
+
+interface Props {
+  open: boolean;
+  detail: LogDetail | null;
+  loading: boolean;
+  onClose: () => void;
+  onMarkFailed: (id: string) => Promise<void>;
+}
+
+function formatAbs(iso: string | null): string {
+  if (!iso) return "—";
+  return new Date(iso).toLocaleString("en-GB", {
+    timeZone: "Asia/Karachi",
+    hour12: true,
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  });
+}
+
+function formatEpoch(sec: number | null): string {
+  if (!sec) return "—";
+  return formatAbs(new Date(sec * 1000).toISOString());
+}
+
+export function LogsDrawer({ open, detail, loading, onClose, onMarkFailed }: Props) {
+  const [marking, setMarking] = useState(false);
+  const [markError, setMarkError] = useState<string | null>(null);
+
+  if (!open) return null;
+
+  const handleMark = async () => {
+    if (!detail) return;
+    setMarking(true);
+    setMarkError(null);
+    try {
+      await onMarkFailed(detail.log.id);
+    } catch (e) {
+      setMarkError(e instanceof Error ? e.message : "Failed");
+    } finally {
+      setMarking(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50">
+      <button
+        aria-label="Close drawer"
+        onClick={onClose}
+        className="absolute inset-0 bg-black/40 backdrop-blur-sm"
+      />
+      <div className="absolute right-0 top-0 h-full w-full sm:w-[560px] bg-background shadow-2xl overflow-y-auto">
+        <div className="sticky top-0 z-10 flex items-center justify-between p-5 bg-background/95 backdrop-blur">
+          <div>
+            <h2 className="text-lg font-bold font-mono">Run Details</h2>
+            {detail && (
+              <p className="text-xs text-muted-foreground font-mono mt-0.5">
+                {detail.log.id}
+              </p>
+            )}
+          </div>
+          <button
+            onClick={onClose}
+            className="p-2 rounded-lg hover:bg-muted/60 transition-colors"
+            aria-label="Close"
+          >
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+
+        {loading && !detail && (
+          <div className="p-10 flex items-center justify-center text-sm text-muted-foreground">
+            <Loader2 className="h-5 w-5 animate-spin mr-2" />
+            Loading…
+          </div>
+        )}
+
+        {detail && (
+          <div className="p-5 space-y-5">
+            {/* App record */}
+            <Section title="App Record">
+              <KV label="Type" value={detail.log.type} />
+              <KV label="Status" value={<StatusPill status={detail.log.status} />} />
+              <KV label="Source" value={detail.log.source} />
+              <KV label="Started" value={formatAbs(detail.log.startedAt)} />
+              <KV label="Completed" value={formatAbs(detail.log.completedAt)} />
+              <KV
+                label="Duration"
+                value={
+                  detail.log.durationMs !== null
+                    ? `${(detail.log.durationMs / 1000).toFixed(2)}s`
+                    : "—"
+                }
+              />
+              <KV label="Issues" value={String(detail.log.issueCount)} />
+              {detail.log.memberCount > 0 && (
+                <KV label="Members" value={String(detail.log.memberCount)} />
+              )}
+              {detail.log.error && (
+                <div className="mt-3 p-3 rounded-lg bg-red-50 dark:bg-red-950/30">
+                  <div className="flex items-start gap-2">
+                    <AlertTriangle className="h-4 w-4 text-red-500 shrink-0 mt-0.5" />
+                    <div className="min-w-0">
+                      <p className="text-[10px] font-bold font-mono uppercase tracking-wider text-red-700 dark:text-red-400">
+                        Error
+                      </p>
+                      <p className="mt-1 text-xs text-red-700 dark:text-red-400 font-mono break-all whitespace-pre-wrap">
+                        {detail.log.error}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </Section>
+
+            {/* Live progress */}
+            {detail.log.status === "running" && detail.liveProgress && (
+              <Section title="Live Progress">
+                <KV label="Phase" value={detail.liveProgress.phase} />
+                {detail.liveProgress.message && (
+                  <KV label="Message" value={detail.liveProgress.message} />
+                )}
+                {typeof detail.liveProgress.issuesTotal === "number" && (
+                  <KV
+                    label="Progress"
+                    value={`${detail.liveProgress.issuesProcessed ?? 0} / ${detail.liveProgress.issuesTotal}`}
+                  />
+                )}
+                {detail.liveProgress.currentJiraKey && (
+                  <KV label="Current" value={detail.liveProgress.currentJiraKey} />
+                )}
+                {typeof detail.liveProgress.rateLimitRemaining === "number" && (
+                  <KV
+                    label="GH quota left"
+                    value={String(detail.liveProgress.rateLimitRemaining)}
+                  />
+                )}
+              </Section>
+            )}
+
+            {/* Cronicle correlation */}
+            {detail.cronicle && (
+              <Section title="Cronicle">
+                <KV label="Event" value={detail.cronicle.eventTitle} />
+                <KV label="Job ID" value={detail.cronicle.jobId} />
+                <KV
+                  label="Fired at"
+                  value={formatEpoch(detail.cronicle.cronicleStart)}
+                />
+                <KV
+                  label="Completed"
+                  value={formatEpoch(detail.cronicle.cronicleEnd)}
+                />
+                <KV label="Status" value={<StatusPill status={detail.cronicle.status} />} />
+                {detail.cronicle.description && (
+                  <KV label="Description" value={detail.cronicle.description} />
+                )}
+                {detail.cronicle.elapsed !== undefined && (
+                  <KV
+                    label="Elapsed"
+                    value={`${detail.cronicle.elapsed.toFixed(2)}s`}
+                  />
+                )}
+                <a
+                  href={detail.cronicle.jobDetailsUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="mt-3 inline-flex items-center gap-1.5 text-xs font-mono text-[#ff8400] hover:underline"
+                >
+                  Open in Cronicle <ExternalLink className="h-3 w-3" />
+                </a>
+              </Section>
+            )}
+
+            {!detail.cronicle && detail.cronicleUnavailable && (
+              <Section title="Cronicle">
+                <p className="text-xs text-muted-foreground">
+                  Cronicle is not reachable or not configured — showing app record only.
+                </p>
+              </Section>
+            )}
+
+            {!detail.cronicle && !detail.cronicleUnavailable && (
+              <Section title="Cronicle">
+                <p className="text-xs text-muted-foreground">
+                  No matching Cronicle job within ±60s of this run. Manual triggers and
+                  first-time runs may not have a Cronicle correlation.
+                </p>
+              </Section>
+            )}
+
+            {/* Actions */}
+            {detail.canReclaim && (
+              <Section title="Actions">
+                <div className="flex items-start gap-2 p-3 rounded-lg bg-amber-500/15 text-amber-800 dark:text-amber-300 text-xs">
+                  <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
+                  <span>
+                    This run has been in <span className="font-mono">running</span> state for more than 2 minutes.
+                    It may be stuck (e.g. the client disconnected mid-run). Marking it failed releases the
+                    concurrency guard so new runs can start.
+                  </span>
+                </div>
+                <button
+                  onClick={handleMark}
+                  disabled={marking}
+                  className="mt-3 flex items-center gap-2 px-4 h-9 rounded-lg bg-red-500/15 text-red-700 dark:text-red-400 hover:bg-red-500/25 text-sm font-bold font-mono uppercase tracking-wider disabled:opacity-50"
+                >
+                  {marking ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <CheckCircle2 className="h-3.5 w-3.5" />
+                  )}
+                  Mark as failed
+                </button>
+                {markError && (
+                  <p className="mt-2 text-xs text-red-700 dark:text-red-400">{markError}</p>
+                )}
+              </Section>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function Section({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <div className="rounded-xl bg-muted/20 p-4">
+      <h3 className="text-[10px] font-bold font-mono uppercase tracking-wider text-muted-foreground mb-2">
+        {title}
+      </h3>
+      <div className="space-y-1.5">{children}</div>
+    </div>
+  );
+}
+
+function KV({ label, value }: { label: string; value: React.ReactNode }) {
+  return (
+    <div className="grid grid-cols-[110px_1fr] gap-3 items-center">
+      <span className="text-[10px] font-bold font-mono uppercase tracking-wider text-muted-foreground">
+        {label}
+      </span>
+      <span className="text-xs font-mono break-all">{value}</span>
+    </div>
+  );
+}

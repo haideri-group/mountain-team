@@ -1,0 +1,98 @@
+/**
+ * Cronicle types — narrow projections of the upstream API, covering only
+ * the fields `/logs` actually consumes. The raw API response has many
+ * more fields (notify emails, api_key, params.headers with Bearer tokens);
+ * the `*Public` shapes are what's safe to cross the client boundary.
+ */
+
+export interface CronicleTiming {
+  hours?: number[];
+  minutes?: number[];
+  days?: number[];
+  months?: number[];
+  weekdays?: number[];
+}
+
+/** Internal (server-only). Reflects fields we need from
+ *  `GET /api/app/get_schedule/v1`. Callers must strip `params.headers`
+ *  and `api_key` before handing this off to the client. */
+export interface CronicleEvent {
+  id: string;
+  title: string;
+  enabled: 0 | 1;
+  category: string;
+  plugin: string;
+  target: string;
+  timezone?: string;
+  timing: CronicleTiming;
+  params: {
+    method?: string;
+    url?: string;
+    headers?: string;
+    timeout?: string;
+    [key: string]: unknown;
+  };
+  timeout?: number;
+  retries?: number;
+  retry_delay?: number;
+  max_children?: number;
+  notes?: string;
+  modified?: number;
+  created?: number;
+}
+
+/** One row from `GET /api/app/get_event_history/v1?id=…`. */
+export interface CronicleJob {
+  id: string;
+  event: string;
+  event_title?: string;
+  hostname?: string;
+  time_start: number;       // epoch seconds
+  event_start?: number;     // epoch seconds (when Cronicle thinks the event fired)
+  time_end?: number;
+  elapsed?: number;         // seconds
+  code: number;             // 0 = success, non-zero = error code
+  description?: string;     // human-readable status message
+  perf?: {
+    scale?: number;
+    perf?: Record<string, number>;
+    counters?: Record<string, number>;
+  };
+}
+
+/** Client-safe projection of a `CronicleEvent`. Drops everything that
+ *  carries secrets or internal-only data. */
+export interface CronicleEventPublic {
+  id: string;
+  title: string;
+  enabled: boolean;
+  urlPath: string;                  // derived from params.url
+  timing: CronicleTiming;
+  lastRun: {
+    jobId?: string;
+    start: number;
+    end: number | null;
+    status: "success" | "error" | "timeout" | "running";
+    elapsed?: number;
+  } | null;
+  nextRun: number | null;           // epoch seconds, server-computed from timing
+}
+
+/** Result of matching a `sync_logs` row to a Cronicle job. */
+export interface CronicleCorrelation {
+  eventId: string;
+  eventTitle: string;
+  jobId: string;
+  cronicleStart: number;
+  cronicleEnd: number | null;
+  status: "success" | "error" | "timeout" | "running";
+  description?: string;
+  elapsed?: number;
+  performance?: { total?: number; wait?: number; [k: string]: number | undefined };
+  jobDetailsUrl: string;
+}
+
+/** Uniform return shape from the Cronicle client wrapper — never throws. */
+export type CronicleResult<T> =
+  | { ok: true; data: T }
+  | { ok: false; error: string };
