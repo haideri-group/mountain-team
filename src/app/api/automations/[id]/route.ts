@@ -11,6 +11,7 @@ import {
   getSyncProgress,
   getSyncProgressForLogId,
 } from "@/lib/sync/issue-sync";
+import { reconcileSingleRunningSyncLog } from "@/lib/sync/reconcile";
 
 const RECLAIM_GRACE_MS = 2 * 60 * 1000;
 
@@ -31,6 +32,14 @@ export async function GET(
   }
 
   const { id } = await params;
+
+  // If this row is `running` but Cronicle already reported its HTTP job
+  // as terminal (timeout / error / success) more than 2 min ago, the
+  // handler is almost certainly dead — auto-reconcile before loading
+  // the row so the drawer reflects the truth instead of "stuck
+  // running". Cheap: one Cronicle correlate + a guarded UPDATE.
+  await reconcileSingleRunningSyncLog(id).catch(() => false);
+
   const log = await getSyncLogById(id);
   if (!log) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
