@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { BRAND_GRADIENT } from "@/lib/brand";
 import { APP_TIMEZONE } from "@/lib/config";
 import {
@@ -11,6 +11,15 @@ import {
   Loader2,
   Play,
 } from "lucide-react";
+
+interface CronicleRunProgress {
+  phase: string;
+  message: string;
+  processed: number | null;
+  total: number | null;
+  pct: number | null;
+  etaSeconds: number | null;
+}
 
 interface CronicleEventPublic {
   id: string;
@@ -31,14 +40,7 @@ interface CronicleEventPublic {
     elapsed?: number;
     syncLogId: string | null;
     jobDetailsUrl: string | null;
-    progress: {
-      phase: string;
-      message: string;
-      processed: number | null;
-      total: number | null;
-      pct: number | null;
-      etaSeconds: number | null;
-    } | null;
+    progress: CronicleRunProgress | null;
   } | null;
   nextRun: number | null;
 }
@@ -116,8 +118,17 @@ export function CronicleSchedulePanel({ onViewRun, refreshTick }: Props = {}) {
   const [initialLoading, setInitialLoading] = useState(true);
   const [runningIds, setRunningIds] = useState<Record<string, boolean>>({});
   const [toast, setToast] = useState<{ kind: "ok" | "err" | "warn"; msg: string } | null>(null);
+  // Shared re-entrancy guard. Every refresh path — 60s fallback,
+  // 1s-while-running poll, `refreshTick` bump, and the post-Run Now
+  // timeouts — calls through `load()`, so one guard here covers all of
+  // them. Without it, slow responses from the cronicle events route can
+  // stack multiple in-flight `fetch`es whose `setData` resolves out of
+  // order and overwrites newer data with stale data.
+  const isLoadingRef = useRef(false);
 
   const load = useCallback(async () => {
+    if (isLoadingRef.current) return;
+    isLoadingRef.current = true;
     try {
       const res = await fetch("/api/automations/cronicle/events", { cache: "no-store" });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -127,6 +138,7 @@ export function CronicleSchedulePanel({ onViewRun, refreshTick }: Props = {}) {
       // "shows jobs" to "unavailable" on a transient blip.
       setData((prev) => prev ?? { events: [], unavailable: true });
     } finally {
+      isLoadingRef.current = false;
       setInitialLoading(false);
     }
   }, []);
@@ -374,14 +386,7 @@ export function CronicleSchedulePanel({ onViewRun, refreshTick }: Props = {}) {
 }
 
 interface RunningProgressProps {
-  progress: {
-    phase: string;
-    message: string;
-    processed: number | null;
-    total: number | null;
-    pct: number | null;
-    etaSeconds: number | null;
-  };
+  progress: CronicleRunProgress;
 }
 
 function formatEta(sec: number): string {
