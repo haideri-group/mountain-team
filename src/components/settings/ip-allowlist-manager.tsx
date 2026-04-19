@@ -11,6 +11,7 @@ import {
   Loader2,
   Globe,
 } from "lucide-react";
+import { BRAND_GRADIENT } from "@/lib/brand";
 
 interface IpRule {
   id: string;
@@ -30,6 +31,8 @@ interface ListResponse {
 function formatWhen(date: string | Date | null): string {
   if (!date) return "—";
   return new Date(date).toLocaleString("en-GB", {
+    timeZone: "Asia/Karachi",
+    hour12: true,
     day: "numeric",
     month: "short",
     year: "numeric",
@@ -189,7 +192,7 @@ export function IpAllowlistManager() {
                 onClick={() => handleAdd(yourIp, "My current IP")}
                 disabled={submitting}
                 className="flex items-center gap-1.5 px-4 h-8 rounded-full text-xs font-bold font-mono uppercase tracking-wider text-white shadow-md transition-all disabled:opacity-50 shrink-0"
-                style={{ background: "linear-gradient(135deg, #944a00, #ff8400)" }}
+                style={{ background: BRAND_GRADIENT }}
               >
                 <Plus className="h-3 w-3" />
                 Add my IP
@@ -231,7 +234,7 @@ export function IpAllowlistManager() {
               onClick={() => handleAdd()}
               disabled={submitting || !cidrInput.trim()}
               className="flex items-center justify-center gap-1.5 px-5 h-9 rounded-full text-sm font-bold font-mono uppercase tracking-wider text-white shadow-md transition-all disabled:opacity-50"
-              style={{ background: "linear-gradient(135deg, #944a00, #ff8400)" }}
+              style={{ background: BRAND_GRADIENT }}
             >
               {submitting ? (
                 <Loader2 className="h-3.5 w-3.5 animate-spin" />
