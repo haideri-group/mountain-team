@@ -29,6 +29,7 @@ interface CronicleEventPublic {
     status: "success" | "error" | "timeout" | "running";
     elapsed?: number;
     syncLogId: string | null;
+    jobDetailsUrl: string | null;
   } | null;
   nextRun: number | null;
 }
@@ -276,6 +277,20 @@ export function CronicleSchedulePanel({ onViewRun, refreshTick }: Props = {}) {
                   {statusIcon(e.lastRun.status)}
                   {formatEpoch(e.lastRun.start)}
                 </button>
+              ) : e.lastRun?.jobDetailsUrl ? (
+                /* No app-side sync_logs row — likely Cronicle couldn't reach
+                   TeamFlow (DNS / network error) so no handler ran. Link to
+                   the Cronicle job details page in a new tab instead. */
+                <a
+                  href={e.lastRun.jobDetailsUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="hidden md:flex items-center gap-1.5 text-xs font-mono text-left hover:text-[#ff8400] hover:underline underline-offset-4 decoration-dotted transition-colors"
+                  title="No app-side record — open Cronicle job details"
+                >
+                  {statusIcon(e.lastRun.status)}
+                  {formatEpoch(e.lastRun.start)}
+                </a>
               ) : (
                 <span className="hidden md:flex items-center gap-1.5 text-xs font-mono">
                   {e.lastRun ? (

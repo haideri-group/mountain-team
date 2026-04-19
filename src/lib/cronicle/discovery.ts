@@ -278,6 +278,17 @@ export async function projectEventPublic(
     }
   }
 
+  // Build a direct Cronicle link for the icon to fall back to when we
+  // have no matching app-side sync_logs row. Covers the case where
+  // Cronicle couldn't even reach TeamFlow (DNS failure, connection
+  // refused, TLS error) — the failure exists only in Cronicle's log
+  // and this link takes the admin there.
+  const cronicleBase = (process.env.CRONICLE_BASE_URL || "").replace(/\/$/, "");
+  const jobDetailsUrl =
+    latest && cronicleBase
+      ? `${cronicleBase}/#JobDetails?id=${latest.id}`
+      : null;
+
   const lastRun = latest
     ? {
         jobId: latest.id,
@@ -286,6 +297,7 @@ export async function projectEventPublic(
         status: normalizeJobStatus(latest),
         elapsed: latest.elapsed,
         syncLogId,
+        jobDetailsUrl,
       }
     : null;
 
