@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useMemo, useCallback } from "react";
+import { useState, useEffect, useCallback } from "react";
 import {
   Plus,
   Trash2,
@@ -24,6 +24,7 @@ interface IpRule {
 interface ListResponse {
   rules: IpRule[];
   yourIp: string | null;
+  yourIpCovered: boolean;
 }
 
 function formatWhen(date: string | Date | null): string {
@@ -40,6 +41,7 @@ function formatWhen(date: string | Date | null): string {
 export function IpAllowlistManager() {
   const [rules, setRules] = useState<IpRule[]>([]);
   const [yourIp, setYourIp] = useState<string | null>(null);
+  const [yourIpCovered, setYourIpCovered] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [cidrInput, setCidrInput] = useState("");
@@ -58,6 +60,7 @@ export function IpAllowlistManager() {
       const data = (await res.json()) as ListResponse;
       setRules(data.rules || []);
       setYourIp(data.yourIp);
+      setYourIpCovered(!!data.yourIpCovered);
       setError(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load allowlist");
@@ -70,10 +73,10 @@ export function IpAllowlistManager() {
     load();
   }, [load]);
 
-  const yourIpAlreadyListed = useMemo(() => {
-    if (!yourIp) return false;
-    return rules.some((r) => r.cidr === yourIp && r.enabled);
-  }, [yourIp, rules]);
+  // Server computes this against the same matcher used by the gate, so
+  // CIDR ranges covering the client IP are reflected here — not just
+  // exact-string matches.
+  const yourIpAlreadyListed = yourIpCovered;
 
   const handleAdd = async (cidrOverride?: string, labelOverride?: string | null) => {
     const cidr = (cidrOverride ?? cidrInput).trim();

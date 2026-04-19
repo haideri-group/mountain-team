@@ -4,7 +4,7 @@ import { db } from "@/lib/db";
 import { ipAllowlist } from "@/lib/db/schema";
 import { desc } from "drizzle-orm";
 import { randomUUID } from "crypto";
-import { normalizeCidr } from "@/lib/ip/match";
+import { isIpAllowed, normalizeCidr } from "@/lib/ip/match";
 import { invalidateAllowlistCache } from "@/lib/ip/allowlist-cache";
 import { getClientIp } from "@/lib/ip/resolve";
 
@@ -26,9 +26,14 @@ export async function GET(request: Request) {
     .from(ipAllowlist)
     .orderBy(desc(ipAllowlist.createdAt));
 
+  const yourIp = getClientIp(request);
+  const enabledCidrs = rows.filter((r) => r.enabled).map((r) => r.cidr);
+  const yourIpCovered = yourIp ? isIpAllowed(yourIp, enabledCidrs) : false;
+
   return NextResponse.json({
     rules: rows,
-    yourIp: getClientIp(request),
+    yourIp,
+    yourIpCovered,
   });
 }
 

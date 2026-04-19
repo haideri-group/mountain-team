@@ -23,12 +23,10 @@ const ALWAYS_PUBLIC_PREFIXES = [
 // visitor isn't logged in. All other paths already require login.
 const GUEST_READABLE_PREFIXES = ["/overview", "/issue", "/workload"];
 
-function isAlwaysPublic(pathname: string): boolean {
-  return ALWAYS_PUBLIC_PREFIXES.some((p) => pathname === p || pathname.startsWith(p + "/") || pathname.startsWith(p));
-}
-
-function isGuestReadable(pathname: string): boolean {
-  return GUEST_READABLE_PREFIXES.some((p) => pathname === p || pathname.startsWith(p + "/"));
+// Exact match OR prefix-followed-by-slash — prevents "/login" from
+// matching "/loginhack" or similar lookalike paths.
+function matchesPrefix(pathname: string, prefixes: readonly string[]): boolean {
+  return prefixes.some((p) => pathname === p || pathname.startsWith(p + "/"));
 }
 
 export async function proxy(request: NextRequest) {
@@ -51,7 +49,7 @@ export async function proxy(request: NextRequest) {
     pathname === "/login" && searchParams.get("reset") === "success";
 
   // Auth + reset flows are always reachable.
-  if (isAlwaysPublic(pathname)) {
+  if (matchesPrefix(pathname, ALWAYS_PUBLIC_PREFIXES)) {
     if (
       isLoggedIn &&
       !isResetSuccessRedirect &&
@@ -64,16 +62,26 @@ export async function proxy(request: NextRequest) {
 
   // Guest-readable pages (overview, issue detail, workload): allowed if
   // logged in OR the client IP matches an allowlist rule.
-  if (isGuestReadable(pathname)) {
+  if (matchesPrefix(pathname, GUEST_READABLE_PREFIXES)) {
     if (isLoggedIn) return NextResponse.next();
 
     const clientIp = getClientIp(request);
     if (clientIp) {
-      const allowlist = await getAllowlist();
-      if (isIpAllowed(clientIp, allowlist)) return NextResponse.next();
+      try {
+        const allowlist = await getAllowlist();
+        if (isIpAllowed(clientIp, allowlist)) return NextResponse.next();
+      } catch (err) {
+        // Fail closed on DB lookup failure — redirect unlisted guests
+        // to login instead of showing a 500. Admins can still sign in
+        // via the auth endpoints which are exempt from this check.
+        console.warn(
+          "IP allowlist lookup failed — falling back to redirect:",
+          err instanceof Error ? err.message : String(err),
+        );
+      }
     }
 
-    // Unlisted guest → send to login with callback.
+    // Unlisted guest (or lookup failed) → send to login with callback.
     const url = new URL("/login", request.url);
     url.searchParams.set("callbackUrl", pathname + request.nextUrl.search);
     return NextResponse.redirect(url);
@@ -88,5 +96,10 @@ export async function proxy(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/((?!api|_next/static|_next/image|favicon.ico|assets).*)"],
+  // Exclude all API routes, all Next.js internals (_next/*), the favicon
+  // and /assets. API routes enforce via `requirePublicOrSession()`; Next
+  // internals (data, static, image, manifest, HMR) should never hit the
+  // proxy — letting them fall through would 302 them to /login on unlisted
+  // IPs and break client-side hydration.
+  matcher: ["/((?!api|_next|favicon.ico|assets).*)"],
 };
