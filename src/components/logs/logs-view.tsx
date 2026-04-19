@@ -24,10 +24,12 @@ const DEFAULT_FILTERS: LogsFiltersValue = {
   to: "",
 };
 
+const PAGE_SIZE_OPTIONS = [20, 24, 48, 75, 100] as const;
+
 export function LogsView() {
   const [filters, setFilters] = useState<LogsFiltersValue>(DEFAULT_FILTERS);
   const [page, setPage] = useState(1);
-  const pageSize = 50;
+  const [pageSize, setPageSize] = useState<number>(20);
   const [data, setData] = useState<ListResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -171,13 +173,28 @@ export function LogsView() {
         onRowClick={onRowClick}
       />
 
-      {data && data.totalPages > 1 && (
-        <div className="flex items-center justify-between text-xs font-mono text-muted-foreground">
+      {data && (
+        <div className="flex flex-wrap items-center justify-between gap-3 text-xs font-mono text-muted-foreground">
           <span>
             Page {data.page} of {data.totalPages} · {data.totalCount} run
             {data.totalCount === 1 ? "" : "s"}
           </span>
           <div className="flex items-center gap-2">
+            <label className="flex items-center gap-2 text-[10px] uppercase tracking-wider">
+              Per page
+              <select
+                value={pageSize}
+                onChange={(e) => {
+                  setPageSize(Number(e.target.value));
+                  setPage(1);
+                }}
+                className="h-8 rounded-lg bg-background px-2 text-xs font-mono focus:outline-none focus:ring-2 focus:ring-[#ff8400]/30"
+              >
+                {PAGE_SIZE_OPTIONS.map((n) => (
+                  <option key={n} value={n}>{n}</option>
+                ))}
+              </select>
+            </label>
             <button
               onClick={() => setPage((p) => Math.max(1, p - 1))}
               disabled={page <= 1 || loading}
