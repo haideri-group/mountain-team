@@ -374,6 +374,35 @@ export async function findSyncLogIdNearTime(input: {
  *  Uses MySQL-native `NOW() - INTERVAL` so the age comparison isn't
  *  skewed by mysql2 driver timezone round-trips (see notes on
  *  `summarize24h`). */
+/** Return the currently-running sync_logs row of any of the given
+ *  types, if one exists — regardless of whether Cronicle has a
+ *  corresponding job entry. Used by the schedule panel's progress
+ *  projection so that a Run-Now-invoked sync (which doesn't go through
+ *  Cronicle) still shows its live progress bar under the event title. */
+export async function findRunningSyncLog(
+  types: SyncLogType[],
+): Promise<{ id: string; type: SyncLogType; startedAt: Date } | null> {
+  if (types.length === 0) return null;
+  const [row] = await db
+    .select({
+      id: syncLogs.id,
+      type: syncLogs.type,
+      startedAt: syncLogs.startedAt,
+    })
+    .from(syncLogs)
+    .where(
+      and(eq(syncLogs.status, "running"), inArray(syncLogs.type, types)),
+    )
+    .orderBy(desc(syncLogs.startedAt))
+    .limit(1);
+  if (!row || !row.startedAt) return null;
+  return {
+    id: row.id,
+    type: row.type as SyncLogType,
+    startedAt: row.startedAt,
+  };
+}
+
 export async function findStuckRunning(graceMs: number): Promise<LogRow[]> {
   const graceSec = Math.max(1, Math.floor(graceMs / 1000));
   const rows = await db

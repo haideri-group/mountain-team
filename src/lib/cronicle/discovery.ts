@@ -1,6 +1,7 @@
 import "server-only";
 import { cronicleGet, isCronicleConfigured } from "./client";
 import {
+  findRunningSyncLog,
   findSyncLogIdNearTime,
   getSyncLogStatusById,
   type SyncLogType,
@@ -252,20 +253,32 @@ export async function projectEventPublic(
   const jobs = await listEventHistory(event.id, 1);
   const latest = jobs[0];
 
-  // Correlate by TIMESTAMP not just by type — otherwise a later manual
-  // sync would shadow the specific cron run the user is clicking on.
-  // Uses the Cronicle job's `event_start` (Cronicle's intended fire time)
-  // with fallback to `time_start`, matching `correlate.ts`'s forward pass.
+  // Look for a currently-RUNNING sync_log of this event's type FIRST.
+  // Run Now invokes the runner directly (bypassing Cronicle), so
+  // Cronicle's history won't have a matching job for a manual run —
+  // but the sync_logs table will. Catching that here is what makes the
+  // schedule panel's progress bar appear for manual runs too.
   let syncLogId: string | null = null;
+  let runningSyncLog: Awaited<ReturnType<typeof findRunningSyncLog>> = null;
   const urlPath = extractUrlPath(event.params.url);
   const types = syncTypesForUrlPath(urlPath);
-  if (latest && types.length > 0) {
-    // Anchor on `time_start` (when Cronicle actually fired the HTTP
-    // request) — that's what the app's `sync_logs.startedAt` matches.
-    // `event_start` is the SCHEDULED time, which can be minutes earlier
-    // if Cronicle queued the fire or retried after a failure (notably for
-    // the 40-minute deployment_backfill). Falling back to event_start
-    // only when time_start is missing on the Cronicle record.
+  if (types.length > 0) {
+    try {
+      runningSyncLog = await findRunningSyncLog(types);
+      if (runningSyncLog) syncLogId = runningSyncLog.id;
+    } catch (err) {
+      console.warn(
+        "[cronicle] running sync_log lookup failed for event",
+        event.id,
+        err instanceof Error ? err.message : String(err),
+      );
+    }
+  }
+
+  // Fall back to Cronicle-correlated sync_log — for the completed case
+  // the schedule panel's "Last run" icon uses this to deep-link to the
+  // specific drawer row that matches Cronicle's most recent job.
+  if (!syncLogId && latest && types.length > 0) {
     const anchor = latest.time_start ?? latest.event_start;
     if (Number.isFinite(anchor)) {
       try {
@@ -349,18 +362,35 @@ export async function projectEventPublic(
     }
   }
 
-  const lastRun = latest
-    ? {
-        jobId: latest.id,
-        start: latest.time_start,
-        end: latest.time_end ?? null,
-        status: normalizeJobStatus(latest),
-        elapsed: latest.elapsed,
-        syncLogId,
-        jobDetailsUrl,
-        progress,
-      }
-    : null;
+  // Build lastRun. Prefer the running sync_log when one exists — that's
+  // the authoritative source for "there's an active run" (regardless of
+  // whether Cronicle has a matching job, which Run Now skips). Otherwise
+  // fall back to Cronicle's latest job. Progress bar shows whenever
+  // `progress` is populated AND status === "running".
+  let lastRun: CronicleEventPublic["lastRun"] = null;
+  if (runningSyncLog) {
+    lastRun = {
+      jobId: latest?.id,
+      start: Math.floor(runningSyncLog.startedAt.getTime() / 1000),
+      end: null,
+      status: "running",
+      elapsed: undefined,
+      syncLogId,
+      jobDetailsUrl,
+      progress,
+    };
+  } else if (latest) {
+    lastRun = {
+      jobId: latest.id,
+      start: latest.time_start,
+      end: latest.time_end ?? null,
+      status: normalizeJobStatus(latest),
+      elapsed: latest.elapsed,
+      syncLogId,
+      jobDetailsUrl,
+      progress,
+    };
+  }
 
   return {
     id: event.id,
