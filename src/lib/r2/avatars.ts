@@ -221,6 +221,7 @@ export async function syncSingleMemberAvatar(
       initialUpdates.avatarHash = null;
     }
     if (person.jobTitle) initialUpdates.role = person.jobTitle;
+    if (person.orgJoinedDate) initialUpdates.orgJoinedDate = person.orgJoinedDate;
 
     if (Object.keys(initialUpdates).length > 0) {
       await db

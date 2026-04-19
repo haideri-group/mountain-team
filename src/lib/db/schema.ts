@@ -38,6 +38,7 @@ export const team_members = mysqlTable("team_members", {
   role: varchar("role", { length: 255 }),
   status: mysqlEnum("status", ["active", "on_leave", "departed"]).default("active").notNull(),
   joinedDate: varchar("joinedDate", { length: 50 }),
+  orgJoinedDate: varchar("orgJoinedDate", { length: 50 }),
   departedDate: varchar("departedDate", { length: 50 }),
   capacity: int("capacity").default(15),
   avatarUrl: text("avatarUrl"),

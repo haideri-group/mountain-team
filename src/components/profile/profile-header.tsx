@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { Mail, Calendar, UserX, ExternalLink, Users, Check, Copy } from "lucide-react";
 import { StatusBadge } from "@/components/shared/status-badge";
+import { APP_TIMEZONE } from "@/lib/config";
 import type { MemberStatus } from "@/types";
 
 interface ProfileHeaderProps {
@@ -13,6 +14,7 @@ interface ProfileHeaderProps {
     status: MemberStatus;
     avatarUrl: string | null;
     joinedDate: string | null;
+    orgJoinedDate: string | null;
     departedDate: string | null;
     jiraAccountId: string;
     teamName: string | null;
@@ -28,12 +30,16 @@ function getInitials(name: string): string {
     .toUpperCase();
 }
 
+// Values are stored as date-only strings (YYYY-MM-DD). new Date() parses
+// them as UTC midnight, so formatting in the client TZ can shift by a day
+// for non-PKT users. Pin to APP_TIMEZONE to match the app-wide convention.
 function formatFullDate(dateStr: string | null): string {
   if (!dateStr) return "";
   return new Date(dateStr).toLocaleDateString("en-GB", {
     month: "long",
     day: "numeric",
     year: "numeric",
+    timeZone: APP_TIMEZONE,
   });
 }
 
@@ -106,12 +112,16 @@ export function ProfileHeader({ member }: ProfileHeaderProps) {
               {member.email && (
                 <CopyEmail email={member.email} />
               )}
-              {member.joinedDate && (
+              {(member.orgJoinedDate || member.joinedDate) && (
                 <span className="flex items-center gap-1.5">
                   <Calendar className="h-3.5 w-3.5" />
-                  {isDeparted && member.departedDate
-                    ? `${formatFullDate(member.joinedDate)} — ${formatFullDate(member.departedDate)}`
-                    : `Joined ${formatFullDate(member.joinedDate)}`}
+                  {isDeparted && member.departedDate && member.orgJoinedDate
+                    ? `${formatFullDate(member.orgJoinedDate)} — ${formatFullDate(member.departedDate)}`
+                    : isDeparted && member.departedDate && member.joinedDate
+                    ? `${formatFullDate(member.joinedDate)} — ${formatFullDate(member.departedDate)} (tracked)`
+                    : member.orgJoinedDate
+                    ? `Joined ${formatFullDate(member.orgJoinedDate)}`
+                    : `Tracked since ${formatFullDate(member.joinedDate)}`}
                 </span>
               )}
             </div>

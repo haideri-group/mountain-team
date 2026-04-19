@@ -193,20 +193,28 @@ export async function GET(
       monthlyData.push({ month: monthStr, count });
     }
 
-    // Tenure (for departed)
+    // Tenure (for departed) — prefer orgJoinedDate (real org start) over joinedDate
+    // (TeamFlow record creation) when available. Returns null for malformed or
+    // reversed date inputs rather than rendering "NaNy NaNm" in the UI.
     let tenure: string | null = null;
-    if (member.status === "departed" && member.joinedDate) {
+    const tenureStart = member.orgJoinedDate || member.joinedDate;
+    if (member.status === "departed" && tenureStart) {
       const endDate = member.departedDate
         ? new Date(member.departedDate)
         : new Date();
-      const startDate = new Date(member.joinedDate);
-      const years = endDate.getFullYear() - startDate.getFullYear();
-      const months = endDate.getMonth() - startDate.getMonth();
-      const totalMonths = years * 12 + months;
-      const y = Math.floor(totalMonths / 12);
-      const m = totalMonths % 12;
-      tenure =
-        y > 0 ? `${y}y ${m}m` : `${m}m`;
+      const startDate = new Date(tenureStart);
+      if (
+        !isNaN(startDate.getTime()) &&
+        !isNaN(endDate.getTime()) &&
+        endDate >= startDate
+      ) {
+        const years = endDate.getFullYear() - startDate.getFullYear();
+        const months = endDate.getMonth() - startDate.getMonth();
+        const totalMonths = years * 12 + months;
+        const y = Math.floor(totalMonths / 12);
+        const m = totalMonths % 12;
+        tenure = y > 0 ? `${y}y ${m}m` : `${m}m`;
+      }
     }
 
     return NextResponse.json({

@@ -1,11 +1,19 @@
 const TOKEN_ENDPOINT = "https://oauth2.googleapis.com/token";
 const PEOPLE_API = "https://people.googleapis.com/v1";
 
+interface DirectoryDate {
+  year?: number;
+  month?: number;
+  day?: number;
+}
+
 interface DirectoryOrganization {
   title?: string;
   name?: string;
   department?: string;
   current?: boolean;
+  startDate?: DirectoryDate;
+  endDate?: DirectoryDate;
 }
 
 interface DirectoryPerson {
@@ -20,6 +28,7 @@ export interface DirectoryMatch {
   name: string;
   photoUrl: string | null;
   jobTitle: string | null;
+  orgJoinedDate: string | null;
 }
 
 // Prefer the current organization's title; fall back to the first non-empty title.
@@ -29,6 +38,31 @@ function extractJobTitle(orgs?: DirectoryOrganization[]): string | null {
   if (current?.title) return current.title.trim();
   const any = orgs.find((o) => o.title);
   return any?.title ? any.title.trim() : null;
+}
+
+// Format a People API Date object as YYYY-MM-DD. Fills missing month/day with
+// 01 so downstream date parsing stays valid. Returns null if no year.
+// The API may signal "not significant" by returning 0 for month/day (per spec),
+// so `||` — not `??` — is required to replace falsy zeros alongside null/undefined.
+function formatDirectoryDate(d?: DirectoryDate): string | null {
+  if (!d || !d.year) return null;
+  const y = String(d.year).padStart(4, "0");
+  const m = String(d.month || 1).padStart(2, "0");
+  const day = String(d.day || 1).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+// Extract the employment start date — prefer the current org, fall back to the
+// earliest non-empty startDate across all organizations.
+function extractOrgJoinedDate(orgs?: DirectoryOrganization[]): string | null {
+  if (!orgs || orgs.length === 0) return null;
+  const current = orgs.find((o) => o.current && o.startDate?.year);
+  if (current) return formatDirectoryDate(current.startDate);
+  const withDate = orgs
+    .map((o) => formatDirectoryDate(o.startDate))
+    .filter((d): d is string => d !== null)
+    .sort();
+  return withDate[0] || null;
 }
 
 interface SearchResponse {
@@ -164,6 +198,7 @@ function pickBestMatch(
         name: person.names?.[0]?.displayName || displayName,
         photoUrl: person.photos?.[0]?.url || null,
         jobTitle: extractJobTitle(person.organizations),
+        orgJoinedDate: extractOrgJoinedDate(person.organizations),
       };
     }
   }
@@ -192,6 +227,7 @@ export interface MemberDirectoryMatch {
   email: string | null;
   photoUrl: string | null;
   jobTitle: string | null;
+  orgJoinedDate: string | null;
 }
 
 // Match emails and photos for a batch of team members
@@ -216,6 +252,7 @@ export async function matchFromDirectory(
             email: null, // already have email
             photoUrl: emailMatch.photos?.[0]?.url || null,
             jobTitle: extractJobTitle(emailMatch.organizations),
+            orgJoinedDate: extractOrgJoinedDate(emailMatch.organizations),
           });
           continue;
         }
@@ -241,6 +278,7 @@ export async function matchFromDirectory(
           email: member.email ? null : result.email,
           photoUrl: result.photoUrl,
           jobTitle: result.jobTitle,
+          orgJoinedDate: result.orgJoinedDate,
         });
       }
     } catch (error) {
@@ -256,13 +294,17 @@ export async function matchFromDirectory(
 
 /**
  * Find a Google Workspace person by exact email match.
- * Returns both the photo URL and the job title. Used for single-member
- * enrichment after an email change.
+ * Returns photo URL, job title, and organization joining date.
+ * Used for single-member enrichment after an email change.
  */
 export async function findPersonByEmail(
   accessToken: string,
   email: string,
-): Promise<{ photoUrl: string | null; jobTitle: string | null } | null> {
+): Promise<{
+  photoUrl: string | null;
+  jobTitle: string | null;
+  orgJoinedDate: string | null;
+} | null> {
   try {
     const people = await searchDirectory(accessToken, email);
     const match = people.find((p) =>
@@ -274,6 +316,7 @@ export async function findPersonByEmail(
     return {
       photoUrl: match.photos?.[0]?.url || null,
       jobTitle: extractJobTitle(match.organizations),
+      orgJoinedDate: extractOrgJoinedDate(match.organizations),
     };
   } catch {
     return null;
