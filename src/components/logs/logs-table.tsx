@@ -1,6 +1,7 @@
 "use client";
 
 import { StatusPill } from "./status-pill";
+import { APP_TIMEZONE } from "@/lib/config";
 
 export interface LogRow {
   id: string;
@@ -35,7 +36,7 @@ function formatStarted(iso: string): string {
   const diffH = Math.round(diffMin / 60);
   if (diffH < 24) return `${diffH}h ago`;
   return d.toLocaleString("en-GB", {
-    timeZone: "Asia/Karachi",
+    timeZone: APP_TIMEZONE,
     hour12: true,
     day: "numeric",
     month: "short",

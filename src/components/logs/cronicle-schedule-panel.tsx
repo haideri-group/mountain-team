@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { BRAND_GRADIENT } from "@/lib/brand";
+import { APP_TIMEZONE } from "@/lib/config";
 import {
   Calendar,
   CheckCircle2,
@@ -58,7 +59,7 @@ function formatEpoch(sec: number | null): string {
   if (diffMin < 0 && diffMin > -60) return `${-diffMin}m ago`;
   if (diffMin < 0 && diffMin > -1440) return `${Math.round(-diffMin / 60)}h ago`;
   return d.toLocaleString("en-GB", {
-    timeZone: "Asia/Karachi",
+    timeZone: APP_TIMEZONE,
     hour12: true,
     day: "numeric",
     month: "short",
