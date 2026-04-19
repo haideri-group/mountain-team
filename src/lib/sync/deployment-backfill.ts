@@ -125,6 +125,9 @@ export interface BackfillRunResult {
   deferred: boolean;
   durationMs: number;
   checkpointAtJiraKey: string | null;
+  /** id of the sync_logs row this run wrote. Null when the run was
+   *  deferred via the concurrency / staleness guards (no row written). */
+  logId: string | null;
 }
 
 // --- Helpers ---
@@ -390,6 +393,7 @@ export async function runDeploymentBackfill(): Promise<BackfillRunResult> {
     deferred: false,
     durationMs: 0,
     checkpointAtJiraKey: null,
+    logId: null,
   };
 
   if (bstate.runInFlight) {
@@ -476,6 +480,7 @@ export async function runDeploymentBackfill(): Promise<BackfillRunResult> {
 
   const logId = await logRunStart();
   bstate.activeLogId = logId;
+  result.logId = logId;
 
   try {
     // Pre-flight: poll /rate_limit. This endpoint does NOT count against

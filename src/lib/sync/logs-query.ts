@@ -1,6 +1,6 @@
 import "server-only";
 import { db } from "@/lib/db";
-import { syncLogs } from "@/lib/db/schema";
+import { syncLogs, users, team_members } from "@/lib/db/schema";
 import { and, desc, eq, gte, inArray, lte, sql } from "drizzle-orm";
 import { sanitizeErrorText } from "@/lib/jira/client";
 
@@ -50,6 +50,18 @@ export const VALID_LOG_SOURCES: ReadonlyArray<LogSource> = [
   "unknown",
 ];
 
+/** Triggering admin user for manual runs. Null for cron rows and for
+ *  pre-migration rows where `triggeredByUserId` is null. `memberId` is
+ *  the team_member row id when the admin is also a team member, so the
+ *  UI can link to `/members/[id]`. */
+export interface LogTriggeredBy {
+  userId: string;
+  name: string | null;
+  email: string | null;
+  avatarUrl: string | null;
+  memberId: string | null;
+}
+
 export interface LogRow {
   id: string;
   type: SyncLogType;
@@ -60,6 +72,7 @@ export interface LogRow {
   issueCount: number;
   memberCount: number;
   source: LogSource;
+  triggeredByUser: LogTriggeredBy | null;
   errorPreview: string | null;
 }
 
@@ -67,20 +80,22 @@ export interface LogDetailRow extends LogRow {
   error: string | null;
 }
 
-/** Heuristic mapping sync type → source while a proper `triggeredBy`
- *  column doesn't exist yet.
+/** Resolves the row's source. Prefer the stamped `triggeredBy` column;
+ *  fall back to a type-based heuristic only for legacy rows written
+ *  before that column existed.
  *
- *  - `manual` is only ever written by admin-triggered `/api/sync/issues`
- *    so we can confidently label it "manual".
- *  - `full`, `incremental`, and `deployment_backfill` can ALL be fired
- *    from either the scheduled cron OR admin buttons — returning "cron"
- *    would be a false claim, so we honestly return "unknown".
- *  - `team_sync`, `release_sync`, `worklog_sync`, `timedoctor_sync` ARE
- *    also triggerable manually (from /api/sync/*), but the proportion
- *    is small; a proper column is the right fix. Kept as "cron" so the
- *    filter still works for the 95%-case. Will be removed when the
- *    `triggeredBy` column lands. */
-function inferSource(type: SyncLogType): LogSource {
+ *  For the type-based fallback only:
+ *   - `manual` type → "manual"
+ *   - `full` / `incremental` / `deployment_backfill` can fire from
+ *     either path, so we honestly return "unknown".
+ *   - The other scheduled-only types default to "cron". */
+function inferSource(
+  type: SyncLogType,
+  stamped: "cron" | "manual" | null,
+): LogSource {
+  if (stamped === "manual") return "manual";
+  if (stamped === "cron") return "cron";
+  // Legacy row — no `triggeredBy` column value.
   if (type === "manual") return "manual";
   if (
     type === "full" ||
@@ -105,23 +120,46 @@ function truncate(s: string | null, max = 120): string | null {
   return s.length > max ? s.slice(0, max) + "…" : s;
 }
 
-function toLogRow(row: typeof syncLogs.$inferSelect): LogRow {
-  const sanitizedError = row.error ? sanitizeErrorText(row.error) : null;
+interface JoinedSyncLogRow {
+  log: typeof syncLogs.$inferSelect;
+  userName: string | null;
+  userEmail: string | null;
+  userAvatar: string | null;
+  memberId: string | null;
+}
+
+function toLogRow(row: JoinedSyncLogRow): LogRow {
+  const { log } = row;
+  const sanitizedError = log.error ? sanitizeErrorText(log.error) : null;
+  const triggeredByUser: LogTriggeredBy | null =
+    log.triggeredByUserId && (row.userName || row.userEmail)
+      ? {
+          userId: log.triggeredByUserId,
+          name: row.userName,
+          email: row.userEmail,
+          avatarUrl: row.userAvatar,
+          memberId: row.memberId,
+        }
+      : null;
   return {
-    id: row.id,
-    type: row.type as SyncLogType,
-    status: row.status as SyncLogStatus,
-    startedAt: row.startedAt
-      ? new Date(row.startedAt).toISOString()
+    id: log.id,
+    type: log.type as SyncLogType,
+    status: log.status as SyncLogStatus,
+    startedAt: log.startedAt
+      ? new Date(log.startedAt).toISOString()
       // Schema has defaultNow() so this branch is effectively unreachable,
       // but we stamp the insert row's creation time if we ever hit it —
       // epoch-zero (1970) would paint a misleading "57-year-old run" in UI.
       : new Date().toISOString(),
-    completedAt: row.completedAt ? new Date(row.completedAt).toISOString() : null,
-    durationMs: rowToDurationMs(row.startedAt, row.completedAt),
-    issueCount: row.issueCount ?? 0,
-    memberCount: row.memberCount ?? 0,
-    source: inferSource(row.type as SyncLogType),
+    completedAt: log.completedAt ? new Date(log.completedAt).toISOString() : null,
+    durationMs: rowToDurationMs(log.startedAt, log.completedAt),
+    issueCount: log.issueCount ?? 0,
+    memberCount: log.memberCount ?? 0,
+    source: inferSource(
+      log.type as SyncLogType,
+      (log.triggeredBy as "cron" | "manual" | null) ?? null,
+    ),
+    triggeredByUser,
     errorPreview: truncate(sanitizedError, 120),
   };
 }
@@ -154,31 +192,21 @@ export async function listSyncLogs(params: ListSyncLogsParams = {}): Promise<{
     conditions.push(eq(syncLogs.status, params.status));
   }
   if (params.source === "manual") {
-    conditions.push(eq(syncLogs.type, "manual"));
-  } else if (params.source === "cron") {
-    // Types whose writer is (in practice) the scheduled cron. The
-    // ambiguous `full` / `incremental` / `deployment_backfill` rows are
-    // labelled `"unknown"` by inferSource and are intentionally excluded
-    // here so a "cron-triggered" filter isn't silently polluted by
-    // admin-fired bursts.
+    // True manual: either the `manual` type OR any row stamped
+    // `triggeredBy='manual'` (Run Now / /api/sync/*).
     conditions.push(
-      inArray(syncLogs.type, [
-        "team_sync",
-        "worklog_sync",
-        "timedoctor_sync",
-        "release_sync",
-      ]),
+      sql`(${syncLogs.type} = 'manual' OR ${syncLogs.triggeredBy} = 'manual')`,
+    );
+  } else if (params.source === "cron") {
+    // Stamped as `cron`, OR legacy row with one of the scheduled-only
+    // types AND no stamp at all. Excludes ambiguous types with no stamp.
+    conditions.push(
+      sql`(${syncLogs.triggeredBy} = 'cron' OR (${syncLogs.triggeredBy} IS NULL AND ${syncLogs.type} IN ('team_sync', 'worklog_sync', 'timedoctor_sync', 'release_sync')))`,
     );
   } else if (params.source === "unknown") {
-    // Mirror inferSource(): these three types can fire from either a
-    // cron or an admin button, so "unknown" filters to exactly the
-    // rows the table labels as such.
+    // Legacy rows with no stamp AND one of the ambiguous types.
     conditions.push(
-      inArray(syncLogs.type, [
-        "full",
-        "incremental",
-        "deployment_backfill",
-      ]),
+      sql`(${syncLogs.triggeredBy} IS NULL AND ${syncLogs.type} IN ('full', 'incremental', 'deployment_backfill'))`,
     );
   }
   if (params.from) conditions.push(gte(syncLogs.startedAt, params.from));
@@ -186,10 +214,18 @@ export async function listSyncLogs(params: ListSyncLogsParams = {}): Promise<{
 
   const where = conditions.length > 0 ? and(...conditions) : undefined;
 
-  const [rows, [{ n: totalCount }]] = await Promise.all([
+  const [joined, [{ n: totalCount }]] = await Promise.all([
     db
-      .select()
+      .select({
+        log: syncLogs,
+        userName: users.name,
+        userEmail: users.email,
+        userAvatar: users.avatarUrl,
+        memberId: team_members.id,
+      })
       .from(syncLogs)
+      .leftJoin(users, eq(users.id, syncLogs.triggeredByUserId))
+      .leftJoin(team_members, eq(team_members.email, users.email))
       .where(where)
       .orderBy(desc(syncLogs.startedAt))
       .limit(pageSize)
@@ -199,6 +235,7 @@ export async function listSyncLogs(params: ListSyncLogsParams = {}): Promise<{
       .from(syncLogs)
       .where(where),
   ]);
+  const rows = joined;
 
   return {
     rows: rows.map(toLogRow),
@@ -226,15 +263,23 @@ export async function getSyncLogStatusById(
 
 export async function getSyncLogById(id: string): Promise<LogDetailRow | null> {
   const [row] = await db
-    .select()
+    .select({
+      log: syncLogs,
+      userName: users.name,
+      userEmail: users.email,
+      userAvatar: users.avatarUrl,
+      memberId: team_members.id,
+    })
     .from(syncLogs)
+    .leftJoin(users, eq(users.id, syncLogs.triggeredByUserId))
+    .leftJoin(team_members, eq(team_members.email, users.email))
     .where(eq(syncLogs.id, id))
     .limit(1);
   if (!row) return null;
   const base = toLogRow(row);
   return {
     ...base,
-    error: row.error ? sanitizeErrorText(row.error) : null,
+    error: row.log.error ? sanitizeErrorText(row.log.error) : null,
   };
 }
 
@@ -332,8 +377,16 @@ export async function findSyncLogIdNearTime(input: {
 export async function findStuckRunning(graceMs: number): Promise<LogRow[]> {
   const graceSec = Math.max(1, Math.floor(graceMs / 1000));
   const rows = await db
-    .select()
+    .select({
+      log: syncLogs,
+      userName: users.name,
+      userEmail: users.email,
+      userAvatar: users.avatarUrl,
+      memberId: team_members.id,
+    })
     .from(syncLogs)
+    .leftJoin(users, eq(users.id, syncLogs.triggeredByUserId))
+    .leftJoin(team_members, eq(team_members.email, users.email))
     .where(
       and(
         eq(syncLogs.status, "running"),

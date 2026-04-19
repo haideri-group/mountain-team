@@ -9,6 +9,7 @@ import {
   releaseSyncLock,
   tryAcquireSyncLock,
 } from "@/lib/sync/concurrency";
+import { stampTriggeredBy } from "@/lib/sync/triggers";
 
 // POST /api/sync/issues -- Trigger manual issue sync (admin only)
 export async function POST() {
@@ -36,6 +37,7 @@ export async function POST() {
 
     try {
       const { logId, result } = await runIssueSync("manual");
+      await stampTriggeredBy(logId, "manual", session.user.id ?? null);
 
       return NextResponse.json({
         success: true,

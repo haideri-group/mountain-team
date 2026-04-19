@@ -8,6 +8,7 @@ import {
   releaseSyncLock,
   tryAcquireSyncLock,
 } from "@/lib/sync/concurrency";
+import { consumePendingManual, stampTriggeredBy } from "@/lib/sync/triggers";
 
 export async function GET(request: Request) {
   try {
@@ -58,7 +59,16 @@ export async function GET(request: Request) {
     }
 
     try {
+      // Consume any "Run Now" marker set by the /automations panel.
+      // If present, this HTTP fire was dispatched by Cronicle in
+      // response to an admin click — stamp the sync_log row with
+      // `manual` + the clicking admin's userId so the Source column
+      // can render "manual (Name)".
+      const pending = consumePendingManual(syncType);
+      const triggeredBy = pending ? "manual" : "cron";
+
       const { logId, result } = await runIssueSync(syncType);
+      await stampTriggeredBy(logId, triggeredBy, pending?.userId ?? null);
 
       return NextResponse.json({
         success: true,

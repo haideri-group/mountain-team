@@ -7,6 +7,7 @@ import {
 } from "@/lib/cronicle/discovery";
 import { TYPE_TO_URL_PATH } from "@/lib/cronicle/correlate";
 import { getActiveLock, isSyncRunning } from "@/lib/sync/concurrency";
+import { markPendingManual } from "@/lib/sync/triggers";
 import type { SyncLogType } from "@/lib/sync/logs-query";
 
 /**
@@ -93,6 +94,15 @@ export async function POST(
       },
       { status: 409 },
     );
+  }
+
+  // Mark BEFORE firing Cronicle so whenever Cronicle's subsequent HTTP
+  // call to /api/cron/* lands, `consumePendingManual` returns true and
+  // the sync_log row gets stamped `triggeredBy='manual'` instead of
+  // inheriting the default `cron`. 60s TTL is plenty of headroom —
+  // Cronicle typically dispatches within 1–3 seconds of run_event.
+  if (representativeType) {
+    markPendingManual(representativeType, session.user.id ?? null);
   }
 
   const res = await cronicleGet<CronicleRunResponse>("/api/app/run_event/v1", {

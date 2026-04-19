@@ -7,6 +7,7 @@ import {
   releaseSyncLock,
   tryAcquireSyncLock,
 } from "@/lib/sync/concurrency";
+import { stampTriggeredBy } from "@/lib/sync/triggers";
 
 export async function POST(request: Request) {
   try {
@@ -35,6 +36,7 @@ export async function POST(request: Request) {
 
     try {
       const { logId, result } = await runTimeDoctorSync(days);
+      await stampTriggeredBy(logId, "manual", session.user.id ?? null);
 
       return NextResponse.json({
         success: true,
