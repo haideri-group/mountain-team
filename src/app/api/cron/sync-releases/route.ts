@@ -29,7 +29,7 @@ export async function GET(request: Request) {
     }
 
     try {
-      const pending = consumePendingManual("release_sync");
+      const pending = await consumePendingManual("release_sync");
       const { logId, result } = await runReleaseSync({
         triggeredBy: pending ? "manual" : "cron",
         triggeredByUserId: pending?.userId ?? null,

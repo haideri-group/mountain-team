@@ -35,7 +35,7 @@ export async function GET(request: Request) {
     }
 
     try {
-      const pending = consumePendingManual("team_sync");
+      const pending = await consumePendingManual("team_sync");
       console.log(
         `[cron/sync-teams] pending=${JSON.stringify(pending)}`,
       );

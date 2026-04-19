@@ -110,6 +110,16 @@ export const issues = mysqlTable("issues", {
   index("idx_issues_deployments_synced_at").on(table.deploymentsSyncedAt),
 ]);
 
+/** Short-lived markers set by the Run Now button so the cron handler
+ *  that Cronicle subsequently fires (often on a DIFFERENT server
+ *  process than the one that received the Run click) can still stamp
+ *  `triggeredBy='manual' + userId` on the resulting sync_log row. */
+export const pendingManualTriggers = mysqlTable("pending_manual_triggers", {
+  family: varchar("family", { length: 32 }).primaryKey(),
+  userId: varchar("userId", { length: 191 }),
+  expiresAt: timestamp("expiresAt").notNull(),
+});
+
 export const syncLogs = mysqlTable("sync_logs", {
   id: varchar("id", { length: 191 }).primaryKey(),
   type: mysqlEnum("type", [

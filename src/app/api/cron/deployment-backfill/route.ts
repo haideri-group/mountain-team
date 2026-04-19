@@ -38,7 +38,7 @@ export async function GET(request: Request) {
     }
 
     try {
-      const pending = consumePendingManual("deployment_backfill");
+      const pending = await consumePendingManual("deployment_backfill");
       const result = await runDeploymentBackfill({
         triggeredBy: pending ? "manual" : "cron",
         triggeredByUserId: pending?.userId ?? null,

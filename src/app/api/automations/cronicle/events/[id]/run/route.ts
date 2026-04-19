@@ -105,7 +105,7 @@ export async function POST(
     `[run-now] eventId=${id} eventUrl=${eventUrl} representativeType=${representativeType ?? "null"} sessionUserId=${session.user.id ?? "UNDEFINED"}`,
   );
   if (representativeType) {
-    markPendingManual(representativeType, session.user.id ?? null);
+    await markPendingManual(representativeType, session.user.id ?? null);
   }
 
   const res = await cronicleGet<CronicleRunResponse>("/api/app/run_event/v1", {

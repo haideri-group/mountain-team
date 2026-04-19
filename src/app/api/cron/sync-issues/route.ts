@@ -62,7 +62,7 @@ export async function GET(request: Request) {
       // Consume any "Run Now" marker set by the /automations panel, pass
       // source + user directly into the runner so the INSERT itself
       // carries the correct triggeredBy — no after-the-fact UPDATE race.
-      const pending = consumePendingManual(syncType);
+      const pending = await consumePendingManual(syncType);
       console.log(
         `[cron/sync-issues] syncType=${syncType} pending=${JSON.stringify(pending)}`,
       );

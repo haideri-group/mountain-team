@@ -32,7 +32,7 @@ export async function GET(request: Request) {
     }
 
     try {
-      const pending = consumePendingManual("timedoctor_sync");
+      const pending = await consumePendingManual("timedoctor_sync");
       const { logId, result } = await runTimeDoctorSync(7, {
         triggeredBy: pending ? "manual" : "cron",
         triggeredByUserId: pending?.userId ?? null,

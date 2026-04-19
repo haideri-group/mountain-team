@@ -27,7 +27,7 @@ export async function GET(request: Request) {
     }
 
     try {
-      const pending = consumePendingManual("worklog_sync");
+      const pending = await consumePendingManual("worklog_sync");
       const { logId, result } = await runWorklogSync(7, {
         triggeredBy: pending ? "manual" : "cron",
         triggeredByUserId: pending?.userId ?? null,

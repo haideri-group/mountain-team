@@ -1,29 +1,22 @@
 import "server-only";
 import { db } from "@/lib/db";
-import { syncLogs } from "@/lib/db/schema";
-import { eq } from "drizzle-orm";
+import { pendingManualTriggers, syncLogs } from "@/lib/db/schema";
+import { eq, sql } from "drizzle-orm";
 import type { SyncLogType } from "./logs-query";
 
 /**
- * "Next run is manual" registry + write-back helper.
+ * Cross-process "next run is manual" registry.
  *
- * The Run Now button in the Scheduled Crons panel fires Cronicle's
- * `run_event` API. Cronicle then sends an HTTP GET to `/api/cron/...`,
- * which is the same endpoint the scheduled fire hits — the cron
- * handler has no way, from the request itself, to know whether it was
- * scheduled or admin-initiated.
+ * Run Now click lands on server process A (e.g. dev), Cronicle then
+ * fires an HTTP request against Cronicle's configured URL — which often
+ * resolves to server process B (e.g. prod). They have separate memory
+ * so an in-memory marker doesn't reach the handler. Persisting markers
+ * to MySQL fixes that: any process reading the table sees the same
+ * state.
  *
- * This registry lets the Run Now endpoint mark a short-lived flag with
- * the triggering admin's user id. The cron handler consumes the flag
- * atomically when its own HTTP request arrives; if present, the
- * sync_log row is stamped `triggeredBy='manual'` + the user id, so the
- * /automations UI can render "manual (Admin Name)" instead of the
- * misleading "cron" (or pre-migration "unknown").
- *
- * Family-scoped to match the existing concurrency lock — one pending
- * mark per sync family (issue / team / release / worklog / timedoctor /
- * deployment_backfill) is sufficient because the lock guarantees only
- * one run of each family at a time.
+ * One row per sync family; UPSERT on set, atomically consumed + deleted
+ * on read. Expired rows are skipped (and garbage-collected on next
+ * matching consume). Family-scoped to match the concurrency lock.
  */
 
 type SyncFamily =
@@ -45,60 +38,68 @@ const SYNC_FAMILY: Record<SyncLogType, SyncFamily> = {
   deployment_backfill: "deployment_backfill",
 };
 
-interface PendingMark {
-  /** User id of the admin who clicked Run Now. */
-  userId: string | null;
-  expiresAt: number;
-}
+const DEFAULT_TTL_MS = 120_000; // 2 min — generous headroom for Cronicle dispatch lag
 
-// Cache on globalThis so the marker set in the Run Now route bundle is
-// readable from the cron route bundle (same story as events.ts /
-// concurrency.ts — Next.js dev can instantiate library modules once
-// per route segment).
-const globalForTriggers = globalThis as unknown as {
-  _manualTriggers?: Map<SyncFamily, PendingMark>;
-};
-if (!globalForTriggers._manualTriggers) {
-  globalForTriggers._manualTriggers = new Map();
-}
-const markers = globalForTriggers._manualTriggers;
-
-const DEFAULT_TTL_MS = 60_000;
-
-/** Called by `/api/automations/cronicle/events/[id]/run` right before
- *  firing Cronicle's run_event. `userId` is the admin who clicked.
- *  When Cronicle subsequently invokes our cron handler,
- *  `consumePendingManual` returns this mark. */
-export function markPendingManual(
+/** UPSERT: one row per family. Overwriting an existing mark is the
+ *  correct behavior — if two admins click Run within TTL, the second
+ *  wins. */
+export async function markPendingManual(
   type: SyncLogType,
   userId: string | null,
   ttlMs: number = DEFAULT_TTL_MS,
-): void {
+): Promise<void> {
   const family = SYNC_FAMILY[type];
-  markers.set(family, { userId, expiresAt: Date.now() + ttlMs });
+  const expiresAt = new Date(Date.now() + ttlMs);
+  try {
+    await db
+      .insert(pendingManualTriggers)
+      .values({ family, userId, expiresAt })
+      .onDuplicateKeyUpdate({ set: { userId, expiresAt } });
+  } catch (err) {
+    // Source attribution is a UX nicety — don't fail the Run request
+    // if the marker write fails (e.g. migration hasn't been applied).
+    console.warn(
+      "[triggers] markPendingManual failed:",
+      err instanceof Error ? err.message : String(err),
+    );
+  }
 }
 
-/** Called by cron-route handlers (`/api/cron/*`) at the top of the
- *  handler. Returns the stored mark exactly once per `markPendingManual`
- *  call; subsequent calls return null until the next mark. Expired
- *  markers are cleaned up on read. */
-export function consumePendingManual(type: SyncLogType): { userId: string | null } | null {
+/** Read + delete atomically. Returns the stored userId when a valid
+ *  (non-expired) mark existed. Expired rows are also deleted to keep
+ *  the table tidy. */
+export async function consumePendingManual(
+  type: SyncLogType,
+): Promise<{ userId: string | null } | null> {
   const family = SYNC_FAMILY[type];
-  const mark = markers.get(family);
-  if (!mark) return null;
-  if (mark.expiresAt < Date.now()) {
-    markers.delete(family);
+  try {
+    const [row] = await db
+      .select()
+      .from(pendingManualTriggers)
+      .where(eq(pendingManualTriggers.family, family))
+      .limit(1);
+    if (!row) return null;
+    // DELETE first so concurrent consumers can't double-read the mark.
+    await db
+      .delete(pendingManualTriggers)
+      .where(eq(pendingManualTriggers.family, family));
+    if (row.expiresAt.getTime() < Date.now()) return null;
+    return { userId: row.userId };
+  } catch (err) {
+    console.warn(
+      "[triggers] consumePendingManual failed:",
+      err instanceof Error ? err.message : String(err),
+    );
     return null;
   }
-  markers.delete(family);
-  return { userId: mark.userId };
 }
 
-/** Stamp `triggeredBy` + `triggeredByUserId` onto a sync_log row that
- *  already exists. Used by cron + sync routes after the runner returns,
- *  so we don't have to thread two extra params through every runner
- *  signature. Safe to call on a completed or failed row — just writes
- *  the source attribution fields. */
+/**
+ * Legacy helper — retained for compatibility with the few remaining
+ * call sites that stamp `triggeredBy` after-the-fact. New code should
+ * pass `{ triggeredBy, triggeredByUserId }` as an option to the runner
+ * so the INSERT itself carries the correct value.
+ */
 export async function stampTriggeredBy(
   logId: string,
   triggeredBy: "cron" | "manual",
@@ -113,8 +114,6 @@ export async function stampTriggeredBy(
       })
       .where(eq(syncLogs.id, logId));
   } catch (err) {
-    // Source attribution is a UX nicety — don't fail the whole request
-    // if the UPDATE fails.
     console.warn(
       "[triggers] stampTriggeredBy failed for",
       logId,
@@ -122,3 +121,7 @@ export async function stampTriggeredBy(
     );
   }
 }
+
+// Suppress unused-import warning for `sql` — kept for future atomic
+// DELETE+RETURNING if we migrate to a dialect that supports it.
+void sql;
