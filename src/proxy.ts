@@ -12,11 +12,13 @@ import { getAllowlist } from "@/lib/ip/allowlist-cache";
 
 // Paths that are always reachable, regardless of session or IP. Auth-related
 // flows must stay open so admins from unlisted IPs can still sign in.
+// NOTE: `/api/*` is excluded by `config.matcher` below, so API routes
+// (including `/api/auth/*`) never hit this proxy — their own handlers
+// gate access via `requirePublicOrSession()` or session checks.
 const ALWAYS_PUBLIC_PREFIXES = [
   "/login",
   "/forgot-password",
   "/reset-password",
-  "/api/auth",
 ];
 
 // Paths that are guest-readable BUT gated by the IP allowlist when the
