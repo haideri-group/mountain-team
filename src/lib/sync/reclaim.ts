@@ -13,8 +13,8 @@ import type { SyncLogType } from "./logs-query";
  * legitimately in-progress run is never touched.
  *
  * Called from:
- *   - `POST /api/logs/[id]/fail` — single-row variant
- *   - `POST /api/logs/reclaim`  — bulk variant
+ *   - `POST /api/automations/[id]/fail` — single-row variant
+ *   - `POST /api/automations/reclaim`  — bulk variant
  *   - `scripts/reclaim-stuck-backfill.ts` could call this in a later refactor
  */
 

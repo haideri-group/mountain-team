@@ -54,7 +54,7 @@ export function LogsView() {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch(`/api/logs?${query}`, { cache: "no-store" });
+      const res = await fetch(`/api/automations?${query}`, { cache: "no-store" });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
         throw new Error(body.error || `HTTP ${res.status}`);
@@ -75,7 +75,7 @@ export function LogsView() {
   const loadDetail = useCallback(async (id: string) => {
     setDetailLoading(true);
     try {
-      const res = await fetch(`/api/logs/${encodeURIComponent(id)}`, {
+      const res = await fetch(`/api/automations/${encodeURIComponent(id)}`, {
         cache: "no-store",
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -115,7 +115,7 @@ export function LogsView() {
 
   const onMarkFailed = useCallback(
     async (id: string) => {
-      const res = await fetch(`/api/logs/${encodeURIComponent(id)}/fail`, {
+      const res = await fetch(`/api/automations/${encodeURIComponent(id)}/fail`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({}),
@@ -131,7 +131,7 @@ export function LogsView() {
   );
 
   const onReclaimAll = useCallback(async () => {
-    const res = await fetch(`/api/logs/reclaim`, {
+    const res = await fetch(`/api/automations/reclaim`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({}),

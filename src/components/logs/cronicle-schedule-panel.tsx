@@ -90,7 +90,7 @@ export function CronicleSchedulePanel() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetch("/api/logs/cronicle/events", { cache: "no-store" });
+      const res = await fetch("/api/automations/cronicle/events", { cache: "no-store" });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       setData(await res.json());
     } catch {
@@ -112,7 +112,7 @@ export function CronicleSchedulePanel() {
       setToast(null);
       try {
         const res = await fetch(
-          `/api/logs/cronicle/events/${encodeURIComponent(eventId)}/run`,
+          `/api/automations/cronicle/events/${encodeURIComponent(eventId)}/run`,
           { method: "POST" },
         );
         const body = await res.json().catch(() => ({}));

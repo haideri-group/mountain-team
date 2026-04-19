@@ -8,9 +8,10 @@ import type { CronicleEvent, CronicleEventPublic, CronicleJob } from "./types";
  * through the Cronicle UI (as long as they assign it to the category
  * whose ID matches `CRONICLE_TEAMFLOW_CATEGORY_ID`) without a code change.
  *
- * All failures are swallowed and return empty results. The caller (`/api/logs`
- * routes or the UI panel) surfaces `unavailable: true` in the response so the
- * client can show a dismissible banner without breaking the rest of the page.
+ * All failures are swallowed and return empty results. The caller
+ * (`/api/automations` routes or the UI panel) surfaces `unavailable: true`
+ * in the response so the client can show a dismissible banner without
+ * breaking the rest of the page.
  */
 
 // 60s TTL for the schedule (small, rarely-changing list of ~4 events).

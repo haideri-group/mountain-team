@@ -4,7 +4,7 @@ import { cronicleGet, isCronicleConfigured } from "@/lib/cronicle/client";
 import { listTeamFlowEvents } from "@/lib/cronicle/discovery";
 
 /**
- * POST /api/logs/cronicle/events/[id]/run
+ * POST /api/automations/cronicle/events/[id]/run
  *
  * Fires a one-off run of a Cronicle event. Admin-only.
  *

@@ -30,7 +30,7 @@ export function LogsSummaryStrip({ onReclaimAll }: Props) {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetch("/api/logs/summary", { cache: "no-store" });
+      const res = await fetch("/api/automations/summary", { cache: "no-store" });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       setSummary(await res.json());
     } catch {
