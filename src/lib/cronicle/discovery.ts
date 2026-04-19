@@ -229,7 +229,9 @@ function computeNextRun(
 }
 
 /** Reverse of `TYPE_TO_URL_PATH`: given a URL path, return every
- *  `sync_logs.type` enum value whose cron route writes that URL. */
+ *  `sync_logs.type` enum value whose cron route writes that URL. Used
+ *  for Cronicle-job-to-sync_log correlation, so it deliberately
+ *  excludes `manual` (which has no corresponding Cronicle fire). */
 function syncTypesForUrlPath(urlPath: string): SyncLogType[] {
   if (!urlPath) return [];
   const types: SyncLogType[] = [];
@@ -240,6 +242,22 @@ function syncTypesForUrlPath(urlPath: string): SyncLogType[] {
     if (path && path === urlPath) types.push(type);
   }
   return types;
+}
+
+/** Broader version used for the progress-bar projection. Includes
+ *  `manual` as part of the issue-sync event so a Settings-page "Sync
+ *  Issues" click (which writes type='manual') still surfaces its live
+ *  progress under the issue-sync event on /automations. */
+function runningTypesForUrlPath(urlPath: string): SyncLogType[] {
+  const base = syncTypesForUrlPath(urlPath);
+  // The three issue-sync entry points all share a sync family. If this
+  // event represents that family, include all three.
+  if (base.includes("full") || base.includes("incremental")) {
+    const merged = new Set<SyncLogType>(base);
+    merged.add("manual");
+    return [...merged];
+  }
+  return base;
 }
 
 /**
@@ -264,9 +282,13 @@ export async function projectEventPublic(
   let runningSyncLog: Awaited<ReturnType<typeof findRunningSyncLog>> = null;
   const urlPath = extractUrlPath(event.params.url);
   const types = syncTypesForUrlPath(urlPath);
-  if (types.length > 0) {
+  // Broader set for "is something running?" — includes `manual` so a
+  // Settings-page Sync Issues click still shows its progress on the
+  // /automations panel under the issue-sync event.
+  const runningTypes = runningTypesForUrlPath(urlPath);
+  if (runningTypes.length > 0) {
     try {
-      runningSyncLog = await findRunningSyncLog(types);
+      runningSyncLog = await findRunningSyncLog(runningTypes);
       if (runningSyncLog) syncLogId = runningSyncLog.id;
     } catch (err) {
       console.warn(
