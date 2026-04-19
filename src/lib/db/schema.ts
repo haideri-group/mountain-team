@@ -85,6 +85,11 @@ export const issues = mysqlTable("issues", {
   fixVersions: text("fixVersions"),
   jiraCreatedAt: varchar("jiraCreatedAt", { length: 50 }),
   jiraUpdatedAt: varchar("jiraUpdatedAt", { length: 50 }),
+  // Stamped after the deployment-backfill cron (or per-issue Sync button) has
+  // finished fetching an issue's deployments from JIRA dev-status + GitHub.
+  // Drives the backfill priority queue: NULL or stale values get processed
+  // first; fresh stamps skip. See Phase 20 in DEVELOPMENT_PLAN.md.
+  deploymentsSyncedAt: timestamp("deploymentsSyncedAt"),
   createdAt: timestamp("createdAt").defaultNow(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow(),
 }, (table) => [
@@ -99,11 +104,24 @@ export const issues = mysqlTable("issues", {
   // a composite (status, completedDate) supports both "active" scans and
   // "recent done" lookups via leading-column matching.
   index("idx_issues_status_completed").on(table.status, table.completedDate),
+  // Backfill priority-queue selector scans by deploymentsSyncedAt with a
+  // NULLS-first ordering. Single-column index is the cheapest way to support
+  // both "is null" and "oldest first" traversal without forcing a full scan.
+  index("idx_issues_deployments_synced_at").on(table.deploymentsSyncedAt),
 ]);
 
 export const syncLogs = mysqlTable("sync_logs", {
   id: varchar("id", { length: 191 }).primaryKey(),
-  type: mysqlEnum("type", ["full", "incremental", "manual", "team_sync", "worklog_sync", "timedoctor_sync", "release_sync"]).notNull(),
+  type: mysqlEnum("type", [
+    "full",
+    "incremental",
+    "manual",
+    "team_sync",
+    "worklog_sync",
+    "timedoctor_sync",
+    "release_sync",
+    "deployment_backfill",
+  ]).notNull(),
   status: mysqlEnum("status", ["running", "completed", "failed"]).notNull(),
   startedAt: timestamp("startedAt").defaultNow(),
   completedAt: timestamp("completedAt"),
