@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { AlertTriangle, Zap } from "lucide-react";
 import { BRAND_GRADIENT } from "@/lib/brand";
 
@@ -37,6 +37,10 @@ export function LogsSummaryStrip({ onReclaimAll, refreshTick }: Props) {
   const [reclaiming, setReclaiming] = useState(false);
   const [reclaimError, setReclaimError] = useState<string | null>(null);
   const [reclaimToast, setReclaimToast] = useState<string | null>(null);
+  // Track the toast auto-dismiss timer so a second Reclaim click within
+  // 5s doesn't leave a stray earlier callback alive that clears the
+  // newer toast prematurely, and so we clean up on unmount.
+  const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -63,6 +67,16 @@ export function LogsSummaryStrip({ onReclaimAll, refreshTick }: Props) {
     if (refreshTick !== undefined && refreshTick > 0) load();
   }, [refreshTick, load]);
 
+  // Clear any pending toast auto-dismiss timer when the component unmounts.
+  useEffect(() => {
+    return () => {
+      if (toastTimerRef.current) {
+        clearTimeout(toastTimerRef.current);
+        toastTimerRef.current = null;
+      }
+    };
+  }, []);
+
   const handleReclaim = useCallback(async () => {
     setReclaiming(true);
     setReclaimError(null);
@@ -79,8 +93,16 @@ export function LogsSummaryStrip({ onReclaimAll, refreshTick }: Props) {
           ? "No runs stuck for more than 1 hour. Summary refreshed."
           : `Reclaimed ${reclaimed} stuck run${reclaimed === 1 ? "" : "s"}.`,
       );
-      // Auto-dismiss after 5s.
-      setTimeout(() => setReclaimToast(null), 5000);
+      // Auto-dismiss after 5s. Clear any previous pending timer first
+      // so rapid repeat clicks don't leave an older callback alive to
+      // wipe the newer toast before the user can read it.
+      if (toastTimerRef.current) {
+        clearTimeout(toastTimerRef.current);
+      }
+      toastTimerRef.current = setTimeout(() => {
+        setReclaimToast(null);
+        toastTimerRef.current = null;
+      }, 5000);
     } catch (e) {
       setReclaimError(e instanceof Error ? e.message : "Reclaim failed");
     } finally {
