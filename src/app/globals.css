@@ -54,6 +54,17 @@
   --radius-2xl: calc(var(--radius) * 1.8);
   --radius-3xl: calc(var(--radius) * 2.2);
   --radius-4xl: calc(var(--radius) * 2.6);
+  /* Indeterminate progress bar on the Scheduled Crons panel. A narrow
+     brand-gradient pill slides left-to-right repeatedly — visibly
+     "something is happening" for the fetching phase before a total
+     count is known. Exposed as a Tailwind utility so component code
+     stays declarative. */
+  --animate-progress-marquee: progress-marquee 1.4s ease-in-out infinite;
+}
+
+@keyframes progress-marquee {
+  0%   { transform: translateX(-100%); }
+  100% { transform: translateX(300%); }
 }
 
 :root {

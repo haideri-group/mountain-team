@@ -84,6 +84,25 @@ export interface CronicleEventPublic {
      *  have no matching `sync_logs` row. Lets admins click "failed" and
      *  land on Cronicle's own error log. */
     jobDetailsUrl: string | null;
+    /** Present only when the app-side sync is currently running AND the
+     *  sync family publishes in-memory progress (issue syncs + deployment
+     *  backfill). The UI renders an inline progress bar on the schedule
+     *  panel so admins can see "X of Y processed" without opening the
+     *  drawer. Null for scheduled-only types (team/release/worklog/
+     *  timedoctor) which don't expose progress today. */
+    progress: {
+      phase: string;
+      message: string;
+      processed: number | null;
+      total: number | null;
+      /** 0–100 when `total > 0`, else null (indeterminate). */
+      pct: number | null;
+      /** Linear-extrapolation ETA in seconds. Null when: indeterminate
+       *  (no total), the run just started (< 5s elapsed — rate is noisy),
+       *  or no progress has been made yet (processed = 0 / in fetching
+       *  phase). Client renders "~Xm Ys" when present. */
+      etaSeconds: number | null;
+    } | null;
   } | null;
   nextRun: number | null;           // epoch seconds, server-computed from timing
 }

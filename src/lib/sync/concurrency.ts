@@ -41,7 +41,17 @@ interface LockInfo {
   startedAt: Date;
 }
 
-const locks = new Map<SyncFamily, LockInfo>();
+// Cache the lock map on globalThis so the Run-Now endpoint's pre-check
+// (one route segment) and the cron/sync writer routes (other segments)
+// share the same Map. Without this, Next.js dev can give each route
+// its own module copy and the lock looks "free" from the wrong side.
+const globalForLocks = globalThis as unknown as {
+  _syncLocks?: Map<SyncFamily, LockInfo>;
+};
+if (!globalForLocks._syncLocks) {
+  globalForLocks._syncLocks = new Map<SyncFamily, LockInfo>();
+}
+const locks = globalForLocks._syncLocks;
 
 /** True if the lock for this type's family is free. Doesn't acquire.
  *  Useful for UI pre-checks (e.g. the Run Now button) that want to warn

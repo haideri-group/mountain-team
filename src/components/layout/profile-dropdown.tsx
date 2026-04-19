@@ -143,6 +143,7 @@ export function ProfileDropdown({
           "rounded-full transition-opacity focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
           isOpen ? "opacity-80" : "hover:opacity-80",
         )}
+        suppressHydrationWarning
       >
         <Avatar src={userImage} name={userName} size={32} />
       </button>

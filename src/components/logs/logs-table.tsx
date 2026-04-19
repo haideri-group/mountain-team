@@ -1,6 +1,8 @@
 "use client";
 
+import Link from "next/link";
 import { StatusPill } from "./status-pill";
+import { APP_TIMEZONE } from "@/lib/config";
 
 export interface LogRow {
   id: string;
@@ -12,6 +14,13 @@ export interface LogRow {
   issueCount: number;
   memberCount: number;
   source: "cron" | "manual" | "unknown";
+  triggeredByUser: {
+    userId: string;
+    name: string | null;
+    email: string | null;
+    avatarUrl: string | null;
+    memberId: string | null;
+  } | null;
   errorPreview: string | null;
 }
 
@@ -35,7 +44,7 @@ function formatStarted(iso: string): string {
   const diffH = Math.round(diffMin / 60);
   if (diffH < 24) return `${diffH}h ago`;
   return d.toLocaleString("en-GB", {
-    timeZone: "Asia/Karachi",
+    timeZone: APP_TIMEZONE,
     hour12: true,
     day: "numeric",
     month: "short",
@@ -53,6 +62,38 @@ function formatDuration(ms: number | null): string {
   if (m < 60) return `${m.toFixed(1)}m`;
   const h = m / 60;
   return `${h.toFixed(1)}h`;
+}
+
+/** Source cell — `cron`, `manual (Name)` (with profile link when the
+ *  triggering admin is a team member), or plain `unknown` for legacy
+ *  rows. Clicking the name navigates to `/members/:id` without opening
+ *  the drawer (stopPropagation). */
+function SourceCell({ row }: { row: LogRow }) {
+  if (row.source === "manual" && row.triggeredByUser) {
+    const u = row.triggeredByUser;
+    const label = u.name || u.email || "manual";
+    if (u.memberId) {
+      return (
+        <span className="inline-flex items-center gap-1 normal-case tracking-normal">
+          manual (
+          <Link
+            href={`/members/${u.memberId}`}
+            onClick={(e) => e.stopPropagation()}
+            className="text-[#ff8400] hover:underline font-sans font-normal text-xs lowercase-none"
+          >
+            {label}
+          </Link>
+          )
+        </span>
+      );
+    }
+    return (
+      <span className="inline-flex items-center gap-1 normal-case tracking-normal">
+        manual ({label})
+      </span>
+    );
+  }
+  return <>{row.source}</>;
 }
 
 function formatDetails(row: LogRow): string {
@@ -93,10 +134,18 @@ export function LogsTable({
       )}
 
       {rows.map((row) => (
-        <button
+        <div
           key={row.id}
+          role="button"
+          tabIndex={0}
           onClick={() => onRowClick(row.id)}
-          className="w-full grid grid-cols-[1fr_1fr] md:grid-cols-[1.5fr_2fr_1fr_1fr_2fr_auto] gap-3 px-5 py-3 items-center text-left hover:bg-muted/30 transition-colors"
+          onKeyDown={(e) => {
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              onRowClick(row.id);
+            }
+          }}
+          className="w-full grid grid-cols-[1fr_1fr] md:grid-cols-[1.5fr_2fr_1fr_1fr_2fr_auto] gap-3 px-5 py-3 items-center text-left hover:bg-muted/30 transition-colors cursor-pointer focus:outline-none focus:bg-muted/30"
         >
           <span className="text-xs font-mono text-muted-foreground whitespace-nowrap">
             {formatStarted(row.startedAt)}
@@ -104,13 +153,13 @@ export function LogsTable({
           <span className="text-sm truncate">{TYPE_LABELS[row.type] ?? row.type}</span>
           <span className="hidden md:inline text-xs font-mono">{formatDuration(row.durationMs)}</span>
           <span className="hidden md:inline text-[10px] font-mono uppercase tracking-wider text-muted-foreground">
-            {row.source}
+            <SourceCell row={row} />
           </span>
           <span className="hidden md:inline text-xs truncate text-muted-foreground">
             {formatDetails(row)}
           </span>
           <StatusPill status={row.status} />
-        </button>
+        </div>
       ))}
     </div>
   );

@@ -1,7 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { BRAND_GRADIENT } from "@/lib/brand";
+import { APP_TIMEZONE } from "@/lib/config";
 import {
   Calendar,
   CheckCircle2,
@@ -10,6 +11,15 @@ import {
   Loader2,
   Play,
 } from "lucide-react";
+
+interface CronicleRunProgress {
+  phase: string;
+  message: string;
+  processed: number | null;
+  total: number | null;
+  pct: number | null;
+  etaSeconds: number | null;
+}
 
 interface CronicleEventPublic {
   id: string;
@@ -30,6 +40,7 @@ interface CronicleEventPublic {
     elapsed?: number;
     syncLogId: string | null;
     jobDetailsUrl: string | null;
+    progress: CronicleRunProgress | null;
   } | null;
   nextRun: number | null;
 }
@@ -51,7 +62,7 @@ function formatEpoch(sec: number | null): string {
   if (diffMin < 0 && diffMin > -60) return `${-diffMin}m ago`;
   if (diffMin < 0 && diffMin > -1440) return `${Math.round(-diffMin / 60)}h ago`;
   return d.toLocaleString("en-GB", {
-    timeZone: "Asia/Karachi",
+    timeZone: APP_TIMEZONE,
     hour12: true,
     day: "numeric",
     month: "short",
@@ -107,8 +118,17 @@ export function CronicleSchedulePanel({ onViewRun, refreshTick }: Props = {}) {
   const [initialLoading, setInitialLoading] = useState(true);
   const [runningIds, setRunningIds] = useState<Record<string, boolean>>({});
   const [toast, setToast] = useState<{ kind: "ok" | "err" | "warn"; msg: string } | null>(null);
+  // Shared re-entrancy guard. Every refresh path — 60s fallback,
+  // 1s-while-running poll, `refreshTick` bump, and the post-Run Now
+  // timeouts — calls through `load()`, so one guard here covers all of
+  // them. Without it, slow responses from the cronicle events route can
+  // stack multiple in-flight `fetch`es whose `setData` resolves out of
+  // order and overwrites newer data with stale data.
+  const isLoadingRef = useRef(false);
 
   const load = useCallback(async () => {
+    if (isLoadingRef.current) return;
+    isLoadingRef.current = true;
     try {
       const res = await fetch("/api/automations/cronicle/events", { cache: "no-store" });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -118,6 +138,7 @@ export function CronicleSchedulePanel({ onViewRun, refreshTick }: Props = {}) {
       // "shows jobs" to "unavailable" on a transient blip.
       setData((prev) => prev ?? { events: [], unavailable: true });
     } finally {
+      isLoadingRef.current = false;
       setInitialLoading(false);
     }
   }, []);
@@ -132,6 +153,39 @@ export function CronicleSchedulePanel({ onViewRun, refreshTick }: Props = {}) {
   useEffect(() => {
     if (refreshTick !== undefined && refreshTick > 0) load();
   }, [refreshTick, load]);
+
+  // Fast 1s poll while ANY event is mid-run. Progress bars advance in
+  // near-real-time without the 60s fallback latency. Interval clears
+  // itself as soon as every event is idle again.
+  //
+  // Gated on `!data.unavailable` so a Cronicle outage (where stale events
+  // with status="running" linger in cache) doesn't hammer the API every
+  // second; we fall back to the 60s poll until Cronicle recovers.
+  //
+  // Self-scheduling setTimeout (instead of setInterval) — awaits each
+  // `load()` before queueing the next tick so slow responses can't stack
+  // up concurrent fetches that resolve out of order and overwrite newer
+  // state with stale data.
+  const anyRunning =
+    !data?.unavailable &&
+    (data?.events ?? []).some((e) => e.lastRun?.status === "running");
+  useEffect(() => {
+    if (!anyRunning) return;
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+
+    const tick = async () => {
+      await load();
+      if (!cancelled) timer = setTimeout(tick, 1000);
+    };
+
+    timer = setTimeout(tick, 1000);
+
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+    };
+  }, [anyRunning, load]);
 
   const runEvent = useCallback(
     async (eventId: string, title: string) => {
@@ -263,6 +317,9 @@ export function CronicleSchedulePanel({ onViewRun, refreshTick }: Props = {}) {
                 <p className="text-[10px] font-mono text-muted-foreground truncate">
                   {e.urlPath || "—"}
                 </p>
+                {e.lastRun?.status === "running" && e.lastRun.progress && (
+                  <RunningProgress progress={e.lastRun.progress} />
+                )}
               </div>
               <span className="hidden md:inline text-xs text-muted-foreground">
                 {formatTiming(e.timing)}
@@ -322,6 +379,125 @@ export function CronicleSchedulePanel({ onViewRun, refreshTick }: Props = {}) {
               </button>
             </div>
           ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+interface RunningProgressProps {
+  progress: CronicleRunProgress;
+}
+
+function formatEta(sec: number): string {
+  if (sec < 60) return `${sec}s`;
+  if (sec < 3600) {
+    const m = Math.floor(sec / 60);
+    const s = sec % 60;
+    return s > 0 ? `${m}m ${s}s` : `${m}m`;
+  }
+  const h = Math.floor(sec / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  return m > 0 ? `${h}h ${m}m` : `${h}h`;
+}
+
+/** Map a runner's raw phase key to a user-facing title. Same wording
+ *  the Settings-page sync panel uses, for consistency across surfaces. */
+function phaseTitle(phase: string): string {
+  switch (phase) {
+    case "fetching":
+      return "Fetching from JIRA";
+    case "processing":
+      return "Processing";
+    case "preflight":
+      return "Preflight Checks";
+    case "selecting":
+      return "Selecting Work";
+    case "running":
+      return "Running";
+    case "done":
+      return "Complete";
+    case "failed":
+      return "Failed";
+    default:
+      return phase.charAt(0).toUpperCase() + phase.slice(1);
+  }
+}
+
+/**
+ * Rich inline progress panel under the running event title — same shape
+ * as the Settings page's live-sync panel: spinner + phase title + pct
+ * on one row, wrapping message on the next, then a thicker bar, then
+ * counts + ETA. Appears only while `status === "running"`.
+ */
+function RunningProgress({ progress }: RunningProgressProps) {
+  const { processed, total, pct, phase, message, etaSeconds } = progress;
+  const hasCounts = processed !== null && total !== null && total > 0;
+  const determinate = pct !== null;
+  const remaining =
+    hasCounts && processed !== null && total !== null
+      ? total - processed
+      : null;
+  return (
+    <div className="mt-2 rounded-lg bg-muted/40 px-3 py-2.5 space-y-1.5">
+      {/* Header: spinner + phase title (+ pct) */}
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center gap-1.5 min-w-0">
+          <Loader2 className="h-3 w-3 text-amber-500 animate-spin shrink-0" />
+          <span className="text-[10px] font-bold font-mono uppercase tracking-wider truncate">
+            {phaseTitle(phase)}
+          </span>
+        </div>
+        {determinate && (
+          <span className="text-[10px] font-bold font-mono shrink-0">
+            {pct}%
+          </span>
+        )}
+      </div>
+
+      {/* Wrapping message (the "Fetching details: 7 / 14" kind) */}
+      {message && (
+        <p className="text-[11px] text-muted-foreground leading-snug">
+          {message}
+        </p>
+      )}
+
+      {/* Progress bar */}
+      <div className="h-1.5 w-full rounded-full bg-muted/60 overflow-hidden">
+        {determinate ? (
+          <div
+            className="h-full rounded-full transition-[width] duration-300 ease-out"
+            style={{
+              width: `${pct}%`,
+              background: BRAND_GRADIENT,
+            }}
+          />
+        ) : (
+          <div
+            className="h-full w-1/3 rounded-full animate-progress-marquee motion-reduce:animate-none motion-reduce:mx-auto"
+            style={{ background: BRAND_GRADIENT }}
+          />
+        )}
+      </div>
+
+      {/* Footer: counts on the left, remaining + ETA on the right */}
+      {(hasCounts || (etaSeconds !== null && etaSeconds > 0)) && (
+        <div className="flex items-center justify-between gap-2 text-[10px] font-mono text-muted-foreground">
+          {hasCounts ? (
+            <span>
+              {processed!.toLocaleString()} / {total!.toLocaleString()}
+            </span>
+          ) : (
+            <span />
+          )}
+          <span className="flex items-center gap-2">
+            {remaining !== null && remaining > 0 && (
+              <span>{remaining.toLocaleString()} remaining</span>
+            )}
+            {etaSeconds !== null && etaSeconds > 0 && (
+              <span>~{formatEta(etaSeconds)} left</span>
+            )}
+          </span>
         </div>
       )}
     </div>

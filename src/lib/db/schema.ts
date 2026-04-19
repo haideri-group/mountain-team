@@ -110,6 +110,16 @@ export const issues = mysqlTable("issues", {
   index("idx_issues_deployments_synced_at").on(table.deploymentsSyncedAt),
 ]);
 
+/** Short-lived markers set by the Run Now button so the cron handler
+ *  that Cronicle subsequently fires (often on a DIFFERENT server
+ *  process than the one that received the Run click) can still stamp
+ *  `triggeredBy='manual' + userId` on the resulting sync_log row. */
+export const pendingManualTriggers = mysqlTable("pending_manual_triggers", {
+  family: varchar("family", { length: 32 }).primaryKey(),
+  userId: varchar("userId", { length: 191 }),
+  expiresAt: timestamp("expiresAt").notNull(),
+});
+
 export const syncLogs = mysqlTable("sync_logs", {
   id: varchar("id", { length: 191 }).primaryKey(),
   type: mysqlEnum("type", [
@@ -128,6 +138,17 @@ export const syncLogs = mysqlTable("sync_logs", {
   issueCount: int("issueCount").default(0),
   memberCount: int("memberCount").default(0),
   error: text("error"),
+  // Who initiated this run: `cron` (scheduled fire), `manual` (admin
+  // button — Run Now OR the direct /api/sync/* paths). Nullable so
+  // existing rows (written before this column was added) still load;
+  // inferSource() in logs-query.ts falls back to the type-based
+  // heuristic when null.
+  triggeredBy: mysqlEnum("triggeredBy", ["cron", "manual"]),
+  // For manual runs: the admin user who clicked the button. The
+  // /automations list JOINs on users (+team_members when present) so
+  // the Source column can render "manual (Name)" with a link to the
+  // member profile page. Null for cron rows and for old rows.
+  triggeredByUserId: varchar("triggeredByUserId", { length: 191 }),
   createdAt: timestamp("createdAt").defaultNow(),
 }, (table) => [
   // `/logs` page filters + sorts primarily by (type, startedAt). Summary

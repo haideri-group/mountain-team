@@ -6,6 +6,7 @@ import {
   releaseSyncLock,
   tryAcquireSyncLock,
 } from "@/lib/sync/concurrency";
+import { consumePendingManual } from "@/lib/sync/triggers";
 
 /**
  * Cron entry point for the Phase 20 deployment backfill.
@@ -37,7 +38,11 @@ export async function GET(request: Request) {
     }
 
     try {
-      const result = await runDeploymentBackfill();
+      const pending = await consumePendingManual("deployment_backfill");
+      const result = await runDeploymentBackfill({
+        triggeredBy: pending ? "manual" : "cron",
+        triggeredByUserId: pending?.userId ?? null,
+      });
 
       return NextResponse.json({
         success: true,

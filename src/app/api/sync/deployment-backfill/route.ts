@@ -49,7 +49,10 @@ export async function POST() {
     }
 
     try {
-      const result = await runDeploymentBackfill();
+      const result = await runDeploymentBackfill({
+        triggeredBy: "manual",
+        triggeredByUserId: session.user.id ?? null,
+      });
 
       return NextResponse.json({
         success: true,

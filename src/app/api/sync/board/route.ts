@@ -41,7 +41,10 @@ export async function POST(request: NextRequest) {
     }
 
     try {
-      const { logId, result } = await runIssueSync("manual", boardKey.toUpperCase());
+      const { logId, result } = await runIssueSync("manual", boardKey.toUpperCase(), {
+        triggeredBy: "manual",
+        triggeredByUserId: session.user.id ?? null,
+      });
 
       return NextResponse.json({
         success: true,

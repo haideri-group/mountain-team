@@ -158,7 +158,9 @@ export async function syncReleases(): Promise<ReleaseSyncResult> {
 
 // ─── Entry point with logging ────────────────────────────────────────────────
 
-export async function runReleaseSync(): Promise<{ logId: string; result: ReleaseSyncResult }> {
+export async function runReleaseSync(
+  opts?: { triggeredBy?: "cron" | "manual" | null; triggeredByUserId?: string | null },
+): Promise<{ logId: string; result: ReleaseSyncResult }> {
   const logId = crypto.randomUUID();
   const startedAt = new Date();
 
@@ -167,6 +169,9 @@ export async function runReleaseSync(): Promise<{ logId: string; result: Release
     type: "release_sync",
     status: "running",
     startedAt,
+    triggeredBy: opts?.triggeredBy ?? null,
+    triggeredByUserId:
+      opts?.triggeredBy === "manual" ? (opts?.triggeredByUserId ?? null) : null,
   });
   emitSyncLogChange({
     id: logId,

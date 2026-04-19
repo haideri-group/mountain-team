@@ -1,7 +1,16 @@
 import "server-only";
 import { cronicleGet, isCronicleConfigured } from "./client";
-import { findSyncLogIdNearTime, type SyncLogType } from "@/lib/sync/logs-query";
+import {
+  findRunningSyncLog,
+  findSyncLogIdNearTime,
+  getSyncLogStatusById,
+  medianRecentDurationMs,
+  type SyncLogType,
+} from "@/lib/sync/logs-query";
 import { TYPE_TO_URL_PATH } from "./correlate";
+import { getSyncProgressForLogId } from "@/lib/sync/issue-sync";
+import { getDeploymentBackfillProgressForLogId } from "@/lib/sync/deployment-backfill";
+import { getTeamSyncProgressForLogId } from "@/lib/sync/team-sync";
 import type { CronicleEvent, CronicleEventPublic, CronicleJob } from "./types";
 
 /**
@@ -220,7 +229,9 @@ function computeNextRun(
 }
 
 /** Reverse of `TYPE_TO_URL_PATH`: given a URL path, return every
- *  `sync_logs.type` enum value whose cron route writes that URL. */
+ *  `sync_logs.type` enum value whose cron route writes that URL. Used
+ *  for Cronicle-job-to-sync_log correlation, so it deliberately
+ *  excludes `manual` (which has no corresponding Cronicle fire). */
 function syncTypesForUrlPath(urlPath: string): SyncLogType[] {
   if (!urlPath) return [];
   const types: SyncLogType[] = [];
@@ -231,6 +242,22 @@ function syncTypesForUrlPath(urlPath: string): SyncLogType[] {
     if (path && path === urlPath) types.push(type);
   }
   return types;
+}
+
+/** Broader version used for the progress-bar projection. Includes
+ *  `manual` as part of the issue-sync event so a Settings-page "Sync
+ *  Issues" click (which writes type='manual') still surfaces its live
+ *  progress under the issue-sync event on /automations. */
+function runningTypesForUrlPath(urlPath: string): SyncLogType[] {
+  const base = syncTypesForUrlPath(urlPath);
+  // The three issue-sync entry points all share a sync family. If this
+  // event represents that family, include all three.
+  if (base.includes("full") || base.includes("incremental")) {
+    const merged = new Set<SyncLogType>(base);
+    merged.add("manual");
+    return [...merged];
+  }
+  return base;
 }
 
 /**
@@ -246,20 +273,36 @@ export async function projectEventPublic(
   const jobs = await listEventHistory(event.id, 1);
   const latest = jobs[0];
 
-  // Correlate by TIMESTAMP not just by type — otherwise a later manual
-  // sync would shadow the specific cron run the user is clicking on.
-  // Uses the Cronicle job's `event_start` (Cronicle's intended fire time)
-  // with fallback to `time_start`, matching `correlate.ts`'s forward pass.
+  // Look for a currently-RUNNING sync_log of this event's type FIRST.
+  // Run Now invokes the runner directly (bypassing Cronicle), so
+  // Cronicle's history won't have a matching job for a manual run —
+  // but the sync_logs table will. Catching that here is what makes the
+  // schedule panel's progress bar appear for manual runs too.
   let syncLogId: string | null = null;
+  let runningSyncLog: Awaited<ReturnType<typeof findRunningSyncLog>> = null;
   const urlPath = extractUrlPath(event.params.url);
   const types = syncTypesForUrlPath(urlPath);
-  if (latest && types.length > 0) {
-    // Anchor on `time_start` (when Cronicle actually fired the HTTP
-    // request) — that's what the app's `sync_logs.startedAt` matches.
-    // `event_start` is the SCHEDULED time, which can be minutes earlier
-    // if Cronicle queued the fire or retried after a failure (notably for
-    // the 40-minute deployment_backfill). Falling back to event_start
-    // only when time_start is missing on the Cronicle record.
+  // Broader set for "is something running?" — includes `manual` so a
+  // Settings-page Sync Issues click still shows its progress on the
+  // /automations panel under the issue-sync event.
+  const runningTypes = runningTypesForUrlPath(urlPath);
+  if (runningTypes.length > 0) {
+    try {
+      runningSyncLog = await findRunningSyncLog(runningTypes);
+      if (runningSyncLog) syncLogId = runningSyncLog.id;
+    } catch (err) {
+      console.warn(
+        "[cronicle] running sync_log lookup failed for event",
+        event.id,
+        err instanceof Error ? err.message : String(err),
+      );
+    }
+  }
+
+  // Fall back to Cronicle-correlated sync_log — for the completed case
+  // the schedule panel's "Last run" icon uses this to deep-link to the
+  // specific drawer row that matches Cronicle's most recent job.
+  if (!syncLogId && latest && types.length > 0) {
     const anchor = latest.time_start ?? latest.event_start;
     if (Number.isFinite(anchor)) {
       try {
@@ -289,17 +332,136 @@ export async function projectEventPublic(
       ? `${cronicleBase}/#JobDetails?id=${latest.id}`
       : null;
 
-  const lastRun = latest
-    ? {
-        jobId: latest.id,
-        start: latest.time_start,
-        end: latest.time_end ?? null,
-        status: normalizeJobStatus(latest),
-        elapsed: latest.elapsed,
-        syncLogId,
-        jobDetailsUrl,
+  // In-flight progress for the schedule panel's inline bar. We only surface
+  // it when the sync_log is still `running` per our DB — the Cronicle
+  // history endpoint is cached 30s so relying on its status alone can
+  // keep showing "running" after the sync has actually completed. This
+  // path queries the sync_log's current status live (cheap single-row
+  // select) and pulls progress from the in-memory singleton only when
+  // the activeLogId matches the id we're looking up.
+  let progress: CronicleEventPublic["lastRun"] extends infer L
+    ? L extends { progress: infer P }
+      ? P
+      : never
+    : never = null;
+  if (syncLogId) {
+    try {
+      const logStatus = await getSyncLogStatusById(syncLogId);
+      if (logStatus?.status === "running") {
+        const raw =
+          logStatus.type === "deployment_backfill"
+            ? getDeploymentBackfillProgressForLogId(syncLogId)
+            : logStatus.type === "full" ||
+                logStatus.type === "incremental" ||
+                logStatus.type === "manual"
+              ? getSyncProgressForLogId(syncLogId)
+              : logStatus.type === "team_sync"
+                ? getTeamSyncProgressForLogId(syncLogId)
+                : null;
+        if (raw) {
+          // Normalize across the three progress shapes:
+          //   issue sync:         issuesProcessed / issuesTotal
+          //   backfill:           issuesProcessed / issuesTotal
+          //   team sync:          membersProcessed / membersTotal
+          const processed =
+            "membersProcessed" in raw
+              ? (raw.membersProcessed ?? null)
+              : "issuesProcessed" in raw
+                ? (raw.issuesProcessed ?? null)
+                : null;
+          const total =
+            "membersTotal" in raw
+              ? (raw.membersTotal ?? null)
+              : "issuesTotal" in raw
+                ? (raw.issuesTotal ?? null)
+                : null;
+          const pct =
+            processed !== null && total !== null && total > 0
+              ? Math.min(100, Math.round((processed / total) * 100))
+              : null;
+          // Linear-extrapolation ETA: rate = processed / elapsed,
+          // remaining = total - processed, eta = remaining / rate.
+          // Skip when the signal is too noisy to be useful:
+          //   - no total (indeterminate bar),
+          //   - nothing processed yet (fetching phase),
+          //   - < 5s elapsed (extrapolation is meaningless),
+          //   - already at 100%.
+          let etaSeconds: number | null = null;
+          if (
+            runningSyncLog &&
+            processed !== null &&
+            processed > 0 &&
+            total !== null &&
+            total > processed
+          ) {
+            const elapsedMs = Date.now() - runningSyncLog.startedAt.getTime();
+            if (elapsedMs >= 5_000) {
+              const rate = processed / (elapsedMs / 1000); // items per sec
+              const remaining = total - processed;
+              etaSeconds = Math.round(remaining / rate);
+            }
+          }
+          progress = {
+            phase: String(raw.phase ?? "running"),
+            message: String(raw.message ?? ""),
+            processed,
+            total,
+            pct,
+            etaSeconds,
+          };
+        } else {
+          // Sync IS running but this process can't see its in-memory
+          // counts (different server, or sync type that doesn't publish
+          // progress). Indeterminate bar, no ETA — real-time only.
+          progress = {
+            phase: "running",
+            message: "In progress",
+            processed: null,
+            total: null,
+            pct: null,
+            etaSeconds: null,
+          };
+        }
       }
-    : null;
+    } catch (err) {
+      // Never let the progress lookup break the whole projection.
+      console.warn(
+        "[cronicle] progress lookup failed for syncLog",
+        syncLogId,
+        err instanceof Error ? err.message : String(err),
+      );
+    }
+  }
+
+  // Build lastRun. Prefer the running sync_log when one exists — that's
+  // the authoritative source for "there's an active run" (regardless of
+  // whether Cronicle has a matching job, which Run Now skips). Otherwise
+  // fall back to Cronicle's latest job. Progress bar shows whenever
+  // `progress` is populated AND status === "running".
+  let lastRun: CronicleEventPublic["lastRun"] = null;
+  if (runningSyncLog) {
+    lastRun = {
+      jobId: latest?.id,
+      start: Math.floor(runningSyncLog.startedAt.getTime() / 1000),
+      end: null,
+      status: "running",
+      elapsed: undefined,
+      syncLogId,
+      jobDetailsUrl,
+      progress,
+    };
+  } else if (latest) {
+    lastRun = {
+      jobId: latest.id,
+      start: latest.time_start,
+      end: latest.time_end ?? null,
+      status: normalizeJobStatus(latest),
+      elapsed: latest.elapsed,
+      syncLogId,
+      jobDetailsUrl,
+      progress,
+    };
+  }
 
   return {
     id: event.id,

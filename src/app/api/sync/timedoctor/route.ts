@@ -34,7 +34,10 @@ export async function POST(request: Request) {
     }
 
     try {
-      const { logId, result } = await runTimeDoctorSync(days);
+      const { logId, result } = await runTimeDoctorSync(days, {
+        triggeredBy: "manual",
+        triggeredByUserId: session.user.id ?? null,
+      });
 
       return NextResponse.json({
         success: true,

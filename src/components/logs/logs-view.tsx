@@ -94,6 +94,30 @@ export function LogsView() {
     selectedIdRef.current = selectedId;
   });
 
+  // Kick off a Cronicle reconciliation on mount — if any `running` row's
+  // Cronicle counterpart already timed out, mark the row as failed so
+  // the admin doesn't see a "stuck running" state that contradicts the
+  // scheduler's record. Fire-and-forget.
+  //
+  // Why the explicit refresh after .then(): the SSE subscription is
+  // opened in a separate useEffect below, and reconcile's
+  // `emitSyncLogChange` events can fire BEFORE the EventSource is
+  // connected — those initial events get dropped. Re-running load() +
+  // bumping refreshTick here guarantees the table, summary strip, and
+  // CronicleSchedulePanel all reflect the reconciled state even when
+  // SSE misses the race. Idempotent: if SSE also delivers an event, the
+  // second refetch is cheap.
+  useEffect(() => {
+    fetch("/api/automations/reconcile", { method: "POST" })
+      .then(() => {
+        loadRef.current();
+        setRefreshTick((t) => t + 1);
+      })
+      .catch(() => {
+        /* reconcile is best-effort; silent on failure */
+      });
+  }, []);
+
   const loadDetail = useCallback(async (id: string) => {
     setDetailLoading(true);
     try {
@@ -183,7 +207,7 @@ export function LogsView() {
     [load, loadDetail],
   );
 
-  const onReclaimAll = useCallback(async () => {
+  const onReclaimAll = useCallback(async (): Promise<{ reclaimed: number }> => {
     // Match the banner's "stuck for more than 1 hour" semantic. Server
     // default is 2 min (safe lower bound); we pass 1h explicitly so the
     // button can't accidentally reclaim a long-running sync (e.g. a
@@ -198,7 +222,16 @@ export function LogsView() {
       const body = await res.json().catch(() => ({}));
       throw new Error(body.error || `HTTP ${res.status}`);
     }
+    const body = (await res.json().catch(() => ({}))) as {
+      reclaimed?: number;
+    };
     await load();
+    // Force summary + schedule panels to refetch too. When `reclaimed=0`
+    // no SSE event fires from the server, so without this bump the
+    // summary strip's stuckOver1h count can stay stale and the banner
+    // would linger even though the server reports zero stuck rows.
+    setRefreshTick((t) => t + 1);
+    return { reclaimed: body.reclaimed ?? 0 };
   }, [load]);
 
   return (

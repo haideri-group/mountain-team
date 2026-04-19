@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { X, ExternalLink, AlertTriangle, CheckCircle2, Loader2 } from "lucide-react";
 import { StatusPill } from "./status-pill";
+import { APP_TIMEZONE } from "@/lib/config";
 
 export interface LogDetail {
   log: {
@@ -53,7 +54,7 @@ interface Props {
 function formatAbs(iso: string | null): string {
   if (!iso) return "—";
   return new Date(iso).toLocaleString("en-GB", {
-    timeZone: "Asia/Karachi",
+    timeZone: APP_TIMEZONE,
     hour12: true,
     day: "numeric",
     month: "short",

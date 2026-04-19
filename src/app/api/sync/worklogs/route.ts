@@ -29,7 +29,10 @@ export async function POST(request: Request) {
     }
 
     try {
-      const { logId, result } = await runWorklogSync(days);
+      const { logId, result } = await runWorklogSync(days, {
+        triggeredBy: "manual",
+        triggeredByUserId: session.user.id ?? null,
+      });
 
       return NextResponse.json({
         success: true,

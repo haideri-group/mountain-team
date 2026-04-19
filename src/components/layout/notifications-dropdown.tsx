@@ -280,6 +280,7 @@ export function NotificationsDropdown({ isAdmin = false }: { isAdmin?: boolean }
           "relative p-2 rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
           isOpen ? "bg-accent" : "hover:bg-accent",
         )}
+        suppressHydrationWarning
       >
         <Bell className="h-5 w-5 text-foreground" />
         {badge && (

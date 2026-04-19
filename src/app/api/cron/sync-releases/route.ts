@@ -7,6 +7,7 @@ import {
   releaseSyncLock,
   tryAcquireSyncLock,
 } from "@/lib/sync/concurrency";
+import { consumePendingManual } from "@/lib/sync/triggers";
 
 export async function GET(request: Request) {
   try {
@@ -28,7 +29,11 @@ export async function GET(request: Request) {
     }
 
     try {
-      const { logId, result } = await runReleaseSync();
+      const pending = await consumePendingManual("release_sync");
+      const { logId, result } = await runReleaseSync({
+        triggeredBy: pending ? "manual" : "cron",
+        triggeredByUserId: pending?.userId ?? null,
+      });
 
       // Fire release-scoped notifications after the sync so state transitions
       // (e.g., released=true flipped in JIRA) propagate immediately.

@@ -1,6 +1,6 @@
 import { db } from "@/lib/db";
 import { issues, boards, team_members, syncLogs } from "@/lib/db/schema";
-import { eq, desc, inArray } from "drizzle-orm";
+import { eq, desc, inArray, sql } from "drizzle-orm";
 import { generateNotificationsFromSync } from "@/lib/notifications/generator";
 import { recordWorkloadSnapshots } from "@/lib/workload/snapshots";
 import {
@@ -42,45 +42,57 @@ export interface SyncProgress {
   issuesTotal: number;
 }
 
-let currentProgress: SyncProgress = {
-  phase: "idle",
-  message: "",
-  issuesFetched: 0,
-  issuesProcessed: 0,
-  issuesTotal: 0,
+// Cache the singleton on globalThis so the writer (cron route segment)
+// and the reader (/api/automations/cronicle/events → discovery.ts)
+// share state across route-segment module instances. Without this, the
+// writer sets activeLogId in its module copy and the reader sees null
+// from its own copy — no progress bar, no live progress.
+interface IssueSyncState {
+  currentProgress: SyncProgress;
+  activeLogId: string | null;
+}
+const globalForSync = globalThis as unknown as {
+  _issueSyncState?: IssueSyncState;
 };
-
-// Which sync_logs row the `currentProgress` snapshot belongs to. The
-// /automations detail endpoint gates the liveProgress payload on this so
-// opening a stale `running` row (from a crashed prior process) doesn't
-// show the CURRENT sync's progress attributed to the wrong row.
-let activeLogId: string | null = null;
+if (!globalForSync._issueSyncState) {
+  globalForSync._issueSyncState = {
+    currentProgress: {
+      phase: "idle",
+      message: "",
+      issuesFetched: 0,
+      issuesProcessed: 0,
+      issuesTotal: 0,
+    },
+    activeLogId: null,
+  };
+}
+const state = globalForSync._issueSyncState;
 
 export function getSyncProgress(): SyncProgress {
-  return { ...currentProgress };
+  return { ...state.currentProgress };
 }
 
 /** Returns the in-flight progress IFF it belongs to the sync_logs row
  *  with the given id. Used by `/api/automations/[id]` to prevent
  *  cross-run confusion. */
 export function getSyncProgressForLogId(logId: string): SyncProgress | null {
-  if (activeLogId !== logId) return null;
-  return { ...currentProgress };
+  if (state.activeLogId !== logId) return null;
+  return { ...state.currentProgress };
 }
 
 function resetProgress() {
-  currentProgress = {
+  state.currentProgress = {
     phase: "idle",
     message: "",
     issuesFetched: 0,
     issuesProcessed: 0,
     issuesTotal: 0,
   };
-  activeLogId = null;
+  state.activeLogId = null;
 }
 
 function updateProgress(update: Partial<SyncProgress>) {
-  currentProgress = { ...currentProgress, ...update };
+  state.currentProgress = { ...state.currentProgress, ...update };
 }
 
 // --- Core Sync ---
@@ -134,6 +146,25 @@ async function syncIssues(type: IssueSyncType, filterBoardKey?: string): Promise
     .filter((m) => m.jiraAccountId && m.status === "active")
     .map((m) => m.jiraAccountId!);
 
+  // Auto-exempt boards with zero existing rows so a newly-tracked board's
+  // first sync still fetches old-terminal tickets. Subsequent runs will
+  // see the board populated and re-apply the filter normally.
+  const trackedBoardIds = trackedBoards.map((b) => b.id);
+  const existingCounts = trackedBoardIds.length > 0
+    ? await db
+        .select({ boardId: issues.boardId, n: sql<number>`count(*)` })
+        .from(issues)
+        .where(inArray(issues.boardId, trackedBoardIds))
+        .groupBy(issues.boardId)
+    : [];
+  const populatedBoardIds = new Set(
+    existingCounts.filter((r) => Number(r.n) > 0).map((r) => r.boardId),
+  );
+  const exemptBoardKeys = trackedBoards
+    .filter((b) => !populatedBoardIds.has(b.id))
+    .map((b) => b.jiraKey);
+  const filterOpts = { exemptBoardKeys };
+
   let jql: string;
 
   if (type === "incremental") {
@@ -152,13 +183,13 @@ async function syncIssues(type: IssueSyncType, filterBoardKey?: string): Promise
         .toISOString()
         .replace("T", " ")
         .substring(0, 16); // "YYYY-MM-DD HH:mm"
-      jql = buildIncrementalSyncJql(boardKeys, memberAccountIds, since, frontendLabel);
+      jql = buildIncrementalSyncJql(boardKeys, memberAccountIds, since, frontendLabel, filterOpts);
     } else {
       // No previous sync -- fall back to full
-      jql = buildFullSyncJql(boardKeys, memberAccountIds, frontendLabel);
+      jql = buildFullSyncJql(boardKeys, memberAccountIds, frontendLabel, filterOpts);
     }
   } else {
-    jql = buildFullSyncJql(boardKeys, memberAccountIds, frontendLabel);
+    jql = buildFullSyncJql(boardKeys, memberAccountIds, frontendLabel, filterOpts);
   }
 
   // 5. Fetch issues from JIRA
@@ -263,16 +294,30 @@ async function syncIssues(type: IssueSyncType, filterBoardKey?: string): Promise
 
 // --- Public Wrapper ---
 
-export async function runIssueSync(type: IssueSyncType, boardKey?: string): Promise<{
+export async function runIssueSync(
+  type: IssueSyncType,
+  boardKey?: string,
+  opts?: { triggeredBy?: "cron" | "manual" | null; triggeredByUserId?: string | null },
+): Promise<{
   logId: string;
   result: IssueSyncResult;
 }> {
   const logId = `sync_${Date.now()}`;
   resetProgress();
-  activeLogId = logId;
+  state.activeLogId = logId;
   updateProgress({ phase: "fetching", message: boardKey ? `Syncing ${boardKey}...` : "Starting sync..." });
 
   const startedAt = new Date();
+  const insertTriggeredBy = opts?.triggeredBy ?? null;
+  const insertUserId =
+    opts?.triggeredBy === "manual" ? (opts?.triggeredByUserId ?? null) : null;
+  // Operational log only. Never serialize the user identifier here —
+  // `triggeredByUserId` is persisted in `sync_logs` and exposed through
+  // the /automations UI, but raw server logs are a wider audience than
+  // the admin dashboard and shouldn't broadcast who triggered each run.
+  console.log(
+    `[runIssueSync] logId=${logId} type=${type} triggeredBy=${insertTriggeredBy ?? "NULL"}`,
+  );
   await db.insert(syncLogs).values({
     id: logId,
     type,
@@ -280,6 +325,8 @@ export async function runIssueSync(type: IssueSyncType, boardKey?: string): Prom
     startedAt,
     issueCount: 0,
     memberCount: 0,
+    triggeredBy: insertTriggeredBy,
+    triggeredByUserId: insertUserId,
   });
   emitSyncLogChange({
     id: logId,

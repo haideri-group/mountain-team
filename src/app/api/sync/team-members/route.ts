@@ -38,7 +38,10 @@ export async function POST() {
     try {
       // Pass Google token for email matching if available
       const googleToken = session.user.googleAccessToken;
-      const { logId, result } = await runTeamSync(googleToken);
+      const { logId, result } = await runTeamSync(googleToken, {
+        triggeredBy: "manual",
+        triggeredByUserId: session.user.id ?? null,
+      });
 
       return NextResponse.json({
         success: true,

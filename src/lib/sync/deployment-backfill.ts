@@ -72,31 +72,47 @@ const defaultProgress: DeploymentBackfillProgress = {
   currentJiraKey: null,
 };
 
-let currentProgress: DeploymentBackfillProgress = { ...defaultProgress };
-
-// Which sync_logs row the current progress snapshot belongs to. The
-// /automations detail endpoint uses this to gate liveProgress so opening
-// an unrelated (stale) running row doesn't surface this run's progress.
-let activeLogId: string | null = null;
+// Shared state on globalThis so writers (cron route) and readers
+// (events projection in a different route segment) see the same
+// currentProgress / activeLogId / runInFlight. Next.js dev can
+// instantiate modules twice across route bundles; without this the
+// cron route would update its copy while the panel projector reads
+// a stale null from its own copy — no live progress, no bar.
+interface BackfillState {
+  currentProgress: DeploymentBackfillProgress;
+  activeLogId: string | null;
+  runInFlight: boolean;
+}
+const globalForBackfill = globalThis as unknown as {
+  _backfillState?: BackfillState;
+};
+if (!globalForBackfill._backfillState) {
+  globalForBackfill._backfillState = {
+    currentProgress: { ...defaultProgress },
+    activeLogId: null,
+    runInFlight: false,
+  };
+}
+const bstate = globalForBackfill._backfillState;
 
 export function getDeploymentBackfillProgress(): DeploymentBackfillProgress {
-  return { ...currentProgress };
+  return { ...bstate.currentProgress };
 }
 
 export function getDeploymentBackfillProgressForLogId(
   logId: string,
 ): DeploymentBackfillProgress | null {
-  if (activeLogId !== logId) return null;
-  return { ...currentProgress };
+  if (bstate.activeLogId !== logId) return null;
+  return { ...bstate.currentProgress };
 }
 
 function updateProgress(update: Partial<DeploymentBackfillProgress>) {
-  currentProgress = { ...currentProgress, ...update };
+  bstate.currentProgress = { ...bstate.currentProgress, ...update };
 }
 
 function resetProgress() {
-  currentProgress = { ...defaultProgress };
-  activeLogId = null;
+  bstate.currentProgress = { ...defaultProgress };
+  bstate.activeLogId = null;
 }
 
 // --- Result ---
@@ -109,6 +125,9 @@ export interface BackfillRunResult {
   deferred: boolean;
   durationMs: number;
   checkpointAtJiraKey: string | null;
+  /** id of the sync_logs row this run wrote. Null when the run was
+   *  deferred via the concurrency / staleness guards (no row written). */
+  logId: string | null;
 }
 
 // --- Helpers ---
@@ -308,7 +327,10 @@ function sleep(ms: number): Promise<void> {
 
 // --- Sync log persistence ---
 
-async function logRunStart(): Promise<string> {
+async function logRunStart(
+  triggeredBy: "cron" | "manual" | null,
+  triggeredByUserId: string | null,
+): Promise<string> {
   const id = `synclog_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
   const startedAt = new Date();
   await db.insert(syncLogs).values({
@@ -316,6 +338,8 @@ async function logRunStart(): Promise<string> {
     type: "deployment_backfill",
     status: "running",
     startedAt,
+    triggeredBy,
+    triggeredByUserId: triggeredBy === "manual" ? triggeredByUserId : null,
   });
   emitSyncLogChange({
     id,
@@ -356,15 +380,15 @@ async function logRunEnd(
 
 // --- Concurrency guard ---
 
-let runInFlight = false;
-
 export function isBackfillRunning(): boolean {
-  return runInFlight;
+  return bstate.runInFlight;
 }
 
 // --- Main runner ---
 
-export async function runDeploymentBackfill(): Promise<BackfillRunResult> {
+export async function runDeploymentBackfill(
+  opts?: { triggeredBy?: "cron" | "manual" | null; triggeredByUserId?: string | null },
+): Promise<BackfillRunResult> {
   const startedAt = Date.now();
   const cfg = getConfig();
 
@@ -376,9 +400,10 @@ export async function runDeploymentBackfill(): Promise<BackfillRunResult> {
     deferred: false,
     durationMs: 0,
     checkpointAtJiraKey: null,
+    logId: null,
   };
 
-  if (runInFlight) {
+  if (bstate.runInFlight) {
     return {
       ...result,
       deferred: true,
@@ -395,9 +420,14 @@ export async function runDeploymentBackfill(): Promise<BackfillRunResult> {
   // mark it failed, and proceed with this run. Without this, a process kill
   // between `logRunStart()` and `logRunEnd()` would leave a permanent
   // "running" row and block every future cron/admin invocation.
-  const STALE_CUTOFF_MS = 6 * 60 * 60 * 1000;
+  // MySQL-native age check so the comparison isn't skewed by mysql2
+  // driver timezone round-trips (see notes in logs-query.summarize24h).
+  const STALE_CUTOFF_SEC = 6 * 60 * 60;
   const [alreadyRunningLog] = await db
-    .select({ id: syncLogs.id, startedAt: syncLogs.startedAt })
+    .select({
+      id: syncLogs.id,
+      isStale: sql<number>`CASE WHEN ${syncLogs.startedAt} IS NULL OR ${syncLogs.startedAt} <= NOW() - INTERVAL ${STALE_CUTOFF_SEC} SECOND THEN 1 ELSE 0 END`,
+    })
     .from(syncLogs)
     .where(
       and(
@@ -408,11 +438,7 @@ export async function runDeploymentBackfill(): Promise<BackfillRunResult> {
     .limit(1);
 
   if (alreadyRunningLog) {
-    const startedAtMs = alreadyRunningLog.startedAt
-      ? new Date(alreadyRunningLog.startedAt).getTime()
-      : 0;
-    const isStale =
-      startedAtMs <= 0 || Date.now() - startedAtMs > STALE_CUTOFF_MS;
+    const isStale = Number(alreadyRunningLog.isStale) === 1;
 
     if (!isStale) {
       return {
@@ -422,18 +448,53 @@ export async function runDeploymentBackfill(): Promise<BackfillRunResult> {
       };
     }
 
-    // Reclaim the crashed row before proceeding.
-    await db
+    // Reclaim the crashed row before proceeding. Re-assert
+    // `status='running'` inside the UPDATE so a race where the legitimate
+    // writer completed this row between our SELECT and this UPDATE
+    // doesn't stamp a completed row back to `failed`. Same guard pattern
+    // used in `src/lib/sync/reclaim.ts` for the admin-triggered reclaim
+    // paths; we only emit the failure SSE when the update actually
+    // affected a row.
+    const recoveredAt = new Date();
+    const updateResult = await db
       .update(syncLogs)
       .set({
         status: "failed",
-        completedAt: new Date(),
+        completedAt: recoveredAt,
         error: "Recovered stale deployment_backfill run lock",
       })
-      .where(eq(syncLogs.id, alreadyRunningLog.id));
+      .where(
+        and(
+          eq(syncLogs.id, alreadyRunningLog.id),
+          eq(syncLogs.status, "running"),
+        ),
+      );
+
+    // drizzle-orm/mysql2 returns a `[ResultSetHeader]` tuple; use
+    // `.affectedRows` to confirm the guarded UPDATE actually flipped
+    // the row (not a no-op because the legitimate writer finished
+    // first). Only then broadcast the failure transition.
+    const affected =
+      (Array.isArray(updateResult)
+        ? (updateResult[0] as { affectedRows?: number })?.affectedRows
+        : (updateResult as { affectedRows?: number })?.affectedRows) ?? 0;
+
+    if (affected > 0) {
+      // Emit SSE so the /automations summary + table refresh the stale
+      // stuck-count; without this the "Reclaim all stuck" banner can
+      // linger on the client even though the row is already `failed`.
+      emitSyncLogChange({
+        id: alreadyRunningLog.id,
+        type: "deployment_backfill",
+        status: "failed",
+        startedAt: null,
+        completedAt: recoveredAt.toISOString(),
+        transition: "finished",
+      });
+    }
   }
 
-  runInFlight = true;
+  bstate.runInFlight = true;
 
   // Fresh compare + branch-commits caches for this run. Within the run
   // they persist across issues so two issues that share a commit or
@@ -447,8 +508,12 @@ export async function runDeploymentBackfill(): Promise<BackfillRunResult> {
     startedAt: new Date().toISOString(),
   });
 
-  const logId = await logRunStart();
-  activeLogId = logId;
+  const logId = await logRunStart(
+    opts?.triggeredBy ?? null,
+    opts?.triggeredByUserId ?? null,
+  );
+  bstate.activeLogId = logId;
+  result.logId = logId;
 
   try {
     // Pre-flight: poll /rate_limit. This endpoint does NOT count against
@@ -574,6 +639,6 @@ export async function runDeploymentBackfill(): Promise<BackfillRunResult> {
     await logRunEnd(logId, result, msg);
     throw e;
   } finally {
-    runInFlight = false;
+    bstate.runInFlight = false;
   }
 }

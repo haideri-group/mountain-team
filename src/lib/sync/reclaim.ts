@@ -1,7 +1,7 @@
 import "server-only";
 import { db } from "@/lib/db";
 import { syncLogs } from "@/lib/db/schema";
-import { and, eq, inArray, lte } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import type { SyncLogType } from "./logs-query";
 import { emitSyncLogChange } from "./events";
 
@@ -49,11 +49,17 @@ export async function reclaimStuckRuns(
 ): Promise<ReclaimResult> {
   const graceMs = options.graceMs ?? DEFAULT_GRACE_MS;
   const reason = options.reason ?? DEFAULT_REASON;
-  const cutoff = new Date(Date.now() - graceMs);
+  const graceSec = Math.max(1, Math.floor(graceMs / 1000));
 
+  // Use MySQL-native date math for the age comparison — JS Date params
+  // get mis-converted by mysql2 when the server locale ≠ the Node
+  // locale (e.g. Node in Pakistan GMT+5 against a UTC-configured
+  // server), producing false positives that claim fresh rows are
+  // stuck. `NOW()` and `startedAt` share the same timezone context
+  // inside MySQL, so the comparison is always correct.
   const conditions = [
     eq(syncLogs.status, "running"),
-    lte(syncLogs.startedAt, cutoff),
+    sql`${syncLogs.startedAt} <= NOW() - INTERVAL ${graceSec} SECOND`,
   ];
   if (options.type) conditions.push(eq(syncLogs.type, options.type));
 
@@ -115,17 +121,26 @@ export async function reclaimSingleRun(
 > {
   const graceMs = options.graceMs ?? DEFAULT_GRACE_MS;
   const reason = options.reason ?? DEFAULT_REASON;
-  const cutoff = new Date(Date.now() - graceMs);
+  const graceSec = Math.max(1, Math.floor(graceMs / 1000));
 
+  // Fetch the row with a MySQL-native "is it inside grace?" flag — same
+  // reason as reclaimStuckRuns: we can't trust mysql2 Date round-trips
+  // when the server/Node locales differ. Evaluating the grace check in
+  // SQL keeps the comparison in MySQL's own time context.
   const [row] = await db
-    .select()
+    .select({
+      id: syncLogs.id,
+      status: syncLogs.status,
+      type: syncLogs.type,
+      withinGrace: sql<number>`CASE WHEN ${syncLogs.startedAt} > NOW() - INTERVAL ${graceSec} SECOND THEN 1 ELSE 0 END`,
+    })
     .from(syncLogs)
     .where(eq(syncLogs.id, options.id))
     .limit(1);
 
   if (!row) return { ok: false, reason: "not_found" };
   if (row.status !== "running") return { ok: false, reason: "already_terminal" };
-  if (row.startedAt && row.startedAt > cutoff) {
+  if (Number(row.withinGrace) === 1) {
     return { ok: false, reason: "within_grace" };
   }
 

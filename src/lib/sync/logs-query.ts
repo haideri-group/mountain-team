@@ -1,6 +1,6 @@
 import "server-only";
 import { db } from "@/lib/db";
-import { syncLogs } from "@/lib/db/schema";
+import { syncLogs, users, team_members } from "@/lib/db/schema";
 import { and, desc, eq, gte, inArray, lte, sql } from "drizzle-orm";
 import { sanitizeErrorText } from "@/lib/jira/client";
 
@@ -50,6 +50,18 @@ export const VALID_LOG_SOURCES: ReadonlyArray<LogSource> = [
   "unknown",
 ];
 
+/** Triggering admin user for manual runs. Null for cron rows and for
+ *  pre-migration rows where `triggeredByUserId` is null. `memberId` is
+ *  the team_member row id when the admin is also a team member, so the
+ *  UI can link to `/members/[id]`. */
+export interface LogTriggeredBy {
+  userId: string;
+  name: string | null;
+  email: string | null;
+  avatarUrl: string | null;
+  memberId: string | null;
+}
+
 export interface LogRow {
   id: string;
   type: SyncLogType;
@@ -60,6 +72,7 @@ export interface LogRow {
   issueCount: number;
   memberCount: number;
   source: LogSource;
+  triggeredByUser: LogTriggeredBy | null;
   errorPreview: string | null;
 }
 
@@ -67,20 +80,22 @@ export interface LogDetailRow extends LogRow {
   error: string | null;
 }
 
-/** Heuristic mapping sync type → source while a proper `triggeredBy`
- *  column doesn't exist yet.
+/** Resolves the row's source. Prefer the stamped `triggeredBy` column;
+ *  fall back to a type-based heuristic only for legacy rows written
+ *  before that column existed.
  *
- *  - `manual` is only ever written by admin-triggered `/api/sync/issues`
- *    so we can confidently label it "manual".
- *  - `full`, `incremental`, and `deployment_backfill` can ALL be fired
- *    from either the scheduled cron OR admin buttons — returning "cron"
- *    would be a false claim, so we honestly return "unknown".
- *  - `team_sync`, `release_sync`, `worklog_sync`, `timedoctor_sync` ARE
- *    also triggerable manually (from /api/sync/*), but the proportion
- *    is small; a proper column is the right fix. Kept as "cron" so the
- *    filter still works for the 95%-case. Will be removed when the
- *    `triggeredBy` column lands. */
-function inferSource(type: SyncLogType): LogSource {
+ *  For the type-based fallback only:
+ *   - `manual` type → "manual"
+ *   - `full` / `incremental` / `deployment_backfill` can fire from
+ *     either path, so we honestly return "unknown".
+ *   - The other scheduled-only types default to "cron". */
+function inferSource(
+  type: SyncLogType,
+  stamped: "cron" | "manual" | null,
+): LogSource {
+  if (stamped === "manual") return "manual";
+  if (stamped === "cron") return "cron";
+  // Legacy row — no `triggeredBy` column value.
   if (type === "manual") return "manual";
   if (
     type === "full" ||
@@ -105,23 +120,46 @@ function truncate(s: string | null, max = 120): string | null {
   return s.length > max ? s.slice(0, max) + "…" : s;
 }
 
-function toLogRow(row: typeof syncLogs.$inferSelect): LogRow {
-  const sanitizedError = row.error ? sanitizeErrorText(row.error) : null;
+interface JoinedSyncLogRow {
+  log: typeof syncLogs.$inferSelect;
+  userName: string | null;
+  userEmail: string | null;
+  userAvatar: string | null;
+  memberId: string | null;
+}
+
+function toLogRow(row: JoinedSyncLogRow): LogRow {
+  const { log } = row;
+  const sanitizedError = log.error ? sanitizeErrorText(log.error) : null;
+  const triggeredByUser: LogTriggeredBy | null =
+    log.triggeredByUserId && (row.userName || row.userEmail)
+      ? {
+          userId: log.triggeredByUserId,
+          name: row.userName,
+          email: row.userEmail,
+          avatarUrl: row.userAvatar,
+          memberId: row.memberId,
+        }
+      : null;
   return {
-    id: row.id,
-    type: row.type as SyncLogType,
-    status: row.status as SyncLogStatus,
-    startedAt: row.startedAt
-      ? new Date(row.startedAt).toISOString()
+    id: log.id,
+    type: log.type as SyncLogType,
+    status: log.status as SyncLogStatus,
+    startedAt: log.startedAt
+      ? new Date(log.startedAt).toISOString()
       // Schema has defaultNow() so this branch is effectively unreachable,
       // but we stamp the insert row's creation time if we ever hit it —
       // epoch-zero (1970) would paint a misleading "57-year-old run" in UI.
       : new Date().toISOString(),
-    completedAt: row.completedAt ? new Date(row.completedAt).toISOString() : null,
-    durationMs: rowToDurationMs(row.startedAt, row.completedAt),
-    issueCount: row.issueCount ?? 0,
-    memberCount: row.memberCount ?? 0,
-    source: inferSource(row.type as SyncLogType),
+    completedAt: log.completedAt ? new Date(log.completedAt).toISOString() : null,
+    durationMs: rowToDurationMs(log.startedAt, log.completedAt),
+    issueCount: log.issueCount ?? 0,
+    memberCount: log.memberCount ?? 0,
+    source: inferSource(
+      log.type as SyncLogType,
+      (log.triggeredBy as "cron" | "manual" | null) ?? null,
+    ),
+    triggeredByUser,
     errorPreview: truncate(sanitizedError, 120),
   };
 }
@@ -154,31 +192,21 @@ export async function listSyncLogs(params: ListSyncLogsParams = {}): Promise<{
     conditions.push(eq(syncLogs.status, params.status));
   }
   if (params.source === "manual") {
-    conditions.push(eq(syncLogs.type, "manual"));
-  } else if (params.source === "cron") {
-    // Types whose writer is (in practice) the scheduled cron. The
-    // ambiguous `full` / `incremental` / `deployment_backfill` rows are
-    // labelled `"unknown"` by inferSource and are intentionally excluded
-    // here so a "cron-triggered" filter isn't silently polluted by
-    // admin-fired bursts.
+    // True manual: either the `manual` type OR any row stamped
+    // `triggeredBy='manual'` (Run Now / /api/sync/*).
     conditions.push(
-      inArray(syncLogs.type, [
-        "team_sync",
-        "worklog_sync",
-        "timedoctor_sync",
-        "release_sync",
-      ]),
+      sql`(${syncLogs.type} = 'manual' OR ${syncLogs.triggeredBy} = 'manual')`,
+    );
+  } else if (params.source === "cron") {
+    // Stamped as `cron`, OR legacy row with one of the scheduled-only
+    // types AND no stamp at all. Excludes ambiguous types with no stamp.
+    conditions.push(
+      sql`(${syncLogs.triggeredBy} = 'cron' OR (${syncLogs.triggeredBy} IS NULL AND ${syncLogs.type} IN ('team_sync', 'worklog_sync', 'timedoctor_sync', 'release_sync')))`,
     );
   } else if (params.source === "unknown") {
-    // Mirror inferSource(): these three types can fire from either a
-    // cron or an admin button, so "unknown" filters to exactly the
-    // rows the table labels as such.
+    // Legacy rows with no stamp AND one of the ambiguous types.
     conditions.push(
-      inArray(syncLogs.type, [
-        "full",
-        "incremental",
-        "deployment_backfill",
-      ]),
+      sql`(${syncLogs.triggeredBy} IS NULL AND ${syncLogs.type} IN ('full', 'incremental', 'deployment_backfill'))`,
     );
   }
   if (params.from) conditions.push(gte(syncLogs.startedAt, params.from));
@@ -186,10 +214,18 @@ export async function listSyncLogs(params: ListSyncLogsParams = {}): Promise<{
 
   const where = conditions.length > 0 ? and(...conditions) : undefined;
 
-  const [rows, [{ n: totalCount }]] = await Promise.all([
+  const [joined, [{ n: totalCount }]] = await Promise.all([
     db
-      .select()
+      .select({
+        log: syncLogs,
+        userName: users.name,
+        userEmail: users.email,
+        userAvatar: users.avatarUrl,
+        memberId: team_members.id,
+      })
       .from(syncLogs)
+      .leftJoin(users, eq(users.id, syncLogs.triggeredByUserId))
+      .leftJoin(team_members, eq(team_members.email, users.email))
       .where(where)
       .orderBy(desc(syncLogs.startedAt))
       .limit(pageSize)
@@ -199,6 +235,7 @@ export async function listSyncLogs(params: ListSyncLogsParams = {}): Promise<{
       .from(syncLogs)
       .where(where),
   ]);
+  const rows = joined;
 
   return {
     rows: rows.map(toLogRow),
@@ -209,17 +246,40 @@ export async function listSyncLogs(params: ListSyncLogsParams = {}): Promise<{
   };
 }
 
+/** Cheap lookup — just the status + type, for callers that only need to
+ *  know whether a given sync_log is still `running`. Avoids hydrating
+ *  the full LogDetailRow (sanitizeErrorText + ISO conversions). */
+export async function getSyncLogStatusById(
+  id: string,
+): Promise<{ status: SyncLogStatus; type: SyncLogType } | null> {
+  const [row] = await db
+    .select({ status: syncLogs.status, type: syncLogs.type })
+    .from(syncLogs)
+    .where(eq(syncLogs.id, id))
+    .limit(1);
+  if (!row) return null;
+  return { status: row.status as SyncLogStatus, type: row.type as SyncLogType };
+}
+
 export async function getSyncLogById(id: string): Promise<LogDetailRow | null> {
   const [row] = await db
-    .select()
+    .select({
+      log: syncLogs,
+      userName: users.name,
+      userEmail: users.email,
+      userAvatar: users.avatarUrl,
+      memberId: team_members.id,
+    })
     .from(syncLogs)
+    .leftJoin(users, eq(users.id, syncLogs.triggeredByUserId))
+    .leftJoin(team_members, eq(team_members.email, users.email))
     .where(eq(syncLogs.id, id))
     .limit(1);
   if (!row) return null;
   const base = toLogRow(row);
   return {
     ...base,
-    error: row.error ? sanitizeErrorText(row.error) : null,
+    error: row.log.error ? sanitizeErrorText(row.log.error) : null,
   };
 }
 
@@ -232,19 +292,26 @@ export interface Summary24h {
   stuckOver1h: number;
 }
 
-/** Summary strip data. Single query returns all five counts. */
+/** Summary strip data. Single query returns all five counts.
+ *
+ *  Uses MySQL-native `NOW() - INTERVAL` math instead of JS Date params.
+ *  Rationale: when the Node process's local timezone differs from the
+ *  mysql2 driver's assumed server timezone (e.g. Node in Pakistan GMT+5,
+ *  server datetimes mis-interpreted as local by the driver), JS Date
+ *  values serialize with a 5h offset and comparisons report rows as
+ *  "stuck" that aren't. Keeping the arithmetic entirely within MySQL
+ *  eliminates the driver's timezone round-trip — `startedAt` and
+ *  `NOW()` live in the same timezone context, so the comparison is
+ *  always consistent regardless of driver / OS locale. */
 export async function summarize24h(): Promise<Summary24h> {
-  const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
-  const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000);
-
   const [row] = await db
     .select({
-      total: sql<number>`SUM(CASE WHEN ${syncLogs.startedAt} >= ${since} THEN 1 ELSE 0 END)`,
-      completed: sql<number>`SUM(CASE WHEN ${syncLogs.startedAt} >= ${since} AND ${syncLogs.status} = 'completed' THEN 1 ELSE 0 END)`,
-      failed: sql<number>`SUM(CASE WHEN ${syncLogs.startedAt} >= ${since} AND ${syncLogs.status} = 'failed' THEN 1 ELSE 0 END)`,
-      running: sql<number>`SUM(CASE WHEN ${syncLogs.startedAt} >= ${since} AND ${syncLogs.status} = 'running' THEN 1 ELSE 0 END)`,
+      total: sql<number>`SUM(CASE WHEN ${syncLogs.startedAt} >= NOW() - INTERVAL 24 HOUR THEN 1 ELSE 0 END)`,
+      completed: sql<number>`SUM(CASE WHEN ${syncLogs.startedAt} >= NOW() - INTERVAL 24 HOUR AND ${syncLogs.status} = 'completed' THEN 1 ELSE 0 END)`,
+      failed: sql<number>`SUM(CASE WHEN ${syncLogs.startedAt} >= NOW() - INTERVAL 24 HOUR AND ${syncLogs.status} = 'failed' THEN 1 ELSE 0 END)`,
+      running: sql<number>`SUM(CASE WHEN ${syncLogs.startedAt} >= NOW() - INTERVAL 24 HOUR AND ${syncLogs.status} = 'running' THEN 1 ELSE 0 END)`,
       activeNow: sql<number>`SUM(CASE WHEN ${syncLogs.status} = 'running' THEN 1 ELSE 0 END)`,
-      stuckOver1h: sql<number>`SUM(CASE WHEN ${syncLogs.status} = 'running' AND ${syncLogs.startedAt} < ${oneHourAgo} THEN 1 ELSE 0 END)`,
+      stuckOver1h: sql<number>`SUM(CASE WHEN ${syncLogs.status} = 'running' AND ${syncLogs.startedAt} < NOW() - INTERVAL 1 HOUR THEN 1 ELSE 0 END)`,
     })
     .from(syncLogs);
 
@@ -303,14 +370,106 @@ export async function findSyncLogIdNearTime(input: {
   return best?.id ?? null;
 }
 
-/** Returns every row currently `status='running'` older than `graceMs`. */
-export async function findStuckRunning(graceMs: number): Promise<LogRow[]> {
-  const cutoff = new Date(Date.now() - graceMs);
+/** Returns every row currently `status='running'` older than `graceMs`.
+ *  Uses MySQL-native `NOW() - INTERVAL` so the age comparison isn't
+ *  skewed by mysql2 driver timezone round-trips (see notes on
+ *  `summarize24h`). */
+/** Median duration (ms) of the last N completed runs for the given
+ *  types. Used by the schedule panel to estimate an ETA for sync
+ *  families that don't publish live progress counts (team_sync,
+ *  release_sync, worklog_sync, timedoctor_sync). Returns null when
+ *  fewer than 2 historical runs are available — one sample is too
+ *  noisy to extrapolate from. */
+export async function medianRecentDurationMs(
+  types: SyncLogType[],
+  sampleSize = 5,
+): Promise<number | null> {
+  if (types.length === 0) return null;
   const rows = await db
-    .select()
+    .select({
+      startedAt: syncLogs.startedAt,
+      completedAt: syncLogs.completedAt,
+    })
     .from(syncLogs)
     .where(
-      and(eq(syncLogs.status, "running"), lte(syncLogs.startedAt, cutoff)),
+      and(
+        inArray(syncLogs.type, types),
+        eq(syncLogs.status, "completed"),
+      ),
+    )
+    .orderBy(desc(syncLogs.startedAt))
+    .limit(sampleSize);
+  const durations: number[] = [];
+  for (const r of rows) {
+    if (!r.startedAt || !r.completedAt) continue;
+    const d = r.completedAt.getTime() - r.startedAt.getTime();
+    if (d > 0) durations.push(d);
+  }
+  if (durations.length < 2) return null;
+  durations.sort((a, b) => a - b);
+  const mid = Math.floor(durations.length / 2);
+  return durations.length % 2 === 0
+    ? Math.round((durations[mid - 1] + durations[mid]) / 2)
+    : durations[mid];
+}
+
+/** Return the currently-running sync_logs row of any of the given
+ *  types, if one exists — regardless of whether Cronicle has a
+ *  corresponding job entry. Used by the schedule panel's progress
+ *  projection so that a Run-Now-invoked sync (which doesn't go through
+ *  Cronicle) still shows its live progress bar under the event title.
+ *
+ *  Ignores rows older than 1 hour — those are almost certainly stuck
+ *  (process crashed, dev server killed, etc.) and would keep the
+ *  panel's 1s progress poll running indefinitely. The Reclaim banner
+ *  handles stuck rows through a separate path. */
+export async function findRunningSyncLog(
+  types: SyncLogType[],
+  maxAgeSec = 3600,
+): Promise<{ id: string; type: SyncLogType; startedAt: Date } | null> {
+  if (types.length === 0) return null;
+  const [row] = await db
+    .select({
+      id: syncLogs.id,
+      type: syncLogs.type,
+      startedAt: syncLogs.startedAt,
+    })
+    .from(syncLogs)
+    .where(
+      and(
+        eq(syncLogs.status, "running"),
+        inArray(syncLogs.type, types),
+        sql`${syncLogs.startedAt} > NOW() - INTERVAL ${maxAgeSec} SECOND`,
+      ),
+    )
+    .orderBy(desc(syncLogs.startedAt))
+    .limit(1);
+  if (!row || !row.startedAt) return null;
+  return {
+    id: row.id,
+    type: row.type as SyncLogType,
+    startedAt: row.startedAt,
+  };
+}
+
+export async function findStuckRunning(graceMs: number): Promise<LogRow[]> {
+  const graceSec = Math.max(1, Math.floor(graceMs / 1000));
+  const rows = await db
+    .select({
+      log: syncLogs,
+      userName: users.name,
+      userEmail: users.email,
+      userAvatar: users.avatarUrl,
+      memberId: team_members.id,
+    })
+    .from(syncLogs)
+    .leftJoin(users, eq(users.id, syncLogs.triggeredByUserId))
+    .leftJoin(team_members, eq(team_members.email, users.email))
+    .where(
+      and(
+        eq(syncLogs.status, "running"),
+        sql`${syncLogs.startedAt} <= NOW() - INTERVAL ${graceSec} SECOND`,
+      ),
     )
     .orderBy(desc(syncLogs.startedAt));
   return rows.map(toLogRow);

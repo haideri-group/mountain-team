@@ -26,7 +26,10 @@ export async function POST() {
     }
 
     try {
-      const { logId, result } = await runReleaseSync();
+      const { logId, result } = await runReleaseSync({
+        triggeredBy: "manual",
+        triggeredByUserId: session.user.id ?? null,
+      });
 
       return NextResponse.json({
         success: true,

@@ -165,6 +165,7 @@ export async function syncTimeDoctorEntries(sinceDays = 7): Promise<TDSyncResult
 
 export async function runTimeDoctorSync(
   sinceDays = 7,
+  opts?: { triggeredBy?: "cron" | "manual" | null; triggeredByUserId?: string | null },
 ): Promise<{ logId: string; result: TDSyncResult }> {
   const logId = crypto.randomUUID();
   const startedAt = new Date();
@@ -174,6 +175,9 @@ export async function runTimeDoctorSync(
     type: "timedoctor_sync",
     status: "running",
     startedAt,
+    triggeredBy: opts?.triggeredBy ?? null,
+    triggeredByUserId:
+      opts?.triggeredBy === "manual" ? (opts?.triggeredByUserId ?? null) : null,
   });
   emitSyncLogChange({
     id: logId,

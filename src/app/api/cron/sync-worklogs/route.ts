@@ -5,6 +5,7 @@ import {
   releaseSyncLock,
   tryAcquireSyncLock,
 } from "@/lib/sync/concurrency";
+import { consumePendingManual } from "@/lib/sync/triggers";
 
 export async function GET(request: Request) {
   try {
@@ -26,7 +27,11 @@ export async function GET(request: Request) {
     }
 
     try {
-      const { logId, result } = await runWorklogSync(7);
+      const pending = await consumePendingManual("worklog_sync");
+      const { logId, result } = await runWorklogSync(7, {
+        triggeredBy: pending ? "manual" : "cron",
+        triggeredByUserId: pending?.userId ?? null,
+      });
 
       return NextResponse.json({
         success: true,

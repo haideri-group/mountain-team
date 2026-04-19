@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { AlertTriangle, Zap } from "lucide-react";
 import { BRAND_GRADIENT } from "@/lib/brand";
 
@@ -14,7 +14,11 @@ interface Summary {
 }
 
 interface Props {
-  onReclaimAll: () => Promise<void>;
+  /** Triggers the bulk reclaim POST and returns how many rows were
+   *  actually marked `failed`. A result of 0 means "no rows matched the
+   *  1-hour grace window" — surfaced as a toast so the admin knows the
+   *  click was processed even when the banner simply clears. */
+  onReclaimAll: () => Promise<{ reclaimed: number }>;
   /** Parent increments this on any SSE sync_log change — we refetch the
    *  summary on every bump. */
   refreshTick?: number;
@@ -32,6 +36,11 @@ export function LogsSummaryStrip({ onReclaimAll, refreshTick }: Props) {
   const [initialLoading, setInitialLoading] = useState(true);
   const [reclaiming, setReclaiming] = useState(false);
   const [reclaimError, setReclaimError] = useState<string | null>(null);
+  const [reclaimToast, setReclaimToast] = useState<string | null>(null);
+  // Track the toast auto-dismiss timer so a second Reclaim click within
+  // 5s doesn't leave a stray earlier callback alive that clears the
+  // newer toast prematurely, and so we clean up on unmount.
+  const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -58,12 +67,42 @@ export function LogsSummaryStrip({ onReclaimAll, refreshTick }: Props) {
     if (refreshTick !== undefined && refreshTick > 0) load();
   }, [refreshTick, load]);
 
+  // Clear any pending toast auto-dismiss timer when the component unmounts.
+  useEffect(() => {
+    return () => {
+      if (toastTimerRef.current) {
+        clearTimeout(toastTimerRef.current);
+        toastTimerRef.current = null;
+      }
+    };
+  }, []);
+
   const handleReclaim = useCallback(async () => {
     setReclaiming(true);
     setReclaimError(null);
+    setReclaimToast(null);
     try {
-      await onReclaimAll();
+      const { reclaimed } = await onReclaimAll();
       await load();
+      // Always toast the outcome, including 0 — otherwise an admin who
+      // clicks and sees the banner disappear (or linger) can't tell
+      // whether the request ran at all. 0 is the common "nothing was
+      // actually > 1h stuck — banner was stale" case.
+      setReclaimToast(
+        reclaimed === 0
+          ? "No runs stuck for more than 1 hour. Summary refreshed."
+          : `Reclaimed ${reclaimed} stuck run${reclaimed === 1 ? "" : "s"}.`,
+      );
+      // Auto-dismiss after 5s. Clear any previous pending timer first
+      // so rapid repeat clicks don't leave an older callback alive to
+      // wipe the newer toast before the user can read it.
+      if (toastTimerRef.current) {
+        clearTimeout(toastTimerRef.current);
+      }
+      toastTimerRef.current = setTimeout(() => {
+        setReclaimToast(null);
+        toastTimerRef.current = null;
+      }, 5000);
     } catch (e) {
       setReclaimError(e instanceof Error ? e.message : "Reclaim failed");
     } finally {
@@ -125,6 +164,12 @@ export function LogsSummaryStrip({ onReclaimAll, refreshTick }: Props) {
       {reclaimError && (
         <div className="px-5 py-2 bg-red-50 dark:bg-red-950/30 text-xs text-red-700 dark:text-red-400">
           {reclaimError}
+        </div>
+      )}
+
+      {reclaimToast && !reclaimError && (
+        <div className="px-5 py-2 bg-emerald-500/15 text-xs text-emerald-700 dark:text-emerald-400">
+          {reclaimToast}
         </div>
       )}
     </div>

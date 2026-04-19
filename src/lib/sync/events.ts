@@ -27,10 +27,25 @@ export interface SyncLogChangeEvent {
   transition: "started" | "finished";
 }
 
-const emitter = new EventEmitter();
-// Each connected admin's SSE stream registers a listener. Bump generously
-// so we don't hit the default-10 warning under normal multi-tab usage.
-emitter.setMaxListeners(200);
+// Cache the emitter on globalThis so it survives Next.js dev HMR AND is
+// shared across route-segment module instances. Without this, Next.js
+// can instantiate the module once per bundle — the cron route's writer
+// emits on emitter A while the SSE route's listener subscribes on
+// emitter B, and events silently never cross. That looked like "SSE is
+// broken" on the client (no real-time table updates, no progress bar)
+// even though the sync itself was fine.
+const globalForEvents = globalThis as unknown as {
+  _syncLogEmitter?: EventEmitter;
+};
+
+if (!globalForEvents._syncLogEmitter) {
+  globalForEvents._syncLogEmitter = new EventEmitter();
+  // Each connected admin's SSE stream registers a listener. Bump
+  // generously so we don't hit the default-10 warning under normal
+  // multi-tab usage.
+  globalForEvents._syncLogEmitter.setMaxListeners(200);
+}
+const emitter = globalForEvents._syncLogEmitter;
 
 export function emitSyncLogChange(event: SyncLogChangeEvent): void {
   try {

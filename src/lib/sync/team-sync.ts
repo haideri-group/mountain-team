@@ -34,6 +34,57 @@ export interface TeamSyncResult {
   adminAccountId: string;
 }
 
+// --- Progress tracking (in-memory) ---
+
+export interface TeamSyncProgress {
+  phase: "idle" | "fetching" | "processing" | "done" | "failed";
+  message: string;
+  membersProcessed: number;
+  membersTotal: number;
+}
+
+interface TeamSyncState {
+  currentProgress: TeamSyncProgress;
+  activeLogId: string | null;
+}
+
+const globalForTeamSync = globalThis as unknown as {
+  _teamSyncState?: TeamSyncState;
+};
+if (!globalForTeamSync._teamSyncState) {
+  globalForTeamSync._teamSyncState = {
+    currentProgress: {
+      phase: "idle",
+      message: "",
+      membersProcessed: 0,
+      membersTotal: 0,
+    },
+    activeLogId: null,
+  };
+}
+const tstate = globalForTeamSync._teamSyncState;
+
+export function getTeamSyncProgressForLogId(
+  logId: string,
+): TeamSyncProgress | null {
+  if (tstate.activeLogId !== logId) return null;
+  return { ...tstate.currentProgress };
+}
+
+function updateTeamProgress(update: Partial<TeamSyncProgress>) {
+  tstate.currentProgress = { ...tstate.currentProgress, ...update };
+}
+
+function resetTeamProgress() {
+  tstate.currentProgress = {
+    phase: "idle",
+    message: "",
+    membersProcessed: 0,
+    membersTotal: 0,
+  };
+  tstate.activeLogId = null;
+}
+
 // --- Helpers ---
 
 function pickColor(usedColors: Set<string>): string {
@@ -60,6 +111,8 @@ async function syncTeamMembers(): Promise<TeamSyncResult> {
     errors: [],
     adminAccountId: "",
   };
+
+  updateTeamProgress({ phase: "fetching", message: "Fetching team members..." });
 
   // 1. Fetch admin's accountId to exclude
   const adminAccountId = await fetchCurrentUserAccountId();
@@ -92,10 +145,35 @@ async function syncTeamMembers(): Promise<TeamSyncResult> {
     );
   }
 
-  // 5. Resolve user details for all team members (parallel with resilience)
+  // 5. Resolve user details for all team members (parallel with resilience).
+  //
+  // Budget the progress bar over the FULL sync so the ETA is meaningful
+  // even though team-sync finishes in a few seconds: total = members * 2
+  // (one unit per JIRA details fetch + one unit per DB upsert iteration).
+  // The bar ticks up as each parallel details-fetch completes, then
+  // continues during the processing loop.
   const filteredAccountIds = filteredMembers.map((m) => m.accountId);
+  const totalUnits = filteredAccountIds.length * 2;
+  updateTeamProgress({
+    phase: "fetching",
+    message: `Fetching details for ${filteredAccountIds.length} members`,
+    membersTotal: totalUnits,
+    membersProcessed: 0,
+  });
+
+  let fetchedCount = 0;
   const detailResults = await Promise.allSettled(
-    filteredAccountIds.map((id) => fetchJiraUserDetails(id)),
+    filteredAccountIds.map(async (id) => {
+      try {
+        return await fetchJiraUserDetails(id);
+      } finally {
+        fetchedCount += 1;
+        updateTeamProgress({
+          membersProcessed: fetchedCount,
+          message: `Fetching details: ${fetchedCount} / ${filteredAccountIds.length}`,
+        });
+      }
+    }),
   );
 
   const resolvedUsers: JiraUserDetails[] = [];
@@ -116,7 +194,17 @@ async function syncTeamMembers(): Promise<TeamSyncResult> {
   const teamAccountIdSet = new Set(resolvedUsers.map((u) => u.accountId));
   const usedColors = new Set(dbMembers.map((m) => m.color).filter(Boolean) as string[]);
 
+  // Transition to processing phase. `membersTotal` stays at the full
+  // unit budget so the bar doesn't reset to 0; processed is already at
+  // `filteredAccountIds.length` from the fetch phase and will tick up
+  // to 2× from here.
+  updateTeamProgress({
+    phase: "processing",
+    message: `Processing ${resolvedUsers.length} team members`,
+  });
+
   // 6. Process each resolved user (new or update)
+  let membersProcessedCount = filteredAccountIds.length; // fetch phase already counted
   for (const user of resolvedUsers) {
     const existing = dbByAccountId.get(user.accountId);
 
@@ -190,6 +278,8 @@ async function syncTeamMembers(): Promise<TeamSyncResult> {
         result.unchanged++;
       }
     }
+    membersProcessedCount += 1;
+    updateTeamProgress({ membersProcessed: membersProcessedCount });
   }
 
   // 7. Mark departed: DB members (active/on_leave) NOT in team anymore
@@ -221,14 +311,26 @@ async function syncTeamMembers(): Promise<TeamSyncResult> {
 
 // --- Public Wrapper ---
 
-export async function runTeamSync(googleAccessToken?: string): Promise<{
+export async function runTeamSync(
+  googleAccessToken?: string,
+  opts?: { triggeredBy?: "cron" | "manual" | null; triggeredByUserId?: string | null },
+): Promise<{
   logId: string;
   result: TeamSyncResult;
 }> {
   const logId = `sync_${Date.now()}`;
   const startedAt = new Date();
+  resetTeamProgress();
+  tstate.activeLogId = logId;
 
-  // Create running log entry
+  // Create running log entry — stamp triggeredBy at INSERT so the row
+  // is correctly attributed from the moment it exists. Stamping after
+  // logRunEnd races with the client's SSE-driven refetch, which can
+  // display the row (sourced as "cron" via the heuristic) before the
+  // stamp lands.
+  const insertTriggeredBy = opts?.triggeredBy ?? null;
+  const insertUserId =
+    opts?.triggeredBy === "manual" ? (opts?.triggeredByUserId ?? null) : null;
   await db.insert(syncLogs).values({
     id: logId,
     type: "team_sync",
@@ -236,6 +338,8 @@ export async function runTeamSync(googleAccessToken?: string): Promise<{
     startedAt,
     memberCount: 0,
     issueCount: 0,
+    triggeredBy: insertTriggeredBy,
+    triggeredByUserId: insertUserId,
   });
   emitSyncLogChange({
     id: logId,
