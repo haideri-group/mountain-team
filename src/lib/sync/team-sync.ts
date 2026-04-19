@@ -145,10 +145,35 @@ async function syncTeamMembers(): Promise<TeamSyncResult> {
     );
   }
 
-  // 5. Resolve user details for all team members (parallel with resilience)
+  // 5. Resolve user details for all team members (parallel with resilience).
+  //
+  // Budget the progress bar over the FULL sync so the ETA is meaningful
+  // even though team-sync finishes in a few seconds: total = members * 2
+  // (one unit per JIRA details fetch + one unit per DB upsert iteration).
+  // The bar ticks up as each parallel details-fetch completes, then
+  // continues during the processing loop.
   const filteredAccountIds = filteredMembers.map((m) => m.accountId);
+  const totalUnits = filteredAccountIds.length * 2;
+  updateTeamProgress({
+    phase: "fetching",
+    message: `Fetching details for ${filteredAccountIds.length} members`,
+    membersTotal: totalUnits,
+    membersProcessed: 0,
+  });
+
+  let fetchedCount = 0;
   const detailResults = await Promise.allSettled(
-    filteredAccountIds.map((id) => fetchJiraUserDetails(id)),
+    filteredAccountIds.map(async (id) => {
+      try {
+        return await fetchJiraUserDetails(id);
+      } finally {
+        fetchedCount += 1;
+        updateTeamProgress({
+          membersProcessed: fetchedCount,
+          message: `Fetching details: ${fetchedCount} / ${filteredAccountIds.length}`,
+        });
+      }
+    }),
   );
 
   const resolvedUsers: JiraUserDetails[] = [];
@@ -169,17 +194,17 @@ async function syncTeamMembers(): Promise<TeamSyncResult> {
   const teamAccountIdSet = new Set(resolvedUsers.map((u) => u.accountId));
   const usedColors = new Set(dbMembers.map((m) => m.color).filter(Boolean) as string[]);
 
-  // Expose total for the /automations progress bar. Processed ticks up
-  // inside the loop below.
+  // Transition to processing phase. `membersTotal` stays at the full
+  // unit budget so the bar doesn't reset to 0; processed is already at
+  // `filteredAccountIds.length` from the fetch phase and will tick up
+  // to 2× from here.
   updateTeamProgress({
     phase: "processing",
     message: `Processing ${resolvedUsers.length} team members`,
-    membersTotal: resolvedUsers.length,
-    membersProcessed: 0,
   });
 
   // 6. Process each resolved user (new or update)
-  let membersProcessedCount = 0;
+  let membersProcessedCount = filteredAccountIds.length; // fetch phase already counted
   for (const user of resolvedUsers) {
     const existing = dbByAccountId.get(user.accountId);
 
