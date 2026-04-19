@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { X, ExternalLink, AlertTriangle, CheckCircle2, Loader2 } from "lucide-react";
 import { StatusPill } from "./status-pill";
 
@@ -72,6 +72,29 @@ function formatEpoch(sec: number | null): string {
 export function LogsDrawer({ open, detail, loading, onClose, onMarkFailed }: Props) {
   const [marking, setMarking] = useState(false);
   const [markError, setMarkError] = useState<string | null>(null);
+  const closeButtonRef = useRef<HTMLButtonElement>(null);
+
+  // A11y: when the drawer opens, focus the close button (so keyboard
+  // users land somewhere sensible), listen for ESC, and lock the
+  // underlying page scroll so the overlay behaves like a real modal.
+  // Hook declared unconditionally (above the early-return) per
+  // rules-of-hooks; the body itself no-ops when `open === false`.
+  useEffect(() => {
+    if (!open) return;
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    // Defer focus to the next microtask so the button actually exists
+    // on the first render pass.
+    queueMicrotask(() => closeButtonRef.current?.focus());
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.body.style.overflow = prevOverflow;
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open, onClose]);
 
   if (!open) return null;
 
@@ -93,12 +116,20 @@ export function LogsDrawer({ open, detail, loading, onClose, onMarkFailed }: Pro
       <button
         aria-label="Close drawer"
         onClick={onClose}
+        tabIndex={-1}
         className="absolute inset-0 bg-black/40 backdrop-blur-sm"
       />
-      <div className="absolute right-0 top-0 h-full w-full sm:w-[560px] bg-background shadow-2xl overflow-y-auto">
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="drawer-title"
+        className="absolute right-0 top-0 h-full w-full sm:w-[560px] bg-background shadow-2xl overflow-y-auto"
+      >
         <div className="sticky top-0 z-10 flex items-center justify-between p-5 bg-background/95 backdrop-blur">
           <div>
-            <h2 className="text-lg font-bold font-mono">Run Details</h2>
+            <h2 id="drawer-title" className="text-lg font-bold font-mono">
+              Run Details
+            </h2>
             {detail && (
               <p className="text-xs text-muted-foreground font-mono mt-0.5">
                 {detail.log.id}
@@ -106,8 +137,9 @@ export function LogsDrawer({ open, detail, loading, onClose, onMarkFailed }: Pro
             )}
           </div>
           <button
+            ref={closeButtonRef}
             onClick={onClose}
-            className="p-2 rounded-lg hover:bg-muted/60 transition-colors"
+            className="p-2 rounded-lg hover:bg-muted/60 transition-colors focus:outline-none focus:ring-2 focus:ring-[#ff8400]/30"
             aria-label="Close"
           >
             <X className="h-5 w-5" />
