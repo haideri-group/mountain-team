@@ -437,14 +437,26 @@ export async function runDeploymentBackfill(): Promise<BackfillRunResult> {
     }
 
     // Reclaim the crashed row before proceeding.
+    const recoveredAt = new Date();
     await db
       .update(syncLogs)
       .set({
         status: "failed",
-        completedAt: new Date(),
+        completedAt: recoveredAt,
         error: "Recovered stale deployment_backfill run lock",
       })
       .where(eq(syncLogs.id, alreadyRunningLog.id));
+    // Emit SSE so the /automations summary + table refresh the stale
+    // stuck-count; without this the "Reclaim all stuck" banner can
+    // linger on the client even though the row is already `failed`.
+    emitSyncLogChange({
+      id: alreadyRunningLog.id,
+      type: "deployment_backfill",
+      status: "failed",
+      startedAt: null,
+      completedAt: recoveredAt.toISOString(),
+      transition: "finished",
+    });
   }
 
   bstate.runInFlight = true;

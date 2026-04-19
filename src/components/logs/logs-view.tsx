@@ -183,7 +183,7 @@ export function LogsView() {
     [load, loadDetail],
   );
 
-  const onReclaimAll = useCallback(async () => {
+  const onReclaimAll = useCallback(async (): Promise<{ reclaimed: number }> => {
     // Match the banner's "stuck for more than 1 hour" semantic. Server
     // default is 2 min (safe lower bound); we pass 1h explicitly so the
     // button can't accidentally reclaim a long-running sync (e.g. a
@@ -198,7 +198,16 @@ export function LogsView() {
       const body = await res.json().catch(() => ({}));
       throw new Error(body.error || `HTTP ${res.status}`);
     }
+    const body = (await res.json().catch(() => ({}))) as {
+      reclaimed?: number;
+    };
     await load();
+    // Force summary + schedule panels to refetch too. When `reclaimed=0`
+    // no SSE event fires from the server, so without this bump the
+    // summary strip's stuckOver1h count can stay stale and the banner
+    // would linger even though the server reports zero stuck rows.
+    setRefreshTick((t) => t + 1);
+    return { reclaimed: body.reclaimed ?? 0 };
   }, [load]);
 
   return (
