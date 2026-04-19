@@ -154,8 +154,25 @@ export function captureRateLimitForMode(mode: AuthMode, res: Response): void {
     resetAt: new Date(resetSec * 1000),
   };
 
-  if (mode === "app") appRate = snap;
-  else patRate = snap;
+  // Out-of-order guard: if a prior snapshot exists for the same reset
+  // window, keep the LOWER `remaining` so a late-arriving response with
+  // a stale (higher) count cannot inflate the stored budget.
+  // `selectMode()` and the backfill circuit breaker read this counter —
+  // an inflated value would let us commit work we cannot actually spend.
+  // If `resetAt` differs, the window has rolled over and replacement is
+  // correct.
+  const current = mode === "app" ? appRate : patRate;
+  const merged: RateLimitSnapshot =
+    current && current.resetAt.getTime() === snap.resetAt.getTime()
+      ? {
+          remaining: Math.min(current.remaining, snap.remaining),
+          limit: snap.limit,
+          resetAt: snap.resetAt,
+        }
+      : snap;
+
+  if (mode === "app") appRate = merged;
+  else patRate = merged;
 }
 
 /** Last-seen rate limit for the auth mode that ACTUALLY served recent

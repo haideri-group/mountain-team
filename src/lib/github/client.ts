@@ -42,6 +42,24 @@ export async function getGitHubRequestHeaders(): Promise<{
   };
 }
 
+/** Merge caller-supplied headers with GitHub auth/default headers.
+ *  `RequestInit.headers` is `HeadersInit` — it may be a `Headers`
+ *  instance, a `[string, string][]` tuple array, or a plain object.
+ *  Object-spread silently drops headers for the first two forms
+ *  (`{...new Headers()}` is `{}`, `{...[["k","v"]]}` produces numeric
+ *  keys). Pipe through the `Headers` constructor so all three shapes
+ *  survive, then apply GitHub auth on top. */
+function mergeRequestHeaders(
+  callerHeaders: HeadersInit | undefined,
+  authHeaders: Record<string, string>,
+): Headers {
+  const merged = new Headers(callerHeaders);
+  for (const [key, value] of Object.entries(authHeaders)) {
+    merged.set(key, value);
+  }
+  return merged;
+}
+
 /** Low-level fetch with one-retry on App 401. Installation tokens can
  *  go stale between requests (key rotation, permissions revoked at the
  *  org) and our cache would keep serving them for up to 55 min. On a
@@ -55,7 +73,7 @@ export async function githubRawFetch(
   let { headers, mode } = await getGitHubRequestHeaders();
   let res = await fetch(url, {
     ...init,
-    headers: { ...(init?.headers || {}), ...headers },
+    headers: mergeRequestHeaders(init?.headers, headers),
     cache: "no-store",
   });
   captureRateLimitForMode(mode, res);
@@ -65,7 +83,7 @@ export async function githubRawFetch(
     ({ headers, mode } = await getGitHubRequestHeaders());
     res = await fetch(url, {
       ...init,
-      headers: { ...(init?.headers || {}), ...headers },
+      headers: mergeRequestHeaders(init?.headers, headers),
       cache: "no-store",
     });
     captureRateLimitForMode(mode, res);
