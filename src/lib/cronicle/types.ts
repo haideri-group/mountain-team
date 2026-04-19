@@ -76,8 +76,14 @@ export interface CronicleEventPublic {
     elapsed?: number;
     /** Id of the most recent sync_logs row matching this event's type —
      *  used by the UI to link the "last run" icon straight to the
-     *  existing drawer. Null if no correlated run found. */
+     *  existing drawer. Null when no correlated app-side record exists
+     *  (e.g. Cronicle's HTTP fire failed with a DNS / network error and
+     *  the request never reached TeamFlow). */
     syncLogId: string | null;
+    /** Direct link to the Cronicle job details page, for jobs where we
+     *  have no matching `sync_logs` row. Lets admins click "failed" and
+     *  land on Cronicle's own error log. */
+    jobDetailsUrl: string | null;
   } | null;
   nextRun: number | null;           // epoch seconds, server-computed from timing
 }
