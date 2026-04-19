@@ -1,7 +1,14 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Calendar, CheckCircle2, XCircle, Clock, Loader2 } from "lucide-react";
+import {
+  Calendar,
+  CheckCircle2,
+  XCircle,
+  Clock,
+  Loader2,
+  Play,
+} from "lucide-react";
 
 interface CronicleEventPublic {
   id: string;
@@ -77,6 +84,8 @@ function statusIcon(s: string) {
 export function CronicleSchedulePanel() {
   const [data, setData] = useState<Response | null>(null);
   const [loading, setLoading] = useState(true);
+  const [runningIds, setRunningIds] = useState<Record<string, boolean>>({});
+  const [toast, setToast] = useState<{ kind: "ok" | "err"; msg: string } | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -97,6 +106,38 @@ export function CronicleSchedulePanel() {
     return () => clearInterval(handle);
   }, [load]);
 
+  const runEvent = useCallback(
+    async (eventId: string, title: string) => {
+      setRunningIds((r) => ({ ...r, [eventId]: true }));
+      setToast(null);
+      try {
+        const res = await fetch(
+          `/api/logs/cronicle/events/${encodeURIComponent(eventId)}/run`,
+          { method: "POST" },
+        );
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);
+        setToast({ kind: "ok", msg: `Triggered "${title}"` });
+        // Refresh the schedule so the new "last run" reflects.
+        setTimeout(load, 1500);
+      } catch (e) {
+        setToast({
+          kind: "err",
+          msg: e instanceof Error ? e.message : "Failed to trigger",
+        });
+      } finally {
+        setRunningIds((r) => {
+          const next = { ...r };
+          delete next[eventId];
+          return next;
+        });
+        // Auto-clear toast after 5s
+        setTimeout(() => setToast(null), 5000);
+      }
+    },
+    [load],
+  );
+
   return (
     <div className="rounded-xl bg-card overflow-hidden">
       <div className="flex items-center justify-between p-4">
@@ -112,6 +153,18 @@ export function CronicleSchedulePanel() {
           </span>
         )}
       </div>
+
+      {toast && (
+        <div
+          className={`px-4 py-2 text-xs ${
+            toast.kind === "ok"
+              ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400"
+              : "bg-red-50 dark:bg-red-950/30 text-red-700 dark:text-red-400"
+          }`}
+        >
+          {toast.msg}
+        </div>
+      )}
 
       {loading && (
         <div className="p-4 text-sm text-muted-foreground">Loading…</div>
@@ -134,16 +187,17 @@ export function CronicleSchedulePanel() {
 
       {!loading && data && data.events.length > 0 && (
         <div className="border-t border-muted/40">
-          <div className="hidden md:grid grid-cols-[2fr_1.5fr_1fr_1fr] gap-3 px-4 py-2 text-[10px] font-bold font-mono uppercase tracking-wider text-muted-foreground bg-muted/20">
+          <div className="hidden md:grid grid-cols-[2fr_1.5fr_1fr_1fr_auto] gap-3 px-4 py-2 text-[10px] font-bold font-mono uppercase tracking-wider text-muted-foreground bg-muted/20">
             <span>Event</span>
             <span>Schedule</span>
             <span>Last run</span>
             <span>Next run</span>
+            <span></span>
           </div>
           {data.events.map((e) => (
             <div
               key={e.id}
-              className="grid grid-cols-[1fr] md:grid-cols-[2fr_1.5fr_1fr_1fr] gap-3 px-4 py-3 items-center"
+              className="grid grid-cols-[1fr_auto] md:grid-cols-[2fr_1.5fr_1fr_1fr_auto] gap-3 px-4 py-3 items-center"
             >
               <div className="min-w-0">
                 <p className="text-sm truncate">{e.title}</p>
@@ -151,7 +205,9 @@ export function CronicleSchedulePanel() {
                   {e.urlPath || "—"}
                 </p>
               </div>
-              <span className="text-xs text-muted-foreground">{formatTiming(e.timing)}</span>
+              <span className="hidden md:inline text-xs text-muted-foreground">
+                {formatTiming(e.timing)}
+              </span>
               <span className="hidden md:flex items-center gap-1.5 text-xs font-mono">
                 {e.lastRun ? (
                   <>
@@ -165,6 +221,20 @@ export function CronicleSchedulePanel() {
               <span className="hidden md:inline text-xs font-mono text-muted-foreground">
                 {formatEpoch(e.nextRun)}
               </span>
+              <button
+                onClick={() => runEvent(e.id, e.title)}
+                disabled={!!runningIds[e.id] || !e.enabled}
+                className="inline-flex items-center gap-1.5 px-3 h-8 rounded-full text-[11px] font-bold font-mono uppercase tracking-wider text-white shadow-md transition-all disabled:opacity-50"
+                style={{ background: "linear-gradient(135deg, #944a00, #ff8400)" }}
+                title={e.enabled ? "Trigger this cron now via Cronicle" : "Event is disabled in Cronicle"}
+              >
+                {runningIds[e.id] ? (
+                  <Loader2 className="h-3 w-3 animate-spin" />
+                ) : (
+                  <Play className="h-3 w-3" />
+                )}
+                Run
+              </button>
             </div>
           ))}
         </div>

@@ -13,9 +13,9 @@ export default async function LogsPage() {
   return (
     <div>
       <div className="mb-6">
-        <h1 className="text-2xl font-bold font-mono">Cron Logs</h1>
+        <h1 className="text-2xl font-bold font-mono">Automations</h1>
         <p className="text-sm text-muted-foreground mt-1">
-          Scheduled + manual sync runs for TeamFlow — app records correlated with Cronicle
+          Scheduled + manual TeamFlow jobs — trigger, monitor, and reclaim stuck runs
         </p>
       </div>
 
