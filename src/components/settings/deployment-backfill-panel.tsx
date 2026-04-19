@@ -45,6 +45,12 @@ interface DeploymentBackfillPanelProps {
   totalTracked: number;
 }
 
+// Human-readable schedule for the backfill cron. Authoritative schedule
+// lives in Cronicle (external config) as `30 */3 * * *` — see
+// `src/app/api/cron/deployment-backfill/route.ts` doc comment. Update
+// both places together if the cadence changes.
+const BACKFILL_SCHEDULE_LABEL = "Every 3h · :30";
+
 function formatTimeAgo(date: string | Date | null): string {
   if (!date) return "Never";
   const d = new Date(date);
@@ -375,7 +381,7 @@ export function DeploymentBackfillPanel({
                   <p className="text-[10px] font-bold font-mono uppercase tracking-wider text-muted-foreground">
                     Schedule
                   </p>
-                  <p className="text-sm font-mono mt-0.5">Every 3h · :30</p>
+                  <p className="text-sm font-mono mt-0.5">{BACKFILL_SCHEDULE_LABEL}</p>
                 </div>
               </div>
             )}
