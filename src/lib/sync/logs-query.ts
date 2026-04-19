@@ -201,17 +201,34 @@ export async function summarize24h(): Promise<Summary24h> {
   };
 }
 
-/** ID of the most recent sync_log whose type is in the given set, regardless
- *  of status. Used by the Scheduled Crons panel to jump from a Cronicle
- *  event's last-run icon straight to the drawer for the correlated run. */
-export async function findLatestSyncLogIdByTypes(
-  types: SyncLogType[],
-): Promise<string | null> {
-  if (types.length === 0) return null;
+/** ID of the sync_log of the given type(s) whose `startedAt` is closest
+ *  to the provided anchor time, within `windowSec` seconds. Returns null
+ *  if no row falls inside the window — better than misleadingly surfacing
+ *  a different run.
+ *
+ *  Used by the Scheduled Crons panel to jump from a Cronicle event's
+ *  last-run icon to the drawer for the EXACT matching sync_log (not
+ *  just "the latest of this type"). */
+export async function findSyncLogIdNearTime(input: {
+  types: SyncLogType[];
+  anchorEpochSec: number;
+  windowSec?: number;
+}): Promise<string | null> {
+  const { types, anchorEpochSec } = input;
+  const windowSec = input.windowSec ?? 60;
+  if (types.length === 0 || !Number.isFinite(anchorEpochSec)) return null;
+  const from = new Date((anchorEpochSec - windowSec) * 1000);
+  const to = new Date((anchorEpochSec + windowSec) * 1000);
   const [row] = await db
     .select({ id: syncLogs.id })
     .from(syncLogs)
-    .where(inArray(syncLogs.type, types))
+    .where(
+      and(
+        inArray(syncLogs.type, types),
+        gte(syncLogs.startedAt, from),
+        lte(syncLogs.startedAt, to),
+      ),
+    )
     .orderBy(desc(syncLogs.startedAt))
     .limit(1);
   return row?.id ?? null;

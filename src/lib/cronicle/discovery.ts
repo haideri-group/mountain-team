@@ -1,6 +1,6 @@
 import "server-only";
 import { cronicleGet, isCronicleConfigured } from "./client";
-import { findLatestSyncLogIdByTypes, type SyncLogType } from "@/lib/sync/logs-query";
+import { findSyncLogIdNearTime, type SyncLogType } from "@/lib/sync/logs-query";
 import { TYPE_TO_URL_PATH } from "./correlate";
 import type { CronicleEvent, CronicleEventPublic, CronicleJob } from "./types";
 
@@ -191,18 +191,29 @@ export async function projectEventPublic(
   const jobs = await listEventHistory(event.id, 1);
   const latest = jobs[0];
 
+  // Correlate by TIMESTAMP not just by type — otherwise a later manual
+  // sync would shadow the specific cron run the user is clicking on.
+  // Uses the Cronicle job's `event_start` (Cronicle's intended fire time)
+  // with fallback to `time_start`, matching `correlate.ts`'s forward pass.
   let syncLogId: string | null = null;
   const urlPath = extractUrlPath(event.params.url);
   const types = syncTypesForUrlPath(urlPath);
-  if (types.length > 0) {
-    try {
-      syncLogId = await findLatestSyncLogIdByTypes(types);
-    } catch (err) {
-      console.warn(
-        "[cronicle] sync_log lookup failed for event",
-        event.id,
-        err instanceof Error ? err.message : String(err),
-      );
+  if (latest && types.length > 0) {
+    const anchor = latest.event_start ?? latest.time_start;
+    if (Number.isFinite(anchor)) {
+      try {
+        syncLogId = await findSyncLogIdNearTime({
+          types,
+          anchorEpochSec: anchor,
+          windowSec: 60,
+        });
+      } catch (err) {
+        console.warn(
+          "[cronicle] sync_log lookup failed for event",
+          event.id,
+          err instanceof Error ? err.message : String(err),
+        );
+      }
     }
   }
 
