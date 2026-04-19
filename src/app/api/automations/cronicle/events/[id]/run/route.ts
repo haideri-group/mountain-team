@@ -1,46 +1,51 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/auth";
-import { cronicleGet, isCronicleConfigured } from "@/lib/cronicle/client";
 import {
   invalidateScheduleCache,
   listTeamFlowEvents,
 } from "@/lib/cronicle/discovery";
 import { TYPE_TO_URL_PATH } from "@/lib/cronicle/correlate";
-import { getActiveLock, isSyncRunning } from "@/lib/sync/concurrency";
-import { markPendingManual } from "@/lib/sync/triggers";
+import {
+  getActiveLock,
+  isSyncRunning,
+  releaseSyncLock,
+  tryAcquireSyncLock,
+} from "@/lib/sync/concurrency";
+import { runIssueSync } from "@/lib/sync/issue-sync";
+import { runTeamSync } from "@/lib/sync/team-sync";
+import { runReleaseSync } from "@/lib/sync/release-sync";
+import { runWorklogSync } from "@/lib/sync/worklog-sync";
+import { runTimeDoctorSync } from "@/lib/sync/timedoctor-sync";
+import { runDeploymentBackfill } from "@/lib/sync/deployment-backfill";
 import type { SyncLogType } from "@/lib/sync/logs-query";
 
 /**
  * POST /api/automations/cronicle/events/[id]/run
  *
- * Fires a one-off run of a Cronicle event. Admin-only.
+ * Triggers a one-off run of a TeamFlow sync that's registered as a
+ * Cronicle event. Admin-only.
  *
- * Constraints:
- *   - Event id MUST be one of the TeamFlow-category events discovered via
- *     `CRONICLE_TEAMFLOW_CATEGORY_ID`. An admin of this app can't use this
- *     endpoint to fire arbitrary homelab-wide Cronicle jobs — that would
- *     be privilege expansion beyond TeamFlow's scope.
- *   - Cronicle must be configured; otherwise we can't invoke anything.
+ * Architecture note: previously this endpoint called Cronicle's
+ * `run_event` API to let Cronicle dispatch the HTTP fire. That worked
+ * for record-keeping (Cronicle history showed the manual run) but
+ * introduced a cross-process bug: if Cronicle's configured URL is a
+ * DIFFERENT server than the one receiving the Run click (e.g. dev
+ * clicks but Cronicle fires prod), the dev-process's marker registry
+ * is useless — prod has no idea the run was manual, so it stamps
+ * `triggeredBy='cron'`.
  *
- * Implementation note: Cronicle's run_event API uses a POST shape but
- * our `cronicleGet` helper is GET-only. Calling `/api/app/run_event/v1`
- * with `?id=...` in the query string works for the instances we've
- * observed (Cronicle 0.9.74). If a future version rejects GET, switch to
- * a dedicated POST helper.
+ * New approach: run the sync DIRECTLY on whichever server received
+ * the click. Same process → session.user.id is captured, the runner's
+ * INSERT stamps `triggeredBy='manual'` + the userId with zero indirection.
+ * Fire-and-forget so the HTTP response returns immediately; the
+ * runner logs its own completion via the existing sync_logs + SSE
+ * channels. Concurrency lock prevents parallel runs.
+ *
+ * Trade-off: Cronicle's own job history no longer records manual runs.
+ * The /automations page reads from sync_logs (the source of truth for
+ * the app) so the admin still sees everything there.
  */
 
-interface CronicleRunResponse {
-  code: number;
-  ids?: string[];
-  description?: string;
-}
-
-/**
- * Reverse of `TYPE_TO_URL_PATH` — given the URL the Cronicle event fires
- * at, return a representative `SyncLogType` whose family we can check.
- * Returns null for URLs not managed by TeamFlow syncs (in which case we
- * skip the pre-check and rely on the runner's internal guard).
- */
 function resolveSyncTypeFromUrl(url: string): SyncLogType | null {
   for (const [type, path] of Object.entries(TYPE_TO_URL_PATH) as Array<
     [SyncLogType, string]
@@ -49,6 +54,29 @@ function resolveSyncTypeFromUrl(url: string): SyncLogType | null {
     if (url.includes(path)) return type;
   }
   return null;
+}
+
+function fireRunner(
+  type: SyncLogType,
+  userId: string | null,
+): Promise<unknown> {
+  const opts = { triggeredBy: "manual" as const, triggeredByUserId: userId };
+  switch (type) {
+    case "team_sync":
+      return runTeamSync(undefined, opts);
+    case "full":
+    case "incremental":
+    case "manual":
+      return runIssueSync(type, undefined, opts);
+    case "release_sync":
+      return runReleaseSync(opts);
+    case "worklog_sync":
+      return runWorklogSync(7, opts);
+    case "timedoctor_sync":
+      return runTimeDoctorSync(7, opts);
+    case "deployment_backfill":
+      return runDeploymentBackfill(opts);
+  }
 }
 
 export async function POST(
@@ -60,16 +88,10 @@ export async function POST(
     return NextResponse.json({ error: "Admin access required" }, { status: 403 });
   }
 
-  if (!isCronicleConfigured()) {
-    return NextResponse.json(
-      { error: "Cronicle is not configured on this server" },
-      { status: 503 },
-    );
-  }
-
   const { id } = await params;
 
   // Whitelist check: the event must belong to the TeamFlow category.
+  // This also gives us the event's URL so we can map it to a sync type.
   const events = await listTeamFlowEvents();
   const event = events.find((e) => e.id === id);
   if (!event) {
@@ -79,13 +101,18 @@ export async function POST(
     );
   }
 
-  // Pre-check the family-aware concurrency lock. If a run is already in
-  // flight (scheduled or another admin's click), surface a 409 rather than
-  // firing a duplicate Cronicle job. This avoids two parallel hits against
-  // the same upstream API for one logical cron.
   const eventUrl = event.params?.url ?? "";
   const representativeType = resolveSyncTypeFromUrl(eventUrl);
-  if (representativeType && isSyncRunning(representativeType)) {
+  if (!representativeType) {
+    return NextResponse.json(
+      { error: `No TeamFlow sync type mapped to URL: ${eventUrl}` },
+      { status: 400 },
+    );
+  }
+
+  // Pre-check concurrency lock — surface a 409 so the UI toast can
+  // explain "already running" instead of silently firing a duplicate.
+  if (isSyncRunning(representativeType)) {
     const lock = getActiveLock(representativeType);
     return NextResponse.json(
       {
@@ -96,45 +123,46 @@ export async function POST(
     );
   }
 
-  // Mark BEFORE firing Cronicle so whenever Cronicle's subsequent HTTP
-  // call to /api/cron/* lands, `consumePendingManual` returns true and
-  // the sync_log row gets stamped `triggeredBy='manual'` instead of
-  // inheriting the default `cron`. 60s TTL is plenty of headroom —
-  // Cronicle typically dispatches within 1–3 seconds of run_event.
-  console.log(
-    `[run-now] eventId=${id} eventUrl=${eventUrl} representativeType=${representativeType ?? "null"} sessionUserId=${session.user.id ?? "UNDEFINED"}`,
-  );
-  if (representativeType) {
-    await markPendingManual(representativeType, session.user.id ?? null);
-  }
-
-  const res = await cronicleGet<CronicleRunResponse>("/api/app/run_event/v1", {
-    id,
-  });
-  if (!res.ok) {
-    return NextResponse.json(
-      { error: `Cronicle call failed: ${res.error}` },
-      { status: 502 },
-    );
-  }
-  if (res.data.code !== 0) {
+  // Acquire the lock NOW so the fire-and-forget run below owns it for
+  // the entire duration. Concurrency guarantees are preserved even
+  // though we aren't awaiting the runner.
+  if (!tryAcquireSyncLock(representativeType)) {
+    const lock = getActiveLock(representativeType);
     return NextResponse.json(
       {
-        error: `Cronicle rejected the trigger: ${res.data.description ?? "code=" + res.data.code}`,
+        error: "This cron is already running",
+        runningSince: lock?.startedAt.toISOString() ?? null,
       },
-      { status: 502 },
+      { status: 409 },
     );
   }
 
-  // Drop the schedule + history caches so the UI's next refetch sees
-  // the new job in Cronicle's history instead of the pre-trigger snapshot.
-  invalidateScheduleCache();
+  const userId = session.user.id ?? null;
 
-  const jobIds = res.data.ids ?? [];
+  // Fire-and-forget: return to the client immediately with the lock
+  // held; the runner writes its own sync_log row (with triggeredBy=
+  // 'manual' + userId) and releases the lock when it completes.
+  (async () => {
+    try {
+      await fireRunner(representativeType, userId);
+    } catch (err) {
+      console.error(
+        `[run-now] runner failed for ${representativeType}:`,
+        err instanceof Error ? err.message : String(err),
+      );
+    } finally {
+      releaseSyncLock(representativeType);
+      // Invalidate Cronicle schedule cache so the panel refreshes.
+      invalidateScheduleCache();
+    }
+  })();
+
   return NextResponse.json({
     success: true,
     eventId: id,
     eventTitle: event.title,
-    jobIds,
+    syncType: representativeType,
+    triggeredBy: "manual",
+    triggeredByUserId: userId,
   });
 }
