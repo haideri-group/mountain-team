@@ -217,9 +217,16 @@ export function DeploymentBackfillPanel({
         ? "text-red-600 dark:text-red-400"
         : "text-muted-foreground";
 
+  // `totalTracked` and `unsyncedCount` come from two separate COUNT(*) queries
+  // in settings/page.tsx. While issues are being ingested, the later query can
+  // see newer rows than the earlier one — transiently producing
+  // `unsyncedCount > totalTracked`. Compute from an internally consistent
+  // bucket sum and clamp synced so the UI never renders negative/>100 values.
+  const syncedCount = Math.max(0, totalTracked - unsyncedCount);
+  const coverageDenominator = syncedCount + unsyncedCount;
   const coveragePct =
-    totalTracked > 0
-      ? Math.round(((totalTracked - unsyncedCount) / totalTracked) * 100)
+    coverageDenominator > 0
+      ? Math.round((syncedCount / coverageDenominator) * 100)
       : 0;
 
   return (
@@ -264,7 +271,7 @@ export function DeploymentBackfillPanel({
             />
           </div>
           <div className="flex items-center justify-between text-[10px] font-mono text-muted-foreground">
-            <span>{(totalTracked - unsyncedCount).toLocaleString()} synced</span>
+            <span>{syncedCount.toLocaleString()} synced</span>
             <span>{unsyncedCount.toLocaleString()} remaining</span>
             <span>{totalTracked.toLocaleString()} total tracked</span>
           </div>

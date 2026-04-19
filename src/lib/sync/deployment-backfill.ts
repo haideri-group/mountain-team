@@ -8,10 +8,7 @@ import {
   getRateLimit,
 } from "@/lib/github/client";
 import { sanitizeErrorText } from "@/lib/jira/client";
-import {
-  getDeploymentCompleteness,
-  getExpectedSites,
-} from "@/lib/deployments/brand-resolver";
+import { getDeploymentCompleteness } from "@/lib/deployments/brand-resolver";
 
 /**
  * Phase 20 — rate-limit-aware deployment backfill.
@@ -239,9 +236,18 @@ async function selectQueue(limit: number): Promise<QueueCandidate[]> {
       // completeness === null means brands unknown — keep the row (can't tell)
       // completeness.complete === true means every expected site is deployed
       if (completeness && completeness.complete) continue;
-      // Also drop if brands is set but maps to empty expected (e.g., "Wholesale")
-      const expected = getExpectedSites(c.brands, allProductionSites);
-      if (expected && expected.length === 0) continue;
+      // Also drop done/closed issues whose brands map to no expected sites.
+      // `getExpectedSites` returns `null` (not `[]`) when `sites.size === 0`,
+      // so we can't just check `expected.length === 0` — inspect the parsed
+      // brands directly. `Wholesale` is the only brand in BRAND_SITE_MAP with
+      // an empty site list today; any brand that maps to `[]` falls here.
+      if (c.brands) {
+        const brands = c.brands
+          .split(",")
+          .map((b) => b.trim().toLowerCase())
+          .filter(Boolean);
+        if (brands.length > 0 && brands.every((b) => b === "wholesale")) continue;
+      }
     }
     filtered.push(c);
     if (filtered.length >= limit) break;
@@ -324,10 +330,16 @@ export async function runDeploymentBackfill(): Promise<BackfillRunResult> {
 
   // Cross-instance guard: if another process has a running sync_logs row
   // for deployment_backfill, defer. Railway hobby is single-instance today,
-  // but this keeps the guarantee intact if we scale horizontally or if a
-  // stuck log row from a previous crash still says "running".
+  // but this keeps the guarantee intact if we scale horizontally.
+  //
+  // Staleness recovery: if the running row is older than STALE_CUTOFF_MS
+  // (6h — well over any real backfill duration), treat it as a crashed run,
+  // mark it failed, and proceed with this run. Without this, a process kill
+  // between `logRunStart()` and `logRunEnd()` would leave a permanent
+  // "running" row and block every future cron/admin invocation.
+  const STALE_CUTOFF_MS = 6 * 60 * 60 * 1000;
   const [alreadyRunningLog] = await db
-    .select({ id: syncLogs.id })
+    .select({ id: syncLogs.id, startedAt: syncLogs.startedAt })
     .from(syncLogs)
     .where(
       and(
@@ -338,11 +350,29 @@ export async function runDeploymentBackfill(): Promise<BackfillRunResult> {
     .limit(1);
 
   if (alreadyRunningLog) {
-    return {
-      ...result,
-      deferred: true,
-      durationMs: Date.now() - startedAt,
-    };
+    const startedAtMs = alreadyRunningLog.startedAt
+      ? new Date(alreadyRunningLog.startedAt).getTime()
+      : 0;
+    const isStale =
+      startedAtMs <= 0 || Date.now() - startedAtMs > STALE_CUTOFF_MS;
+
+    if (!isStale) {
+      return {
+        ...result,
+        deferred: true,
+        durationMs: Date.now() - startedAt,
+      };
+    }
+
+    // Reclaim the crashed row before proceeding.
+    await db
+      .update(syncLogs)
+      .set({
+        status: "failed",
+        completedAt: new Date(),
+        error: "Recovered stale deployment_backfill run lock",
+      })
+      .where(eq(syncLogs.id, alreadyRunningLog.id));
   }
 
   runInFlight = true;
