@@ -1,10 +1,12 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 import { auth } from "@/auth";
-import { db } from "@/lib/db";
-import { syncLogs } from "@/lib/db/schema";
-import { eq } from "drizzle-orm";
 import { runIssueSync, getSyncProgress } from "@/lib/sync/issue-sync";
+import {
+  getActiveLock,
+  releaseSyncLock,
+  tryAcquireSyncLock,
+} from "@/lib/sync/concurrency";
 
 // POST /api/sync/board?key=GOLC — Sync a single board (admin only)
 export async function POST(request: NextRequest) {
@@ -25,32 +27,35 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Check if a sync is already running
-    const [running] = await db
-      .select()
-      .from(syncLogs)
-      .where(eq(syncLogs.status, "running"))
-      .limit(1);
-
-    if (running) {
+    // Family-aware lock: per-board manual sync shares the `issue` family
+    // with scheduled full/incremental, so we can't double-fire JIRA.
+    if (!tryAcquireSyncLock("manual")) {
+      const lock = getActiveLock("manual");
       return NextResponse.json(
-        { error: "A sync is already in progress" },
+        {
+          error: "An issue sync is already in progress",
+          runningSince: lock?.startedAt.toISOString() ?? null,
+        },
         { status: 409 },
       );
     }
 
-    const { logId, result } = await runIssueSync("manual", boardKey.toUpperCase());
+    try {
+      const { logId, result } = await runIssueSync("manual", boardKey.toUpperCase());
 
-    return NextResponse.json({
-      success: true,
-      logId,
-      boardKey: boardKey.toUpperCase(),
-      inserted: result.inserted,
-      updated: result.updated,
-      skippedNoBoard: result.skippedNoBoard,
-      total: result.total,
-      errors: result.errors,
-    });
+      return NextResponse.json({
+        success: true,
+        logId,
+        boardKey: boardKey.toUpperCase(),
+        inserted: result.inserted,
+        updated: result.updated,
+        skippedNoBoard: result.skippedNoBoard,
+        total: result.total,
+        errors: result.errors,
+      });
+    } finally {
+      releaseSyncLock("manual");
+    }
   } catch (error) {
     console.error("Board sync failed:", error);
     return NextResponse.json(

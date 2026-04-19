@@ -74,7 +74,19 @@ const defaultProgress: DeploymentBackfillProgress = {
 
 let currentProgress: DeploymentBackfillProgress = { ...defaultProgress };
 
+// Which sync_logs row the current progress snapshot belongs to. The
+// /automations detail endpoint uses this to gate liveProgress so opening
+// an unrelated (stale) running row doesn't surface this run's progress.
+let activeLogId: string | null = null;
+
 export function getDeploymentBackfillProgress(): DeploymentBackfillProgress {
+  return { ...currentProgress };
+}
+
+export function getDeploymentBackfillProgressForLogId(
+  logId: string,
+): DeploymentBackfillProgress | null {
+  if (activeLogId !== logId) return null;
   return { ...currentProgress };
 }
 
@@ -84,6 +96,7 @@ function updateProgress(update: Partial<DeploymentBackfillProgress>) {
 
 function resetProgress() {
   currentProgress = { ...defaultProgress };
+  activeLogId = null;
 }
 
 // --- Result ---
@@ -435,6 +448,7 @@ export async function runDeploymentBackfill(): Promise<BackfillRunResult> {
   });
 
   const logId = await logRunStart();
+  activeLogId = logId;
 
   try {
     // Pre-flight: poll /rate_limit. This endpoint does NOT count against

@@ -2,34 +2,29 @@ import { NextResponse } from "next/server";
 import { auth } from "@/auth";
 import {
   listSyncLogs,
+  VALID_LOG_SOURCES,
+  VALID_SYNC_LOG_STATUSES,
+  VALID_SYNC_LOG_TYPES,
   type LogSource,
   type SyncLogStatus,
   type SyncLogType,
 } from "@/lib/sync/logs-query";
 
-const VALID_TYPES: ReadonlyArray<SyncLogType> = [
-  "full",
-  "incremental",
-  "manual",
-  "team_sync",
-  "worklog_sync",
-  "timedoctor_sync",
-  "release_sync",
-  "deployment_backfill",
-];
+const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
 
-const VALID_STATUSES: ReadonlyArray<SyncLogStatus> = [
-  "running",
-  "completed",
-  "failed",
-];
-
-const VALID_SOURCES: ReadonlyArray<LogSource> = ["cron", "manual", "unknown"];
-
-function parseDate(raw: string | null): Date | undefined {
+/** Parse a query-string date. If the value is a bare `YYYY-MM-DD` (as
+ *  produced by `<input type="date">`) and `endOfDay` is set, push it to
+ *  23:59:59.999 UTC so the filter is inclusive of the selected day —
+ *  otherwise `to=2026-04-21` would exclude every run from midnight
+ *  onwards on the 21st. */
+function parseDate(raw: string | null, endOfDay = false): Date | undefined {
   if (!raw) return undefined;
   const d = new Date(raw);
-  return Number.isFinite(d.getTime()) ? d : undefined;
+  if (!Number.isFinite(d.getTime())) return undefined;
+  if (endOfDay && DATE_ONLY.test(raw)) {
+    d.setUTCHours(23, 59, 59, 999);
+  }
+  return d;
 }
 
 export async function GET(request: Request) {
@@ -48,23 +43,24 @@ export async function GET(request: Request) {
 
   const typeRaw = p.get("type");
   const type =
-    typeRaw && VALID_TYPES.includes(typeRaw as SyncLogType)
+    typeRaw && VALID_SYNC_LOG_TYPES.includes(typeRaw as SyncLogType)
       ? (typeRaw as SyncLogType)
       : "all";
   const statusRaw = p.get("status");
   const status =
-    statusRaw && VALID_STATUSES.includes(statusRaw as SyncLogStatus)
+    statusRaw &&
+    VALID_SYNC_LOG_STATUSES.includes(statusRaw as SyncLogStatus)
       ? (statusRaw as SyncLogStatus)
       : "all";
   const sourceRaw = p.get("source");
   const source =
-    sourceRaw && VALID_SOURCES.includes(sourceRaw as LogSource)
+    sourceRaw && VALID_LOG_SOURCES.includes(sourceRaw as LogSource)
       ? (sourceRaw as LogSource)
       : "all";
 
   // Default date range: last 7 days if neither from nor to provided.
   let from = parseDate(p.get("from"));
-  const to = parseDate(p.get("to"));
+  const to = parseDate(p.get("to"), /* endOfDay */ true);
   if (!from && !to) {
     from = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
   }

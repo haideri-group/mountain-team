@@ -50,7 +50,21 @@ let currentProgress: SyncProgress = {
   issuesTotal: 0,
 };
 
+// Which sync_logs row the `currentProgress` snapshot belongs to. The
+// /automations detail endpoint gates the liveProgress payload on this so
+// opening a stale `running` row (from a crashed prior process) doesn't
+// show the CURRENT sync's progress attributed to the wrong row.
+let activeLogId: string | null = null;
+
 export function getSyncProgress(): SyncProgress {
+  return { ...currentProgress };
+}
+
+/** Returns the in-flight progress IFF it belongs to the sync_logs row
+ *  with the given id. Used by `/api/automations/[id]` to prevent
+ *  cross-run confusion. */
+export function getSyncProgressForLogId(logId: string): SyncProgress | null {
+  if (activeLogId !== logId) return null;
   return { ...currentProgress };
 }
 
@@ -62,6 +76,7 @@ function resetProgress() {
     issuesProcessed: 0,
     issuesTotal: 0,
   };
+  activeLogId = null;
 }
 
 function updateProgress(update: Partial<SyncProgress>) {
@@ -254,6 +269,7 @@ export async function runIssueSync(type: IssueSyncType, boardKey?: string): Prom
 }> {
   const logId = `sync_${Date.now()}`;
   resetProgress();
+  activeLogId = logId;
   updateProgress({ phase: "fetching", message: boardKey ? `Syncing ${boardKey}...` : "Starting sync..." });
 
   const startedAt = new Date();

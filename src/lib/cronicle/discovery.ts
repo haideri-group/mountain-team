@@ -38,21 +38,44 @@ function extractUrlPath(url: string | undefined): string {
   }
 }
 
+export interface TeamFlowSchedule {
+  events: CronicleEvent[];
+  /** True when we could not fetch a fresh schedule AND have no cached
+   *  schedule to fall back to. The UI surfaces this as a banner; array
+   *  consumers that only need `events` can ignore it. */
+  unavailable: boolean;
+  /** Human-readable reason when unavailable (missing env, fetch error,
+   *  category unset). Used in the UI banner. */
+  reason?: string;
+}
+
 /**
- * Fetches the full Cronicle schedule, filters to events whose category
- * matches `CRONICLE_TEAMFLOW_CATEGORY_ID`. Cached 60s.
+ * Full-detail version of `listTeamFlowEvents` that distinguishes
+ * three zero-event scenarios:
+ *   1. Cronicle not configured / category env var missing → `unavailable: true`
+ *   2. Cronicle fetch failed and no stale cache → `unavailable: true`
+ *   3. Cronicle healthy but category is empty → `unavailable: false, events: []`
  *
- * Returns `[]` if Cronicle is unreachable, unconfigured, or the category
- * env var isn't set.
+ * Cached 60s for the success path; on failure it returns the last
+ * successful cache (if any) AND flags `unavailable: true` so the UI
+ * can show the "data may be stale" banner without hiding the data.
  */
-export async function listTeamFlowEvents(): Promise<CronicleEvent[]> {
-  if (!isCronicleConfigured()) return [];
+export async function getTeamFlowSchedule(): Promise<TeamFlowSchedule> {
+  if (!isCronicleConfigured()) {
+    return { events: [], unavailable: true, reason: "cronicle_not_configured" };
+  }
   const categoryId = getCategoryId();
-  if (!categoryId) return [];
+  if (!categoryId) {
+    return {
+      events: [],
+      unavailable: true,
+      reason: "CRONICLE_TEAMFLOW_CATEGORY_ID not set",
+    };
+  }
 
   const now = Date.now();
   if (scheduleCache && now - scheduleCache.at < SCHEDULE_TTL_MS) {
-    return scheduleCache.events;
+    return { events: scheduleCache.events, unavailable: false };
   }
 
   const res = await cronicleGet<{ rows: CronicleEvent[] }>(
@@ -60,14 +83,30 @@ export async function listTeamFlowEvents(): Promise<CronicleEvent[]> {
   );
   if (!res.ok) {
     console.warn("[cronicle] schedule fetch failed:", res.error);
-    return scheduleCache?.events ?? [];
+    // Serve stale cache if we have one, but flag as unavailable so
+    // callers can show "data may be stale" to the admin.
+    return {
+      events: scheduleCache?.events ?? [],
+      unavailable: true,
+      reason: res.error,
+    };
   }
 
   const events = (res.data.rows || []).filter(
     (e) => e.category === categoryId,
   );
   scheduleCache = { at: now, events };
-  return events;
+  return { events, unavailable: false };
+}
+
+/**
+ * Legacy shortcut kept for callers that only need the events array (the
+ * Cronicle correlate + run endpoints). For the admin `/automations`
+ * events API route, prefer `getTeamFlowSchedule()` so the UI gets an
+ * explicit `unavailable` signal.
+ */
+export async function listTeamFlowEvents(): Promise<CronicleEvent[]> {
+  return (await getTeamFlowSchedule()).events;
 }
 
 /** Force the next `listTeamFlowEvents` / `listEventHistory` call to
@@ -133,12 +172,19 @@ function computeNextRun(
   timing: CronicleEvent["timing"],
   fromMs = Date.now(),
 ): number | null {
-  const hours = timing.hours ?? [];
-  const minutes = timing.minutes ?? [];
+  // Cronicle stores hours/minutes as arrays but does NOT guarantee order —
+  // [23, 9] would pick 23:00 as "next" when 9:00 (tomorrow) is actually
+  // closer. Sort ascending before the inner loops so the first match we
+  // find IS the earliest upcoming fire within each day.
+  const hours = [...(timing.hours ?? [])].sort((a, b) => a - b);
+  const minutes = [...(timing.minutes ?? [])].sort((a, b) => a - b);
   if (hours.length === 0 || minutes.length === 0) return null;
 
   const base = new Date(fromMs);
-  for (let dayOffset = 0; dayOffset < 8; dayOffset++) {
+  // 8 days was enough for the daily/3-hourly TeamFlow jobs, but day-of-
+  // month or month-gated schedules can have their next fire further out.
+  // 366 guarantees at least one candidate for any annual schedule.
+  for (let dayOffset = 0; dayOffset < 366; dayOffset++) {
     const probe = new Date(base);
     probe.setUTCDate(base.getUTCDate() + dayOffset);
     // Gate by weekdays/months/days if specified

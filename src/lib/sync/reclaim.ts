@@ -68,6 +68,10 @@ export async function reclaimStuckRuns(
 
   const ids = stuck.map((r) => r.id);
   const completedAt = new Date();
+  // Re-assert `status='running'` inside the UPDATE's WHERE. Between our
+  // SELECT above and this UPDATE another process might have legitimately
+  // completed one of these rows; without this guard we'd overwrite its
+  // `completed` with `failed` and corrupt the record.
   await db
     .update(syncLogs)
     .set({
@@ -75,10 +79,12 @@ export async function reclaimStuckRuns(
       completedAt,
       error: reason,
     })
-    .where(inArray(syncLogs.id, ids));
+    .where(and(inArray(syncLogs.id, ids), eq(syncLogs.status, "running")));
 
   // Emit one event per reclaimed row so subscribers can update their
-  // row-level UI (not just invalidate a whole list).
+  // row-level UI (not just invalidate a whole list). Note: some of these
+  // may have already completed between the SELECT and UPDATE due to the
+  // guard — a minor over-emit is harmless (client just refetches).
   for (const r of stuck) {
     emitSyncLogChange({
       id: r.id,
@@ -124,14 +130,33 @@ export async function reclaimSingleRun(
   }
 
   const completedAt = new Date();
-  await db
+  // Guard `status='running'` inside the UPDATE: between the SELECT above
+  // and now, the actual sync writer could have legitimately completed
+  // this row. Without the guard we'd stamp its `completed` back to
+  // `failed` and destroy valid data. If the guard fails, the row was
+  // completed — treat as `already_terminal` for the caller.
+  const updateResult = await db
     .update(syncLogs)
     .set({
       status: "failed",
       completedAt,
       error: reason,
     })
-    .where(eq(syncLogs.id, options.id));
+    .where(and(eq(syncLogs.id, options.id), eq(syncLogs.status, "running")));
+
+  // drizzle-orm/mysql2 returns a `[ResultSetHeader]` tuple; `.affectedRows`
+  // tells us whether the UPDATE actually touched the row.
+  const affected =
+    (Array.isArray(updateResult)
+      ? (updateResult[0] as { affectedRows?: number })?.affectedRows
+      : (updateResult as { affectedRows?: number })?.affectedRows) ?? 0;
+  if (affected === 0) {
+    // Race: the sync writer finished this row between our read and write.
+    // Safest classification is `already_terminal` — it no longer exists
+    // in the `running` set so the caller's retry logic should stop.
+    return { ok: false, reason: "already_terminal" };
+  }
+
   emitSyncLogChange({
     id: options.id,
     type: row.type as SyncLogType,

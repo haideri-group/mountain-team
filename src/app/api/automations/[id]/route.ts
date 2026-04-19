@@ -3,10 +3,23 @@ import { auth } from "@/auth";
 import { getSyncLogById } from "@/lib/sync/logs-query";
 import { isCronicleConfigured } from "@/lib/cronicle/client";
 import { correlateSyncLog } from "@/lib/cronicle/correlate";
-import { getDeploymentBackfillProgress } from "@/lib/sync/deployment-backfill";
-import { getSyncProgress } from "@/lib/sync/issue-sync";
+import {
+  getDeploymentBackfillProgress,
+  getDeploymentBackfillProgressForLogId,
+} from "@/lib/sync/deployment-backfill";
+import {
+  getSyncProgress,
+  getSyncProgressForLogId,
+} from "@/lib/sync/issue-sync";
 
 const RECLAIM_GRACE_MS = 2 * 60 * 1000;
+
+// Single outage-dedupe clock. This route is polled every second by the
+// drawer while a row is `running`; a Cronicle outage would otherwise log
+// a warning 60× per minute per open drawer. Log at most once per minute
+// across all concurrent pollers (module-scoped).
+let lastCronicleWarnAt = 0;
+const CRONICLE_WARN_THROTTLE_MS = 60_000;
 
 export async function GET(
   _request: Request,
@@ -23,20 +36,23 @@ export async function GET(
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
-  // Live progress (in-memory, only for types that expose it).
+  // Live progress (in-memory, only for types that expose it). Keyed by
+  // logId so opening a stale `running` row (from a crashed prior process)
+  // does NOT show the CURRENT sync's progress attributed to the wrong
+  // row — returns `null` when the in-memory activeLogId ≠ this row.
   let liveProgress:
     | ReturnType<typeof getDeploymentBackfillProgress>
     | ReturnType<typeof getSyncProgress>
     | null = null;
   if (log.status === "running") {
     if (log.type === "deployment_backfill") {
-      liveProgress = getDeploymentBackfillProgress();
+      liveProgress = getDeploymentBackfillProgressForLogId(log.id);
     } else if (
       log.type === "full" ||
       log.type === "incremental" ||
       log.type === "manual"
     ) {
-      liveProgress = getSyncProgress();
+      liveProgress = getSyncProgressForLogId(log.id);
     }
   }
 
@@ -51,10 +67,14 @@ export async function GET(
       });
       if (!cronicle) cronicleUnavailable = false; // just "no match", not "down"
     } catch (err) {
-      console.warn(
-        "[logs] correlate failed:",
-        err instanceof Error ? err.message : String(err),
-      );
+      const now = Date.now();
+      if (now - lastCronicleWarnAt > CRONICLE_WARN_THROTTLE_MS) {
+        lastCronicleWarnAt = now;
+        console.warn(
+          "[logs] correlate failed:",
+          err instanceof Error ? err.message : String(err),
+        );
+      }
       cronicleUnavailable = true;
     }
   } else {

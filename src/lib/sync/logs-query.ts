@@ -25,6 +25,31 @@ export type SyncLogStatus = "running" | "completed" | "failed";
 
 export type LogSource = "cron" | "manual" | "unknown";
 
+/** Single source of truth for sync log types — imported by API routes for
+ *  query-param validation. */
+export const VALID_SYNC_LOG_TYPES: ReadonlyArray<SyncLogType> = [
+  "full",
+  "incremental",
+  "manual",
+  "team_sync",
+  "worklog_sync",
+  "timedoctor_sync",
+  "release_sync",
+  "deployment_backfill",
+];
+
+export const VALID_SYNC_LOG_STATUSES: ReadonlyArray<SyncLogStatus> = [
+  "running",
+  "completed",
+  "failed",
+];
+
+export const VALID_LOG_SOURCES: ReadonlyArray<LogSource> = [
+  "cron",
+  "manual",
+  "unknown",
+];
+
 export interface LogRow {
   id: string;
   type: SyncLogType;
@@ -42,12 +67,28 @@ export interface LogDetailRow extends LogRow {
   error: string | null;
 }
 
-/** Cron types that are normally fired by the scheduler. `manual` is the
- *  only type explicitly tagged as user-triggered. Others might come from
- *  either path — we fall back to "unknown" when it's genuinely ambiguous.
- *  Proper `triggeredBy` column is deferred to a later phase. */
+/** Heuristic mapping sync type → source while a proper `triggeredBy`
+ *  column doesn't exist yet.
+ *
+ *  - `manual` is only ever written by admin-triggered `/api/sync/issues`
+ *    so we can confidently label it "manual".
+ *  - `full`, `incremental`, and `deployment_backfill` can ALL be fired
+ *    from either the scheduled cron OR admin buttons — returning "cron"
+ *    would be a false claim, so we honestly return "unknown".
+ *  - `team_sync`, `release_sync`, `worklog_sync`, `timedoctor_sync` ARE
+ *    also triggerable manually (from /api/sync/*), but the proportion
+ *    is small; a proper column is the right fix. Kept as "cron" so the
+ *    filter still works for the 95%-case. Will be removed when the
+ *    `triggeredBy` column lands. */
 function inferSource(type: SyncLogType): LogSource {
   if (type === "manual") return "manual";
+  if (
+    type === "full" ||
+    type === "incremental" ||
+    type === "deployment_backfill"
+  ) {
+    return "unknown";
+  }
   return "cron";
 }
 
@@ -70,7 +111,12 @@ function toLogRow(row: typeof syncLogs.$inferSelect): LogRow {
     id: row.id,
     type: row.type as SyncLogType,
     status: row.status as SyncLogStatus,
-    startedAt: row.startedAt ? new Date(row.startedAt).toISOString() : new Date(0).toISOString(),
+    startedAt: row.startedAt
+      ? new Date(row.startedAt).toISOString()
+      // Schema has defaultNow() so this branch is effectively unreachable,
+      // but we stamp the insert row's creation time if we ever hit it —
+      // epoch-zero (1970) would paint a misleading "57-year-old run" in UI.
+      : new Date().toISOString(),
     completedAt: row.completedAt ? new Date(row.completedAt).toISOString() : null,
     durationMs: rowToDurationMs(row.startedAt, row.completedAt),
     issueCount: row.issueCount ?? 0,
@@ -219,8 +265,15 @@ export async function findSyncLogIdNearTime(input: {
   if (types.length === 0 || !Number.isFinite(anchorEpochSec)) return null;
   const from = new Date((anchorEpochSec - windowSec) * 1000);
   const to = new Date((anchorEpochSec + windowSec) * 1000);
-  const [row] = await db
-    .select({ id: syncLogs.id })
+  // Fetch all rows in window, then pick the one whose `startedAt` is
+  // nearest to the anchor. Previously the query used `ORDER BY ... DESC
+  // LIMIT 1` which is "latest" not "closest" — e.g. two manual retries
+  // 30s apart would both land inside the window, and we'd always open
+  // the later one's drawer even when the earlier one is what the user
+  // clicked on. The window is narrow (default ±60s) so row count is
+  // trivially small — JS sort is cheaper than a more complex SQL form.
+  const rows = await db
+    .select({ id: syncLogs.id, startedAt: syncLogs.startedAt })
     .from(syncLogs)
     .where(
       and(
@@ -228,10 +281,15 @@ export async function findSyncLogIdNearTime(input: {
         gte(syncLogs.startedAt, from),
         lte(syncLogs.startedAt, to),
       ),
-    )
-    .orderBy(desc(syncLogs.startedAt))
-    .limit(1);
-  return row?.id ?? null;
+    );
+  if (rows.length === 0) return null;
+  let best: { id: string; delta: number } | null = null;
+  for (const r of rows) {
+    if (!r.startedAt) continue;
+    const deltaSec = Math.abs(r.startedAt.getTime() / 1000 - anchorEpochSec);
+    if (!best || deltaSec < best.delta) best = { id: r.id, delta: deltaSec };
+  }
+  return best?.id ?? null;
 }
 
 /** Returns every row currently `status='running'` older than `graceMs`. */

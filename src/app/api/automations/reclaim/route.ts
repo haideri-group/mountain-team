@@ -1,18 +1,10 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/auth";
 import { reclaimStuckRuns } from "@/lib/sync/reclaim";
-import type { SyncLogType } from "@/lib/sync/logs-query";
-
-const VALID_TYPES: ReadonlyArray<SyncLogType> = [
-  "full",
-  "incremental",
-  "manual",
-  "team_sync",
-  "worklog_sync",
-  "timedoctor_sync",
-  "release_sync",
-  "deployment_backfill",
-];
+import {
+  VALID_SYNC_LOG_TYPES,
+  type SyncLogType,
+} from "@/lib/sync/logs-query";
 
 export async function POST(request: Request) {
   const session = await auth();
@@ -29,7 +21,7 @@ export async function POST(request: Request) {
 
   let type: SyncLogType | undefined = undefined;
   if (typeof body.type === "string") {
-    if (!VALID_TYPES.includes(body.type as SyncLogType)) {
+    if (!VALID_SYNC_LOG_TYPES.includes(body.type as SyncLogType)) {
       return NextResponse.json({ error: "Invalid type" }, { status: 400 });
     }
     type = body.type as SyncLogType;
