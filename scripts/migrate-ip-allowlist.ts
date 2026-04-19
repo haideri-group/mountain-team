@@ -7,25 +7,86 @@
  * Usage:
  *   yarn tsx scripts/migrate-ip-allowlist.ts            # dry-run
  *   yarn tsx scripts/migrate-ip-allowlist.ts --apply    # execute
+ *
+ * Bootstrap IPs:
+ *   By default this only seeds 127.0.0.1 + ::1 (localhost). Team-specific
+ *   IPs should NOT be hardcoded in source. For a fresh deploy that needs
+ *   additional bootstrap entries, set BOOTSTRAP_IP_ALLOWLIST as a JSON
+ *   array before running --apply, e.g.
+ *
+ *     BOOTSTRAP_IP_ALLOWLIST='[
+ *       {"cidr":"203.0.113.0/24","label":"Office"},
+ *       {"cidr":"198.51.100.5","label":"VPN exit"}
+ *     ]' yarn tsx scripts/migrate-ip-allowlist.ts --apply
+ *
+ *   After bootstrap, admins manage the allowlist via Settings → IP
+ *   Allowlist. Re-running the migration does not remove existing rows.
  */
 import "dotenv/config";
 import mysql from "mysql2/promise";
 import { randomUUID } from "crypto";
+import { normalizeCidr } from "../src/lib/ip/match";
 
 const APPLY = process.argv.includes("--apply");
 const MODE = APPLY ? "APPLY" : "DRY-RUN";
 
-// Bootstrap IPs — seeded on first run so the team isn't locked out.
-// Admins can add/remove from the Settings UI after deploy.
-const SEED_IPS: Array<{ cidr: string; label: string | null }> = [
-  { cidr: "115.186.149.242", label: null },
-  { cidr: "182.191.91.226", label: null },
-  { cidr: "59.103.26.251", label: null },
-  { cidr: "110.93.204.124", label: null },
-  { cidr: "195.171.9.180", label: null },
-  { cidr: "110.93.204.122", label: null },
+interface SeedRow {
+  cidr: string;
+  label: string | null;
+}
+
+// Default bootstrap: just localhost so dev environments work immediately.
+// Prod-specific IPs come from the BOOTSTRAP_IP_ALLOWLIST env var below.
+const DEFAULT_SEED: SeedRow[] = [
   { cidr: "127.0.0.1", label: "Localhost (IPv4)" },
   { cidr: "::1", label: "Localhost (IPv6)" },
+];
+
+function parseEnvBootstrap(raw: string | undefined): SeedRow[] {
+  if (!raw) return [];
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    throw new Error(
+      "BOOTSTRAP_IP_ALLOWLIST must be valid JSON (array of {cidr, label?})",
+    );
+  }
+  if (!Array.isArray(parsed)) {
+    throw new Error("BOOTSTRAP_IP_ALLOWLIST must be a JSON array");
+  }
+  const out: SeedRow[] = [];
+  for (const entry of parsed) {
+    if (!entry || typeof entry !== "object") {
+      throw new Error(`BOOTSTRAP_IP_ALLOWLIST entry must be an object: ${JSON.stringify(entry)}`);
+    }
+    const rec = entry as { cidr?: unknown; label?: unknown };
+    if (typeof rec.cidr !== "string") {
+      throw new Error(`BOOTSTRAP_IP_ALLOWLIST entry missing string cidr: ${JSON.stringify(entry)}`);
+    }
+    const normalized = normalizeCidr(rec.cidr);
+    if (!normalized) {
+      throw new Error(`BOOTSTRAP_IP_ALLOWLIST invalid cidr: ${rec.cidr}`);
+    }
+    let label: string | null = null;
+    if (rec.label !== undefined && rec.label !== null) {
+      if (typeof rec.label !== "string") {
+        throw new Error(`BOOTSTRAP_IP_ALLOWLIST label must be a string: ${JSON.stringify(entry)}`);
+      }
+      const trimmed = rec.label.trim();
+      if (trimmed.length > 255) {
+        throw new Error(`BOOTSTRAP_IP_ALLOWLIST label too long (>255 chars): ${trimmed.slice(0, 40)}…`);
+      }
+      label = trimmed.length > 0 ? trimmed : null;
+    }
+    out.push({ cidr: normalized, label });
+  }
+  return out;
+}
+
+const SEED_IPS: SeedRow[] = [
+  ...DEFAULT_SEED,
+  ...parseEnvBootstrap(process.env.BOOTSTRAP_IP_ALLOWLIST),
 ];
 
 async function main() {
