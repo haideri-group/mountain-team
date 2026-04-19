@@ -206,6 +206,17 @@ This ensures all team member work is captured regardless of labels, plus any Fro
 - **Incremental:** Matching issues updated since last successful sync
 - **Manual:** Triggered by admin via Settings UI (full sync or per-board)
 
+**Archive filter (`JIRA_SYNC_ARCHIVE_AGE_DAYS`, default 365):** bulk
+syncs skip tickets that are both in the Done status category AND
+haven't been touched in N days. Cuts the refetch set for established
+workspaces where most tickets are frozen historical data. Set to 0 to
+disable. Boards with zero existing rows auto-exempt from the filter so
+the first sync after adding a new tracked board still pulls every
+ticket, including old ones. Per-issue sync (`/api/issues/:key/sync` →
+direct `GET /rest/api/3/issue/{key}` by key) and the JIRA webhook never
+apply this filter — a 5-year-old closed ticket can always be synced
+by key or pushed via webhook.
+
 **Sync triggers:**
 - Daily cron at 06:05 UTC (`/api/cron/sync-issues`) — auto-detects full vs incremental
 - Manual "Sync Issues" button in Settings (admin only)

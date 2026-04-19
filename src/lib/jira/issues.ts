@@ -233,10 +233,51 @@ export async function fetchIssuesByJql(
 
 // --- JQL Builders ---
 
+/**
+ * Optional filter that excludes old terminal (done/closed/cancelled/…)
+ * tickets from bulk sync. Tickets that are already frozen cost API
+ * calls + DB upserts on every sync for no benefit.
+ *
+ *   archiveAgeDays     age threshold in days (env var override; default 365)
+ *   exemptBoardKeys    boards we've never synced — their old-terminal
+ *                      tickets MUST still be fetched on the first run,
+ *                      otherwise the initial sync for a newly-tracked
+ *                      board would silently miss them.
+ */
+export interface ArchiveFilterOpts {
+  archiveAgeDays?: number;
+  exemptBoardKeys?: string[];
+}
+
+function archiveAgeDaysFromEnv(): number {
+  const raw = Number(process.env.JIRA_SYNC_ARCHIVE_AGE_DAYS ?? 365);
+  return Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : 0;
+}
+
+/**
+ * Build the "skip old-terminal" JQL fragment, or return null when the
+ * filter is disabled. `statusCategory = "Done"` catches every workflow
+ * variant — "Closed", "Resolved", "Cancelled", "Won't Fix" all roll up
+ * to the Done category in JIRA, so one clause covers them all.
+ *
+ * When `exemptBoardKeys` is non-empty, the OR lets those boards pull
+ * their full ticket set through while still filtering everywhere else.
+ */
+function archiveClause(opts: ArchiveFilterOpts = {}): string | null {
+  const days = opts.archiveAgeDays ?? archiveAgeDaysFromEnv();
+  if (days <= 0) return null;
+  const exempt = (opts.exemptBoardKeys ?? []).filter(Boolean);
+  const base = `NOT (statusCategory = "Done" AND updated < -${days}d)`;
+  if (exempt.length === 0) return base;
+  const exemptList = exempt.map((k) => `"${k}"`).join(", ");
+  return `(${base} OR project IN (${exemptList}))`;
+}
+
 export function buildFullSyncJql(
   boardKeys: string[],
   memberAccountIds: string[],
   frontendLabel?: string,
+  filterOpts?: ArchiveFilterOpts,
 ): string {
   const projects = boardKeys.join(", ");
   const conditions: string[] = [`project IN (${projects})`];
@@ -255,6 +296,9 @@ export function buildFullSyncJql(
     conditions.push(`(${orParts.join(" OR ")})`);
   }
 
+  const archive = archiveClause(filterOpts);
+  if (archive) conditions.push(archive);
+
   return `${conditions.join(" AND ")} ORDER BY updated DESC`;
 }
 
@@ -263,6 +307,7 @@ export function buildIncrementalSyncJql(
   memberAccountIds: string[],
   since: string,
   frontendLabel?: string,
+  filterOpts?: ArchiveFilterOpts,
 ): string {
   const projects = boardKeys.join(", ");
   const conditions: string[] = [`project IN (${projects})`];
@@ -281,6 +326,9 @@ export function buildIncrementalSyncJql(
   }
 
   conditions.push(`updated >= "${since}"`);
+
+  const archive = archiveClause(filterOpts);
+  if (archive) conditions.push(archive);
 
   return `${conditions.join(" AND ")} ORDER BY updated DESC`;
 }

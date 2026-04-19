@@ -1,6 +1,6 @@
 import { db } from "@/lib/db";
 import { issues, boards, team_members, syncLogs } from "@/lib/db/schema";
-import { eq, desc, inArray } from "drizzle-orm";
+import { eq, desc, inArray, sql } from "drizzle-orm";
 import { generateNotificationsFromSync } from "@/lib/notifications/generator";
 import { recordWorkloadSnapshots } from "@/lib/workload/snapshots";
 import {
@@ -146,6 +146,25 @@ async function syncIssues(type: IssueSyncType, filterBoardKey?: string): Promise
     .filter((m) => m.jiraAccountId && m.status === "active")
     .map((m) => m.jiraAccountId!);
 
+  // Auto-exempt boards with zero existing rows so a newly-tracked board's
+  // first sync still fetches old-terminal tickets. Subsequent runs will
+  // see the board populated and re-apply the filter normally.
+  const trackedBoardIds = trackedBoards.map((b) => b.id);
+  const existingCounts = trackedBoardIds.length > 0
+    ? await db
+        .select({ boardId: issues.boardId, n: sql<number>`count(*)` })
+        .from(issues)
+        .where(inArray(issues.boardId, trackedBoardIds))
+        .groupBy(issues.boardId)
+    : [];
+  const populatedBoardIds = new Set(
+    existingCounts.filter((r) => Number(r.n) > 0).map((r) => r.boardId),
+  );
+  const exemptBoardKeys = trackedBoards
+    .filter((b) => !populatedBoardIds.has(b.id))
+    .map((b) => b.jiraKey);
+  const filterOpts = { exemptBoardKeys };
+
   let jql: string;
 
   if (type === "incremental") {
@@ -164,13 +183,13 @@ async function syncIssues(type: IssueSyncType, filterBoardKey?: string): Promise
         .toISOString()
         .replace("T", " ")
         .substring(0, 16); // "YYYY-MM-DD HH:mm"
-      jql = buildIncrementalSyncJql(boardKeys, memberAccountIds, since, frontendLabel);
+      jql = buildIncrementalSyncJql(boardKeys, memberAccountIds, since, frontendLabel, filterOpts);
     } else {
       // No previous sync -- fall back to full
-      jql = buildFullSyncJql(boardKeys, memberAccountIds, frontendLabel);
+      jql = buildFullSyncJql(boardKeys, memberAccountIds, frontendLabel, filterOpts);
     }
   } else {
-    jql = buildFullSyncJql(boardKeys, memberAccountIds, frontendLabel);
+    jql = buildFullSyncJql(boardKeys, memberAccountIds, frontendLabel, filterOpts);
   }
 
   // 5. Fetch issues from JIRA
