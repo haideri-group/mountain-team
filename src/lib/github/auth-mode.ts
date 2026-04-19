@@ -3,19 +3,26 @@ import { getInstallationToken, isAppAuthConfigured } from "./app-auth";
 export { isAppAuthConfigured };
 
 /**
- * Dual-auth selector: prefer GitHub App when it's configured and working,
- * fall back to classic PAT only when the App is genuinely unavailable
- * (missing env vars, malformed private key, token-exchange 4xx/5xx).
+ * Dual-auth selector: prefer GitHub App, fall back to PAT whenever the
+ * App is unavailable — for ANY reason, including:
+ *   - App env vars missing / private key malformed
+ *   - Installation-token exchange errored out (4xx/5xx)
+ *   - App's rate-limit budget is exhausted (remaining < floor)
  *
- * Important: we do NOT switch to PAT when the App is just low on quota.
- * That would use PAT as an overflow bucket for the same logical workload
- * — which GitHub treats as abuse of the secondary rate-limit system.
- * When the App is rate-limited, the request fails with 403; the backfill's
- * circuit breaker catches this and stops the batch cleanly.
+ * Policy call: this is an internal tool for one small team, not a
+ * multi-tenant service. Using the owner's PAT as a bucket-hopping
+ * fallback is an acceptable resilience pattern here. If this ever
+ * gets generalized into a product, revisit — the ToS posture is
+ * different at scale.
  *
- * PAT fallback is a resilience pattern (App is broken → keep working),
- * not a throughput multiplier.
+ * Rate-limit state is tracked per mode so we flip back to App once
+ * its window resets, rather than sticking on PAT forever.
  */
+
+const FALLBACK_FLOOR = Number.parseInt(
+  process.env.GITHUB_APP_FALLBACK_FLOOR || "200",
+  10,
+);
 
 export type AuthMode = "app" | "pat" | "none";
 
@@ -35,13 +42,27 @@ function isPatConfigured(): boolean {
   return !!t && !t.includes("your-github");
 }
 
+/** True if a mode has budget to spend. Null snapshot = unused = assume healthy.
+ *  Expired reset-at = window rolled over, treat as healthy (headers will
+ *  refresh on next call). */
+function modeIsHealthy(snap: RateLimitSnapshot | null): boolean {
+  if (!snap) return true;
+  if (snap.resetAt.getTime() <= Date.now()) return true;
+  return snap.remaining > FALLBACK_FLOOR;
+}
+
 /** Choose which auth mode to use for the NEXT request.
- *  Prefer App; fall back to PAT only if App isn't configured. Rate-limit
- *  state is observed for telemetry but deliberately NOT used to switch
- *  modes — see module-level comment for why. */
+ *  Prefer App when healthy. Fall back to PAT when App is unconfigured OR
+ *  exhausted. Flip back to App automatically once its window resets. */
 function selectMode(): AuthMode {
-  if (isAppAuthConfigured()) return "app";
-  if (isPatConfigured()) return "pat";
+  const appOk = isAppAuthConfigured();
+  const patOk = isPatConfigured();
+
+  if (appOk && modeIsHealthy(appRate)) return "app";
+  if (patOk && modeIsHealthy(patRate)) return "pat";
+  // Both exhausted but at least one exists → return it (caller surfaces 403).
+  if (appOk) return "app";
+  if (patOk) return "pat";
   return "none";
 }
 
@@ -121,10 +142,13 @@ export function getAuthModeStatus() {
     app: {
       configured: isAppAuthConfigured(),
       rateLimit: appRate ? { ...appRate } : null,
+      healthy: modeIsHealthy(appRate),
     },
     pat: {
       configured: isPatConfigured(),
       rateLimit: patRate ? { ...patRate } : null,
+      healthy: modeIsHealthy(patRate),
     },
+    fallbackFloor: FALLBACK_FLOOR,
   };
 }
