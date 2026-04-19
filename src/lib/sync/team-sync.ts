@@ -236,6 +236,12 @@ export async function runTeamSync(
   // logRunEnd races with the client's SSE-driven refetch, which can
   // display the row (sourced as "cron" via the heuristic) before the
   // stamp lands.
+  const insertTriggeredBy = opts?.triggeredBy ?? null;
+  const insertUserId =
+    opts?.triggeredBy === "manual" ? (opts?.triggeredByUserId ?? null) : null;
+  console.log(
+    `[runTeamSync] logId=${logId} opts=${JSON.stringify(opts ?? null)} → inserting triggeredBy=${insertTriggeredBy ?? "NULL"} userId=${insertUserId ?? "NULL"}`,
+  );
   await db.insert(syncLogs).values({
     id: logId,
     type: "team_sync",
@@ -243,9 +249,8 @@ export async function runTeamSync(
     startedAt,
     memberCount: 0,
     issueCount: 0,
-    triggeredBy: opts?.triggeredBy ?? null,
-    triggeredByUserId:
-      opts?.triggeredBy === "manual" ? (opts?.triggeredByUserId ?? null) : null,
+    triggeredBy: insertTriggeredBy,
+    triggeredByUserId: insertUserId,
   });
   emitSyncLogChange({
     id: logId,
