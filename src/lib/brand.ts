@@ -15,3 +15,11 @@ export const BRAND = {
   primaryDark: "#944a00",
   onPrimary: "#ffffff",
 } as const;
+
+/**
+ * The Summit Logic primary CTA gradient. Use in `style` props where Tailwind
+ * gradient utilities can't express a diagonal stop pair cleanly.
+ *
+ *   <button style={{ background: BRAND_GRADIENT }}>...</button>
+ */
+export const BRAND_GRADIENT = `linear-gradient(135deg, ${BRAND.primaryDark}, ${BRAND.primary})`;
