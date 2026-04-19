@@ -350,6 +350,21 @@ export async function projectEventPublic(
             total,
             pct,
           };
+        } else {
+          // Sync IS running, but we can't see its in-memory progress:
+          //   - different server process (scheduled cron on prod while
+          //     viewing /automations on dev), OR
+          //   - sync family that doesn't publish progress (team_sync,
+          //     release_sync, worklog_sync, timedoctor_sync).
+          // Fall back to an indeterminate bar so the admin can tell
+          // the run is in flight without live counts.
+          progress = {
+            phase: "running",
+            message: "In progress",
+            processed: null,
+            total: null,
+            pct: null,
+          };
         }
       }
     } catch (err) {
