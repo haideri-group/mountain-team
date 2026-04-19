@@ -1,5 +1,7 @@
 import "server-only";
 import { cronicleGet, isCronicleConfigured } from "./client";
+import { findLatestSyncLogIdByTypes, type SyncLogType } from "@/lib/sync/logs-query";
+import { TYPE_TO_URL_PATH } from "./correlate";
 import type { CronicleEvent, CronicleEventPublic, CronicleJob } from "./types";
 
 /**
@@ -162,15 +164,48 @@ function computeNextRun(
   return null;
 }
 
+/** Reverse of `TYPE_TO_URL_PATH`: given a URL path, return every
+ *  `sync_logs.type` enum value whose cron route writes that URL. */
+function syncTypesForUrlPath(urlPath: string): SyncLogType[] {
+  if (!urlPath) return [];
+  const types: SyncLogType[] = [];
+  for (const [type, path] of Object.entries(TYPE_TO_URL_PATH) as [
+    SyncLogType,
+    string,
+  ][]) {
+    if (path && path === urlPath) types.push(type);
+  }
+  return types;
+}
+
 /**
  * Build the client-safe projection for an event, including its most-recent
- * run summary. Never fails; missing history just leaves `lastRun: null`.
+ * run summary AND the id of the most recent correlated `sync_logs` row so
+ * the UI can deep-link the last-run icon straight to the drawer.
+ *
+ * Never fails; missing history just leaves `lastRun: null`.
  */
 export async function projectEventPublic(
   event: CronicleEvent,
 ): Promise<CronicleEventPublic> {
   const jobs = await listEventHistory(event.id, 1);
   const latest = jobs[0];
+
+  let syncLogId: string | null = null;
+  const urlPath = extractUrlPath(event.params.url);
+  const types = syncTypesForUrlPath(urlPath);
+  if (types.length > 0) {
+    try {
+      syncLogId = await findLatestSyncLogIdByTypes(types);
+    } catch (err) {
+      console.warn(
+        "[cronicle] sync_log lookup failed for event",
+        event.id,
+        err instanceof Error ? err.message : String(err),
+      );
+    }
+  }
+
   const lastRun = latest
     ? {
         jobId: latest.id,
@@ -178,13 +213,15 @@ export async function projectEventPublic(
         end: latest.time_end ?? null,
         status: normalizeJobStatus(latest),
         elapsed: latest.elapsed,
+        syncLogId,
       }
     : null;
+
   return {
     id: event.id,
     title: event.title,
     enabled: event.enabled === 1,
-    urlPath: extractUrlPath(event.params.url),
+    urlPath,
     timing: event.timing,
     lastRun,
     nextRun: computeNextRun(event.timing),

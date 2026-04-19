@@ -147,7 +147,7 @@ export function LogsView() {
     <div className="space-y-6">
       <LogsSummaryStrip onReclaimAll={onReclaimAll} />
 
-      <CronicleSchedulePanel />
+      <CronicleSchedulePanel onViewRun={onRowClick} />
 
       <div className="flex items-center justify-between gap-4">
         <LogsFilters value={filters} onChange={handleFilterChange} />

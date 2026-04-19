@@ -27,6 +27,7 @@ interface CronicleEventPublic {
     end: number | null;
     status: "success" | "error" | "timeout" | "running";
     elapsed?: number;
+    syncLogId: string | null;
   } | null;
   nextRun: number | null;
 }
@@ -81,7 +82,11 @@ function statusIcon(s: string) {
   return <Clock className="h-3.5 w-3.5 text-muted-foreground" />;
 }
 
-export function CronicleSchedulePanel() {
+interface Props {
+  onViewRun?: (syncLogId: string) => void;
+}
+
+export function CronicleSchedulePanel({ onViewRun }: Props = {}) {
   const [data, setData] = useState<Response | null>(null);
   const [loading, setLoading] = useState(true);
   const [runningIds, setRunningIds] = useState<Record<string, boolean>>({});
@@ -216,16 +221,28 @@ export function CronicleSchedulePanel() {
               <span className="hidden md:inline text-xs text-muted-foreground">
                 {formatTiming(e.timing)}
               </span>
-              <span className="hidden md:flex items-center gap-1.5 text-xs font-mono">
-                {e.lastRun ? (
-                  <>
-                    {statusIcon(e.lastRun.status)}
-                    {formatEpoch(e.lastRun.start)}
-                  </>
-                ) : (
-                  <span className="text-muted-foreground">—</span>
-                )}
-              </span>
+              {e.lastRun?.syncLogId && onViewRun ? (
+                <button
+                  type="button"
+                  onClick={() => onViewRun(e.lastRun!.syncLogId!)}
+                  className="hidden md:flex items-center gap-1.5 text-xs font-mono text-left hover:text-[#ff8400] hover:underline underline-offset-4 decoration-dotted transition-colors"
+                  title="View full run details"
+                >
+                  {statusIcon(e.lastRun.status)}
+                  {formatEpoch(e.lastRun.start)}
+                </button>
+              ) : (
+                <span className="hidden md:flex items-center gap-1.5 text-xs font-mono">
+                  {e.lastRun ? (
+                    <>
+                      {statusIcon(e.lastRun.status)}
+                      {formatEpoch(e.lastRun.start)}
+                    </>
+                  ) : (
+                    <span className="text-muted-foreground">—</span>
+                  )}
+                </span>
+              )}
               <span className="hidden md:inline text-xs font-mono text-muted-foreground">
                 {formatEpoch(e.nextRun)}
               </span>

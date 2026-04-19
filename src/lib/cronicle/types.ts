@@ -74,6 +74,10 @@ export interface CronicleEventPublic {
     end: number | null;
     status: "success" | "error" | "timeout" | "running";
     elapsed?: number;
+    /** Id of the most recent sync_logs row matching this event's type —
+     *  used by the UI to link the "last run" icon straight to the
+     *  existing drawer. Null if no correlated run found. */
+    syncLogId: string | null;
   } | null;
   nextRun: number | null;           // epoch seconds, server-computed from timing
 }

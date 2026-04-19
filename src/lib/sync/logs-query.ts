@@ -201,6 +201,22 @@ export async function summarize24h(): Promise<Summary24h> {
   };
 }
 
+/** ID of the most recent sync_log whose type is in the given set, regardless
+ *  of status. Used by the Scheduled Crons panel to jump from a Cronicle
+ *  event's last-run icon straight to the drawer for the correlated run. */
+export async function findLatestSyncLogIdByTypes(
+  types: SyncLogType[],
+): Promise<string | null> {
+  if (types.length === 0) return null;
+  const [row] = await db
+    .select({ id: syncLogs.id })
+    .from(syncLogs)
+    .where(inArray(syncLogs.type, types))
+    .orderBy(desc(syncLogs.startedAt))
+    .limit(1);
+  return row?.id ?? null;
+}
+
 /** Returns every row currently `status='running'` older than `graceMs`. */
 export async function findStuckRunning(graceMs: number): Promise<LogRow[]> {
   const cutoff = new Date(Date.now() - graceMs);
