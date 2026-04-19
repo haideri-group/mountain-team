@@ -1,7 +1,13 @@
 import "server-only";
 import { cronicleGet, isCronicleConfigured } from "./client";
-import { findSyncLogIdNearTime, type SyncLogType } from "@/lib/sync/logs-query";
+import {
+  findSyncLogIdNearTime,
+  getSyncLogStatusById,
+  type SyncLogType,
+} from "@/lib/sync/logs-query";
 import { TYPE_TO_URL_PATH } from "./correlate";
+import { getSyncProgressForLogId } from "@/lib/sync/issue-sync";
+import { getDeploymentBackfillProgressForLogId } from "@/lib/sync/deployment-backfill";
 import type { CronicleEvent, CronicleEventPublic, CronicleJob } from "./types";
 
 /**
@@ -289,6 +295,60 @@ export async function projectEventPublic(
       ? `${cronicleBase}/#JobDetails?id=${latest.id}`
       : null;
 
+  // In-flight progress for the schedule panel's inline bar. We only surface
+  // it when the sync_log is still `running` per our DB — the Cronicle
+  // history endpoint is cached 30s so relying on its status alone can
+  // keep showing "running" after the sync has actually completed. This
+  // path queries the sync_log's current status live (cheap single-row
+  // select) and pulls progress from the in-memory singleton only when
+  // the activeLogId matches the id we're looking up.
+  let progress: CronicleEventPublic["lastRun"] extends infer L
+    ? L extends { progress: infer P }
+      ? P
+      : never
+    : never = null;
+  if (syncLogId) {
+    try {
+      const logStatus = await getSyncLogStatusById(syncLogId);
+      if (logStatus?.status === "running") {
+        const raw =
+          logStatus.type === "deployment_backfill"
+            ? getDeploymentBackfillProgressForLogId(syncLogId)
+            : logStatus.type === "full" ||
+                logStatus.type === "incremental" ||
+                logStatus.type === "manual"
+              ? getSyncProgressForLogId(syncLogId)
+              : null;
+        if (raw) {
+          const processed =
+            "issuesProcessed" in raw
+              ? (raw.issuesProcessed ?? null)
+              : null;
+          const total =
+            "issuesTotal" in raw ? (raw.issuesTotal ?? null) : null;
+          const pct =
+            processed !== null && total !== null && total > 0
+              ? Math.min(100, Math.round((processed / total) * 100))
+              : null;
+          progress = {
+            phase: String(raw.phase ?? "running"),
+            message: String(raw.message ?? ""),
+            processed,
+            total,
+            pct,
+          };
+        }
+      }
+    } catch (err) {
+      // Never let the progress lookup break the whole projection.
+      console.warn(
+        "[cronicle] progress lookup failed for syncLog",
+        syncLogId,
+        err instanceof Error ? err.message : String(err),
+      );
+    }
+  }
+
   const lastRun = latest
     ? {
         jobId: latest.id,
@@ -298,6 +358,7 @@ export async function projectEventPublic(
         elapsed: latest.elapsed,
         syncLogId,
         jobDetailsUrl,
+        progress,
       }
     : null;
 

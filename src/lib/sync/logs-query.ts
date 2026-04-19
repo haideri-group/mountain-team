@@ -209,6 +209,21 @@ export async function listSyncLogs(params: ListSyncLogsParams = {}): Promise<{
   };
 }
 
+/** Cheap lookup — just the status + type, for callers that only need to
+ *  know whether a given sync_log is still `running`. Avoids hydrating
+ *  the full LogDetailRow (sanitizeErrorText + ISO conversions). */
+export async function getSyncLogStatusById(
+  id: string,
+): Promise<{ status: SyncLogStatus; type: SyncLogType } | null> {
+  const [row] = await db
+    .select({ status: syncLogs.status, type: syncLogs.type })
+    .from(syncLogs)
+    .where(eq(syncLogs.id, id))
+    .limit(1);
+  if (!row) return null;
+  return { status: row.status as SyncLogStatus, type: row.type as SyncLogType };
+}
+
 export async function getSyncLogById(id: string): Promise<LogDetailRow | null> {
   const [row] = await db
     .select()

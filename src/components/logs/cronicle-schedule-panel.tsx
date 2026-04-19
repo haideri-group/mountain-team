@@ -30,6 +30,13 @@ interface CronicleEventPublic {
     elapsed?: number;
     syncLogId: string | null;
     jobDetailsUrl: string | null;
+    progress: {
+      phase: string;
+      message: string;
+      processed: number | null;
+      total: number | null;
+      pct: number | null;
+    } | null;
   } | null;
   nextRun: number | null;
 }
@@ -132,6 +139,18 @@ export function CronicleSchedulePanel({ onViewRun, refreshTick }: Props = {}) {
   useEffect(() => {
     if (refreshTick !== undefined && refreshTick > 0) load();
   }, [refreshTick, load]);
+
+  // Fast 1s poll while ANY event is mid-run. Progress bars advance in
+  // near-real-time without the 60s fallback latency. Interval clears
+  // itself as soon as every event is idle again.
+  const anyRunning = (data?.events ?? []).some(
+    (e) => e.lastRun?.status === "running",
+  );
+  useEffect(() => {
+    if (!anyRunning) return;
+    const h = setInterval(load, 1000);
+    return () => clearInterval(h);
+  }, [anyRunning, load]);
 
   const runEvent = useCallback(
     async (eventId: string, title: string) => {
@@ -263,6 +282,9 @@ export function CronicleSchedulePanel({ onViewRun, refreshTick }: Props = {}) {
                 <p className="text-[10px] font-mono text-muted-foreground truncate">
                   {e.urlPath || "—"}
                 </p>
+                {e.lastRun?.status === "running" && e.lastRun.progress && (
+                  <RunningProgress progress={e.lastRun.progress} />
+                )}
               </div>
               <span className="hidden md:inline text-xs text-muted-foreground">
                 {formatTiming(e.timing)}
@@ -324,6 +346,55 @@ export function CronicleSchedulePanel({ onViewRun, refreshTick }: Props = {}) {
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+interface RunningProgressProps {
+  progress: {
+    phase: string;
+    message: string;
+    processed: number | null;
+    total: number | null;
+    pct: number | null;
+  };
+}
+
+/**
+ * Inline progress bar shown under a running event's title. Two modes:
+ *   - Determinate: `pct` is 0–100, bar fills to that value.
+ *   - Indeterminate: `pct` is null (total unknown yet) — renders an
+ *     animated stripe so the admin knows something is happening even
+ *     before total count is available.
+ */
+function RunningProgress({ progress }: RunningProgressProps) {
+  const { processed, total, pct, phase, message } = progress;
+  const hasCounts = processed !== null && total !== null && total > 0;
+  const determinate = pct !== null;
+  const label = hasCounts
+    ? `${processed!.toLocaleString()} / ${total!.toLocaleString()}${determinate ? ` · ${pct}%` : ""}`
+    : message || phase;
+  return (
+    <div className="mt-1.5 space-y-1">
+      <div className="h-1 w-full rounded-full bg-muted/60 overflow-hidden">
+        {determinate ? (
+          <div
+            className="h-full rounded-full transition-[width] duration-300 ease-out"
+            style={{
+              width: `${pct}%`,
+              background: BRAND_GRADIENT,
+            }}
+          />
+        ) : (
+          <div
+            className="h-full w-1/3 rounded-full animate-pulse"
+            style={{ background: BRAND_GRADIENT }}
+          />
+        )}
+      </div>
+      <p className="text-[10px] font-mono text-muted-foreground truncate">
+        {label}
+      </p>
     </div>
   );
 }
