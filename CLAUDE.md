@@ -20,10 +20,25 @@ yarn lint             # ESLint 9 with Next.js + TypeScript rules
 yarn lint:fix         # Auto-fix lint issues
 yarn format           # Prettier format src/**/*.{ts,tsx,css,json}
 yarn format:check     # Check formatting without writing
-yarn db:push          # Push Drizzle schema to MySQL
+yarn db:push          # Push Drizzle schema to MySQL (local dev only — never prod)
 yarn db:studio        # Drizzle Studio (database GUI)
 yarn db:seed          # Seed database with hashed passwords (tsx scripts/seed.ts)
 ```
+
+## Schema Changes (IMPORTANT)
+
+Drizzle generates explicit column lists in every `SELECT` — it does *not* issue `SELECT *`. That means **adding a column to `src/lib/db/schema.ts` and deploying the code before the DB column exists breaks every route that queries that table**: MySQL returns `Unknown column 'newCol' in 'field list'`, the route 500s, and anything touching `team_members`, `issues`, etc. goes down at once.
+
+Ordering rule: **the migration must land before (or at the same time as) the code deploy.** Not after.
+
+For production schema changes, follow the existing `scripts/migrate-*.ts` pattern — idempotent, dry-run by default, `--apply` to execute:
+
+```bash
+yarn tsx scripts/migrate-<thing>.ts            # dry-run, prints SQL
+yarn tsx scripts/migrate-<thing>.ts --apply    # execute
+```
+
+`DATABASE_URL` in `.env.local` points at Railway's production MySQL, so these scripts run directly against prod from a local machine. There is no separate staging DB. `yarn db:push` rewrites schema without an audit trail and can silently drop data — **never use it against Railway**, only local dev databases.
 
 ## Next.js 16 Conventions (IMPORTANT)
 
