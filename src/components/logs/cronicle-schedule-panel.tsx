@@ -93,7 +93,7 @@ export function CronicleSchedulePanel({ onViewRun, refreshTick }: Props = {}) {
   const [data, setData] = useState<Response | null>(null);
   const [loading, setLoading] = useState(true);
   const [runningIds, setRunningIds] = useState<Record<string, boolean>>({});
-  const [toast, setToast] = useState<{ kind: "ok" | "err"; msg: string } | null>(null);
+  const [toast, setToast] = useState<{ kind: "ok" | "err" | "warn"; msg: string } | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -129,6 +129,16 @@ export function CronicleSchedulePanel({ onViewRun, refreshTick }: Props = {}) {
           { method: "POST" },
         );
         const body = await res.json().catch(() => ({}));
+        if (res.status === 409) {
+          // Concurrency guard: another run is already in flight.
+          setToast({
+            kind: "warn",
+            msg:
+              body.error ||
+              `"${title}" is already running — your click was ignored.`,
+          });
+          return;
+        }
         if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);
         setToast({ kind: "ok", msg: `Triggered "${title}"` });
         // Brief burst of refreshes so both "running" and "completed"
@@ -182,7 +192,9 @@ export function CronicleSchedulePanel({ onViewRun, refreshTick }: Props = {}) {
           className={`px-4 py-2 text-xs ${
             toast.kind === "ok"
               ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400"
-              : "bg-red-50 dark:bg-red-950/30 text-red-700 dark:text-red-400"
+              : toast.kind === "warn"
+                ? "bg-amber-500/15 text-amber-700 dark:text-amber-400"
+                : "bg-red-50 dark:bg-red-950/30 text-red-700 dark:text-red-400"
           }`}
         >
           {toast.msg}

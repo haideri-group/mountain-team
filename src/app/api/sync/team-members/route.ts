@@ -4,6 +4,11 @@ import { db } from "@/lib/db";
 import { syncLogs } from "@/lib/db/schema";
 import { desc, eq } from "drizzle-orm";
 import { runTeamSync } from "@/lib/sync/team-sync";
+import {
+  getActiveLock,
+  releaseSyncLock,
+  tryAcquireSyncLock,
+} from "@/lib/sync/concurrency";
 
 // POST /api/sync/team-members — Trigger manual sync (admin only)
 export async function POST() {
@@ -16,36 +21,40 @@ export async function POST() {
       );
     }
 
-    // Check if a sync is already running
-    const [running] = await db
-      .select()
-      .from(syncLogs)
-      .where(eq(syncLogs.status, "running"))
-      .limit(1);
-
-    if (running) {
+    // Family-aware lock: blocks only if another team-sync is running
+    // (scheduled cron or a concurrent admin click). Other families
+    // (issues, releases, ...) are unaffected.
+    if (!tryAcquireSyncLock("team_sync")) {
+      const lock = getActiveLock("team_sync");
       return NextResponse.json(
-        { error: "A sync is already in progress" },
+        {
+          error: "A team sync is already in progress",
+          runningSince: lock?.startedAt.toISOString() ?? null,
+        },
         { status: 409 },
       );
     }
 
-    // Pass Google token for email matching if available
-    const googleToken = session.user.googleAccessToken;
-    const { logId, result } = await runTeamSync(googleToken);
+    try {
+      // Pass Google token for email matching if available
+      const googleToken = session.user.googleAccessToken;
+      const { logId, result } = await runTeamSync(googleToken);
 
-    return NextResponse.json({
-      success: true,
-      logId,
-      added: result.added,
-      departed: result.departed,
-      updated: result.updated,
-      rejoined: result.rejoined,
-      unchanged: result.unchanged,
-      emailsMatched: result.emailsMatched,
-      total: result.total,
-      errors: result.errors,
-    });
+      return NextResponse.json({
+        success: true,
+        logId,
+        added: result.added,
+        departed: result.departed,
+        updated: result.updated,
+        rejoined: result.rejoined,
+        unchanged: result.unchanged,
+        emailsMatched: result.emailsMatched,
+        total: result.total,
+        errors: result.errors,
+      });
+    } finally {
+      releaseSyncLock("team_sync");
+    }
   } catch (error) {
     console.error("Manual team sync failed:", error);
     return NextResponse.json(

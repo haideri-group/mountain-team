@@ -1,6 +1,11 @@
 import { NextResponse } from "next/server";
 import { runDeploymentBackfill } from "@/lib/sync/deployment-backfill";
 import { sanitizeErrorText } from "@/lib/jira/client";
+import {
+  getActiveLock,
+  releaseSyncLock,
+  tryAcquireSyncLock,
+} from "@/lib/sync/concurrency";
 
 /**
  * Cron entry point for the Phase 20 deployment backfill.
@@ -21,18 +26,32 @@ export async function GET(request: Request) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const result = await runDeploymentBackfill();
+    if (!tryAcquireSyncLock("deployment_backfill")) {
+      const lock = getActiveLock("deployment_backfill");
+      return NextResponse.json({
+        success: true,
+        deferred: true,
+        reason: "already_running",
+        runningSince: lock?.startedAt.toISOString() ?? null,
+      });
+    }
 
-    return NextResponse.json({
-      success: true,
-      processed: result.processed,
-      recorded: result.recorded,
-      errors: result.errors,
-      rateLimitStopped: result.rateLimitStopped,
-      deferred: result.deferred,
-      durationMs: result.durationMs,
-      checkpointAtJiraKey: result.checkpointAtJiraKey,
-    });
+    try {
+      const result = await runDeploymentBackfill();
+
+      return NextResponse.json({
+        success: true,
+        processed: result.processed,
+        recorded: result.recorded,
+        errors: result.errors,
+        rateLimitStopped: result.rateLimitStopped,
+        deferred: result.deferred,
+        durationMs: result.durationMs,
+        checkpointAtJiraKey: result.checkpointAtJiraKey,
+      });
+    } finally {
+      releaseSyncLock("deployment_backfill");
+    }
   } catch (error) {
     console.error("Cron deployment-backfill failed:", error);
     return NextResponse.json(

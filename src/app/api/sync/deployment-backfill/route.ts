@@ -9,6 +9,11 @@ import {
   isBackfillRunning,
   runDeploymentBackfill,
 } from "@/lib/sync/deployment-backfill";
+import {
+  getActiveLock,
+  releaseSyncLock,
+  tryAcquireSyncLock,
+} from "@/lib/sync/concurrency";
 
 /**
  * Admin endpoint for the Phase 20 deployment backfill.
@@ -29,25 +34,36 @@ export async function POST() {
       );
     }
 
-    if (isBackfillRunning()) {
+    // Keep the legacy in-memory `isBackfillRunning` guard for symmetry with
+    // the progress GET, but the authoritative cross-route lock is the
+    // family-aware sync lock below.
+    if (isBackfillRunning() || !tryAcquireSyncLock("deployment_backfill")) {
+      const lock = getActiveLock("deployment_backfill");
       return NextResponse.json(
-        { error: "A deployment backfill is already running" },
+        {
+          error: "A deployment backfill is already running",
+          runningSince: lock?.startedAt.toISOString() ?? null,
+        },
         { status: 409 },
       );
     }
 
-    const result = await runDeploymentBackfill();
+    try {
+      const result = await runDeploymentBackfill();
 
-    return NextResponse.json({
-      success: true,
-      processed: result.processed,
-      recorded: result.recorded,
-      errors: result.errors,
-      rateLimitStopped: result.rateLimitStopped,
-      deferred: result.deferred,
-      durationMs: result.durationMs,
-      checkpointAtJiraKey: result.checkpointAtJiraKey,
-    });
+      return NextResponse.json({
+        success: true,
+        processed: result.processed,
+        recorded: result.recorded,
+        errors: result.errors,
+        rateLimitStopped: result.rateLimitStopped,
+        deferred: result.deferred,
+        durationMs: result.durationMs,
+        checkpointAtJiraKey: result.checkpointAtJiraKey,
+      });
+    } finally {
+      releaseSyncLock("deployment_backfill");
+    }
   } catch (error) {
     console.error("Manual deployment backfill failed:", error);
     return NextResponse.json(

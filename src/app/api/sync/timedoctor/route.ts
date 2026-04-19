@@ -2,6 +2,11 @@ import { NextResponse } from "next/server";
 import { auth } from "@/auth";
 import { runTimeDoctorSync } from "@/lib/sync/timedoctor-sync";
 import { isTimeDoctorConfigured } from "@/lib/timedoctor/client";
+import {
+  getActiveLock,
+  releaseSyncLock,
+  tryAcquireSyncLock,
+} from "@/lib/sync/concurrency";
 
 export async function POST(request: Request) {
   try {
@@ -17,15 +22,30 @@ export async function POST(request: Request) {
     const url = new URL(request.url);
     const days = Math.max(1, Math.min(parseInt(url.searchParams.get("days") || "7", 10) || 7, 90));
 
-    const { logId, result } = await runTimeDoctorSync(days);
+    if (!tryAcquireSyncLock("timedoctor_sync")) {
+      const lock = getActiveLock("timedoctor_sync");
+      return NextResponse.json(
+        {
+          error: "A Time Doctor sync is already in progress",
+          runningSince: lock?.startedAt.toISOString() ?? null,
+        },
+        { status: 409 },
+      );
+    }
 
-    return NextResponse.json({
-      success: true,
-      logId,
-      usersMatched: result.usersMatched,
-      entriesUpserted: result.entriesUpserted,
-      errors: result.errors,
-    });
+    try {
+      const { logId, result } = await runTimeDoctorSync(days);
+
+      return NextResponse.json({
+        success: true,
+        logId,
+        usersMatched: result.usersMatched,
+        entriesUpserted: result.entriesUpserted,
+        errors: result.errors,
+      });
+    } finally {
+      releaseSyncLock("timedoctor_sync");
+    }
   } catch (error) {
     console.error("Time Doctor sync failed:", error);
     return NextResponse.json(

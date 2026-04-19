@@ -5,6 +5,9 @@ import {
   invalidateScheduleCache,
   listTeamFlowEvents,
 } from "@/lib/cronicle/discovery";
+import { TYPE_TO_URL_PATH } from "@/lib/cronicle/correlate";
+import { getActiveLock, isSyncRunning } from "@/lib/sync/concurrency";
+import type { SyncLogType } from "@/lib/sync/logs-query";
 
 /**
  * POST /api/automations/cronicle/events/[id]/run
@@ -29,6 +32,22 @@ interface CronicleRunResponse {
   code: number;
   ids?: string[];
   description?: string;
+}
+
+/**
+ * Reverse of `TYPE_TO_URL_PATH` — given the URL the Cronicle event fires
+ * at, return a representative `SyncLogType` whose family we can check.
+ * Returns null for URLs not managed by TeamFlow syncs (in which case we
+ * skip the pre-check and rely on the runner's internal guard).
+ */
+function resolveSyncTypeFromUrl(url: string): SyncLogType | null {
+  for (const [type, path] of Object.entries(TYPE_TO_URL_PATH) as Array<
+    [SyncLogType, string]
+  >) {
+    if (!path) continue;
+    if (url.includes(path)) return type;
+  }
+  return null;
 }
 
 export async function POST(
@@ -56,6 +75,23 @@ export async function POST(
     return NextResponse.json(
       { error: "Event is not in the TeamFlow category or not found" },
       { status: 404 },
+    );
+  }
+
+  // Pre-check the family-aware concurrency lock. If a run is already in
+  // flight (scheduled or another admin's click), surface a 409 rather than
+  // firing a duplicate Cronicle job. This avoids two parallel hits against
+  // the same upstream API for one logical cron.
+  const eventUrl = event.params?.url ?? "";
+  const representativeType = resolveSyncTypeFromUrl(eventUrl);
+  if (representativeType && isSyncRunning(representativeType)) {
+    const lock = getActiveLock(representativeType);
+    return NextResponse.json(
+      {
+        error: "This cron is already running",
+        runningSince: lock?.startedAt.toISOString() ?? null,
+      },
+      { status: 409 },
     );
   }
 

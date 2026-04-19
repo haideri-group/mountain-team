@@ -1,6 +1,11 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/auth";
 import { runReleaseSync } from "@/lib/sync/release-sync";
+import {
+  getActiveLock,
+  releaseSyncLock,
+  tryAcquireSyncLock,
+} from "@/lib/sync/concurrency";
 
 export async function POST() {
   try {
@@ -9,15 +14,30 @@ export async function POST() {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const { logId, result } = await runReleaseSync();
+    if (!tryAcquireSyncLock("release_sync")) {
+      const lock = getActiveLock("release_sync");
+      return NextResponse.json(
+        {
+          error: "A release sync is already in progress",
+          runningSince: lock?.startedAt.toISOString() ?? null,
+        },
+        { status: 409 },
+      );
+    }
 
-    return NextResponse.json({
-      success: true,
-      logId,
-      versionsUpserted: result.versionsUpserted,
-      projectsScanned: result.projectsScanned,
-      errors: result.errors,
-    });
+    try {
+      const { logId, result } = await runReleaseSync();
+
+      return NextResponse.json({
+        success: true,
+        logId,
+        versionsUpserted: result.versionsUpserted,
+        projectsScanned: result.projectsScanned,
+        errors: result.errors,
+      });
+    } finally {
+      releaseSyncLock("release_sync");
+    }
   } catch (error) {
     console.error("Release sync failed:", error);
     return NextResponse.json(

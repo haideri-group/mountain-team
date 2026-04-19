@@ -2,8 +2,13 @@ import { NextResponse } from "next/server";
 import { auth } from "@/auth";
 import { db } from "@/lib/db";
 import { syncLogs } from "@/lib/db/schema";
-import { desc, eq, inArray } from "drizzle-orm";
+import { desc, inArray } from "drizzle-orm";
 import { runIssueSync, getSyncProgress } from "@/lib/sync/issue-sync";
+import {
+  getActiveLock,
+  releaseSyncLock,
+  tryAcquireSyncLock,
+} from "@/lib/sync/concurrency";
 
 // POST /api/sync/issues -- Trigger manual issue sync (admin only)
 export async function POST() {
@@ -16,31 +21,34 @@ export async function POST() {
       );
     }
 
-    // Check if a sync is already running
-    const [running] = await db
-      .select()
-      .from(syncLogs)
-      .where(eq(syncLogs.status, "running"))
-      .limit(1);
-
-    if (running) {
+    // Family-aware lock: `manual` shares the `issue` family with
+    // `full` + `incremental`, so a running scheduled sync will 409 here.
+    if (!tryAcquireSyncLock("manual")) {
+      const lock = getActiveLock("manual");
       return NextResponse.json(
-        { error: "A sync is already in progress" },
+        {
+          error: "An issue sync is already in progress",
+          runningSince: lock?.startedAt.toISOString() ?? null,
+        },
         { status: 409 },
       );
     }
 
-    const { logId, result } = await runIssueSync("manual");
+    try {
+      const { logId, result } = await runIssueSync("manual");
 
-    return NextResponse.json({
-      success: true,
-      logId,
-      inserted: result.inserted,
-      updated: result.updated,
-      skippedNoBoard: result.skippedNoBoard,
-      total: result.total,
-      errors: result.errors,
-    });
+      return NextResponse.json({
+        success: true,
+        logId,
+        inserted: result.inserted,
+        updated: result.updated,
+        skippedNoBoard: result.skippedNoBoard,
+        total: result.total,
+        errors: result.errors,
+      });
+    } finally {
+      releaseSyncLock("manual");
+    }
   } catch (error) {
     console.error("Manual issue sync failed:", error);
     return NextResponse.json(
