@@ -4,6 +4,20 @@
  * vs `manual`, and for manual runs, show WHO triggered it (clickable
  * link to the member profile page when the user is also a team member).
  *
+ * ⚠️  ROLLOUT ORDER — read before deploying:
+ *   This migration MUST land BEFORE (or simultaneously with) the app
+ *   code that reads/writes these columns. `src/lib/db/schema.ts`
+ *   references `triggeredBy` / `triggeredByUserId` in every
+ *   `INSERT INTO sync_logs`, and Drizzle emits explicit column lists —
+ *   a code-first rollout will fail every sync with MySQL
+ *   `Unknown column 'triggeredBy' in 'field list'` and take down the
+ *   /automations page.
+ *
+ *   Deploy order for Railway:
+ *     1. Run this script against prod with `--apply` FIRST.
+ *     2. Then push the app code.
+ *   (General rule: see `CLAUDE.md` → "Schema Changes".)
+ *
  * Safe by default: DRY-RUN unless --apply. Idempotent — checks
  * information_schema before each ALTER.
  *
