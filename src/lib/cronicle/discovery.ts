@@ -92,12 +92,21 @@ export async function listEventHistory(
   return jobs;
 }
 
-/** Convert a single Cronicle job `code` + `description` into the public
- *  status taxonomy the UI knows how to color. */
+/** Convert a Cronicle job record into the public status taxonomy.
+ *
+ *  Cronicle's API is inconsistent: `time_end` is frequently null on
+ *  historical records EVEN WHEN the job finished cleanly. The true
+ *  signal of completion is `code` (0 = success, non-zero = error) or
+ *  `elapsed` (set when the job ended). Only treat as "running" when
+ *  BOTH are missing — indicating the job genuinely has no completion
+ *  data yet. */
 function normalizeJobStatus(
   job: CronicleJob,
 ): "success" | "error" | "timeout" | "running" {
-  if (job.time_end === undefined || job.time_end === null) return "running";
+  const hasCompletionData =
+    (job.code !== undefined && job.code !== null) ||
+    (job.elapsed !== undefined && job.elapsed !== null);
+  if (!hasCompletionData) return "running";
   if (job.code === 0) return "success";
   if (/timeout/i.test(job.description ?? "")) return "timeout";
   return "error";
