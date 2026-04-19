@@ -91,9 +91,17 @@ export async function POST(request: Request) {
     });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    // MySQL duplicate-key error code varies (1062). Treat the cidr column
-    // as the dedup boundary even without a unique index — the admin likely
-    // wanted the existing row.
+    // The `cidr` column has a UNIQUE constraint (`uidx_ip_allowlist_cidr`).
+    // MySQL raises ER_DUP_ENTRY (errno 1062) — mysql2 surfaces that as
+    // `code: "ER_DUP_ENTRY"` in the error object. Return a clean 409 so
+    // the admin UI can show "already in the allowlist".
+    const code = (err as { code?: string } | null)?.code;
+    if (code === "ER_DUP_ENTRY" || /duplicate/i.test(msg)) {
+      return NextResponse.json(
+        { error: "This CIDR is already in the allowlist" },
+        { status: 409 },
+      );
+    }
     return NextResponse.json(
       { error: `Failed to add rule: ${msg}` },
       { status: 500 },

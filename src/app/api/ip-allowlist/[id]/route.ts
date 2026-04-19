@@ -74,7 +74,32 @@ export async function PATCH(
     return NextResponse.json({ error: "No fields to update" }, { status: 400 });
   }
 
-  await db.update(ipAllowlist).set(update).where(eq(ipAllowlist.id, id));
+  // Verify the row exists BEFORE mutating. Without this, an invalid id
+  // silently updates zero rows, still invalidates the cache (a wasted DB
+  // hit on next request), and only then returns 404.
+  const [existing] = await db
+    .select({ id: ipAllowlist.id })
+    .from(ipAllowlist)
+    .where(eq(ipAllowlist.id, id))
+    .limit(1);
+
+  if (!existing) {
+    return NextResponse.json({ error: "Rule not found" }, { status: 404 });
+  }
+
+  try {
+    await db.update(ipAllowlist).set(update).where(eq(ipAllowlist.id, id));
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    const code = (err as { code?: string } | null)?.code;
+    if (code === "ER_DUP_ENTRY" || /duplicate/i.test(msg)) {
+      return NextResponse.json(
+        { error: "This CIDR is already in the allowlist" },
+        { status: 409 },
+      );
+    }
+    throw err;
+  }
   invalidateAllowlistCache();
 
   const [row] = await db
@@ -82,10 +107,6 @@ export async function PATCH(
     .from(ipAllowlist)
     .where(eq(ipAllowlist.id, id))
     .limit(1);
-
-  if (!row) {
-    return NextResponse.json({ error: "Rule not found" }, { status: 404 });
-  }
 
   return NextResponse.json({ rule: row });
 }
@@ -100,6 +121,19 @@ export async function DELETE(
   }
 
   const { id } = await params;
+
+  // Verify the row exists first so the client gets a truthful 404 instead
+  // of a misleading `{ success: true }` when the id is invalid.
+  const [existing] = await db
+    .select({ id: ipAllowlist.id })
+    .from(ipAllowlist)
+    .where(eq(ipAllowlist.id, id))
+    .limit(1);
+
+  if (!existing) {
+    return NextResponse.json({ error: "Rule not found" }, { status: 404 });
+  }
+
   await db.delete(ipAllowlist).where(eq(ipAllowlist.id, id));
   invalidateAllowlistCache();
 

@@ -389,6 +389,10 @@ export const ipAllowlist = mysqlTable("ip_allowlist", {
   createdAt: timestamp("createdAt").defaultNow(),
   createdBy: varchar("createdBy", { length: 191 }).references(() => users.id),
 }, (table) => [
+  // Dedup boundary — admin CRUD relies on this so POST can surface a
+  // duplicate as "already in the allowlist" and DELETE/toggle operate on
+  // a single row per CIDR.
+  uniqueIndex("uidx_ip_allowlist_cidr").on(table.cidr),
   // Proxy + API gate read only the enabled rows every ~60s. Narrow index
   // keeps the scan cheap even if the table grows to hundreds of rules.
   index("idx_ip_allowlist_enabled").on(table.enabled),

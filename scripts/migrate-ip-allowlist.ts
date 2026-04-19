@@ -85,13 +85,40 @@ async function main() {
            \`createdAt\` timestamp DEFAULT CURRENT_TIMESTAMP,
            \`createdBy\` varchar(191),
            PRIMARY KEY (\`id\`),
+           UNIQUE KEY \`uidx_ip_allowlist_cidr\` (\`cidr\`),
            CONSTRAINT \`ip_allowlist_createdBy_users_id_fk\`
              FOREIGN KEY (\`createdBy\`) REFERENCES \`users\`(\`id\`)
          )`,
       );
     }
 
-    // ── 2. enabled index ──────────────────────────────────────────────
+    // ── 2. unique index on cidr (idempotent for pre-existing deploys) ──
+    if (await indexExists("ip_allowlist", "uidx_ip_allowlist_cidr")) {
+      console.log("  [skip] uidx_ip_allowlist_cidr already exists");
+    } else {
+      // Pre-flight: if there are duplicate CIDRs in the current table,
+      // adding UNIQUE will fail. Report them and abort so the admin can
+      // resolve manually. Rare in practice (POST route already guards
+      // against dupes at the app layer) but worth catching.
+      if (await tableExists("ip_allowlist")) {
+        const [dupes] = (await conn.query(
+          "SELECT cidr, COUNT(*) AS c FROM ip_allowlist GROUP BY cidr HAVING c > 1",
+        )) as [Array<{ cidr: string; c: number }>, unknown];
+        if (dupes.length > 0) {
+          console.error("  [abort] duplicate CIDRs exist — resolve before adding UNIQUE index:");
+          for (const d of dupes) console.error(`          ${d.cidr} (${d.c} rows)`);
+          throw new Error(
+            "Cannot add UNIQUE index on ip_allowlist.cidr while duplicates exist",
+          );
+        }
+      }
+      await run(
+        "uidx_ip_allowlist_cidr unique index",
+        "ALTER TABLE `ip_allowlist` ADD UNIQUE INDEX `uidx_ip_allowlist_cidr` (`cidr`)",
+      );
+    }
+
+    // ── 3. enabled index ──────────────────────────────────────────────
     if (await indexExists("ip_allowlist", "idx_ip_allowlist_enabled")) {
       console.log("  [skip] idx_ip_allowlist_enabled already exists");
     } else {
@@ -101,7 +128,7 @@ async function main() {
       );
     }
 
-    // ── 3. seed bootstrap IPs ─────────────────────────────────────────
+    // ── 4. seed bootstrap IPs ─────────────────────────────────────────
     // In dry-run on a fresh DB, the table doesn't exist yet — skip the
     // SELECT. On --apply, the CREATE above has already run, so this works.
     const tableNowExists = APPLY || (await tableExists("ip_allowlist"));
