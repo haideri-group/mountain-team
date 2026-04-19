@@ -1,6 +1,6 @@
 import { db } from "@/lib/db";
-import { githubBranchMappings } from "@/lib/db/schema";
-import { eq } from "drizzle-orm";
+import { deployments, githubBranchMappings } from "@/lib/db/schema";
+import { and, eq } from "drizzle-orm";
 import { recordDeployment } from "./deployments";
 import { sanitizeErrorText } from "@/lib/jira/client";
 
@@ -15,15 +15,28 @@ import { sanitizeErrorText } from "@/lib/jira/client";
  * original.
  */
 
-// --- GitHub Compare Cache (per-invocation, avoids duplicate API calls) ---
+// --- GitHub Compare + branch-commits caches ---
+//
+// Both caches persist across issues within the SAME high-level sync. The
+// caller (runDeploymentBackfill, syncSingleIssue) is responsible for
+// calling `clearCompareCache()` at the top of its batch — letting the
+// cache accumulate across issues within a run is the whole point: two
+// issues that merged the same commit, or that need deploy-dates for the
+// same branch, only pay GitHub once.
+//
+// Hard-capped to keep memory bounded across very long runs.
+
+const COMPARE_CACHE_MAX = 5000;
+const BRANCH_COMMITS_CACHE_MAX = 200;
 
 const ghCompareCache = new Map<string, { status: string }>();
+const branchCommitsCache = new Map<string, unknown[]>();
 
-/** Clear the in-memory compare cache. Call this at the start of each
- *  high-level sync (per-issue or backfill batch) so a long-running
- *  Node process doesn't carry stale comparisons across unrelated runs. */
+/** Clear the in-memory caches. Call at the start of each high-level
+ *  sync (per-issue or backfill batch). */
 export function clearCompareCache(): void {
   ghCompareCache.clear();
+  branchCommitsCache.clear();
 }
 
 export async function cachedCompare(
@@ -48,8 +61,40 @@ export async function cachedCompare(
 
   const data = await res.json();
   const result = { status: data.status };
+  if (ghCompareCache.size >= COMPARE_CACHE_MAX) ghCompareCache.clear();
   ghCompareCache.set(key, result);
   return result;
+}
+
+interface GhCommitSummary {
+  sha: string;
+  parents?: Array<{ sha: string }>;
+  commit?: { committer?: { date?: string } };
+}
+
+async function getBranchCommits(
+  repoFullName: string,
+  branchPattern: string,
+): Promise<GhCommitSummary[] | null> {
+  const key = `${repoFullName}:${branchPattern}`;
+  const cached = branchCommitsCache.get(key);
+  if (cached) return cached as GhCommitSummary[];
+
+  const res = await fetch(
+    `https://api.github.com/repos/${repoFullName}/commits?sha=${encodeURIComponent(branchPattern)}&per_page=20`,
+    {
+      headers: {
+        Authorization: `Bearer ${process.env.GITHUB_TOKEN}`,
+        Accept: "application/vnd.github+json",
+      },
+      cache: "no-store",
+    },
+  );
+  if (!res.ok) return null;
+  const commits = (await res.json()) as GhCommitSummary[];
+  if (branchCommitsCache.size >= BRANCH_COMMITS_CACHE_MAX) branchCommitsCache.clear();
+  branchCommitsCache.set(key, commits);
+  return commits;
 }
 
 // --- Deploy Date Lookup Helper ---
@@ -66,20 +111,12 @@ export async function findBranchDeployDate(
   fallbackDate: Date,
 ): Promise<Date> {
   try {
-    const headers = {
-      Authorization: `Bearer ${process.env.GITHUB_TOKEN}`,
-      Accept: "application/vnd.github+json",
-    };
-    const commitsRes = await fetch(
-      `https://api.github.com/repos/${repoFullName}/commits?sha=${branchPattern}&per_page=20`,
-      { headers, cache: "no-store" },
-    );
-    if (!commitsRes.ok) return fallbackDate;
+    const branchCommits = await getBranchCommits(repoFullName, branchPattern);
+    if (!branchCommits) return fallbackDate;
 
-    const branchCommits = await commitsRes.json();
     for (let ci = branchCommits.length - 1; ci >= 0; ci--) {
       const bc = branchCommits[ci];
-      if (bc.parents?.length < 2) continue; // not a merge commit
+      if (!bc.parents || bc.parents.length < 2) continue; // not a merge commit
       const data = await cachedCompare(repoFullName, commitSha, bc.sha);
       if (data && (data.status === "ahead" || data.status === "identical")) {
         return new Date(bc.commit?.committer?.date || fallbackDate);
@@ -128,7 +165,38 @@ export async function propagateDeploymentToOtherBranches(params: {
     (m) => m.branchPattern !== params.sourceBranch && !m.isAllSites,
   );
 
-  for (const mapping of otherBranches) {
+  if (otherBranches.length === 0) return 0;
+
+  // Pre-check: if the deployments table already has rows for this
+  // (repoId, jiraKey, commitSha) across every target branch, skip
+  // propagation entirely. Without this, a second backfill run re-checks
+  // the same commit against 7+ branches — each branch doing 1 commits
+  // fetch + up to 20 compare calls. That's ~170 GitHub API calls to
+  // confirm rows we already have.
+  //
+  // Scope the lookup to params.repoId because otherBranches is also
+  // repo-scoped (loaded from githubBranchMappings WHERE repoId = X). If a
+  // different tracked repo happened to have rows for the same jiraKey +
+  // commitSha (unlikely but possible with shared branch names or a
+  // commit backported across repos), dropping the repoId filter would
+  // falsely mark this repo's branches as covered and skip real work.
+  const existing = await db
+    .select({ branch: deployments.branch })
+    .from(deployments)
+    .where(
+      and(
+        eq(deployments.repoId, params.repoId),
+        eq(deployments.jiraKey, params.jiraKey),
+        eq(deployments.commitSha, params.commitSha),
+      ),
+    );
+  const existingBranches = new Set(existing.map((r) => r.branch));
+  const uncoveredBranches = otherBranches.filter(
+    (m) => !existingBranches.has(m.branchPattern),
+  );
+  if (uncoveredBranches.length === 0) return 0;
+
+  for (const mapping of uncoveredBranches) {
     try {
       const cmp = await cachedCompare(
         params.repoFullName,

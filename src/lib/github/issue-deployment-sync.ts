@@ -3,10 +3,7 @@ import { githubRepos, githubBranchMappings } from "@/lib/db/schema";
 import { inArray } from "drizzle-orm";
 import { recordDeployment } from "./deployments";
 import { extractJiraKeys } from "./jira-keys";
-import {
-  clearCompareCache,
-  propagateDeploymentToOtherBranches,
-} from "./deployment-propagation";
+import { propagateDeploymentToOtherBranches } from "./deployment-propagation";
 import { githubFetch } from "./client";
 import { getAuthHeader, getBaseUrl, sanitizeErrorText } from "@/lib/jira/client";
 
@@ -62,14 +59,19 @@ export interface RecordDeploymentsForIssueInput {
   jiraIssueId?: string | null;
 }
 
+/**
+ * Caller is responsible for `clearCompareCache()` at the START of their
+ * high-level sync (once per batch, not per issue). Keeping the compare +
+ * branch-commits caches across issues is the whole point — two issues
+ * that merged the same commit or target the same branch pay one GitHub
+ * round-trip, not two.
+ */
 export async function recordDeploymentsForIssue(
   input: RecordDeploymentsForIssueInput,
 ): Promise<DeploymentSyncResult> {
   const { jiraKey, jiraIssueId } = input;
   let deploymentsRecorded = 0;
   let path: DeploymentSyncPath = "none";
-
-  clearCompareCache();
 
   // Hoisted once and reused across all three strategies — the repo list is
   // stable within a single sync, so re-querying in each fallback was wasteful.
