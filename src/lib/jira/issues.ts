@@ -250,7 +250,10 @@ export interface ArchiveFilterOpts {
 }
 
 function archiveAgeDaysFromEnv(): number {
-  const raw = Number(process.env.JIRA_SYNC_ARCHIVE_AGE_DAYS ?? 365);
+  // Default is 0 (filter OFF) when the env var is unset — opt-in so a
+  // fresh install doesn't silently skip any tickets. Set the var
+  // explicitly (e.g. 365) to enable the filter.
+  const raw = Number(process.env.JIRA_SYNC_ARCHIVE_AGE_DAYS ?? 0);
   return Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : 0;
 }
 

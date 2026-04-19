@@ -24,9 +24,10 @@ interface BoardRow {
 }
 
 async function main() {
+  // Default 0 (filter OFF) when unset — matches the runtime default.
   const days = Math.max(
     0,
-    Math.floor(Number(process.env.JIRA_SYNC_ARCHIVE_AGE_DAYS ?? 365) || 0),
+    Math.floor(Number(process.env.JIRA_SYNC_ARCHIVE_AGE_DAYS ?? 0) || 0),
   );
   if (!process.env.DATABASE_URL) throw new Error("DATABASE_URL not set");
   const conn = await mysql.createConnection(process.env.DATABASE_URL);
