@@ -1,4 +1,11 @@
 import { createHmac, timingSafeEqual } from "crypto";
+import {
+  captureRateLimitForMode,
+  getActiveRateLimit,
+  getAuthForRequest,
+  isAppAuthConfigured as isAppConfigured,
+} from "./auth-mode";
+import { clearInstallationTokenCache } from "./app-auth";
 
 // --- Config ---
 
@@ -9,19 +16,79 @@ export function getGitHubConfig() {
   };
 }
 
+/** True if ANY supported auth method is available (App or PAT). */
 export function isGitHubConfigured(): boolean {
+  if (isAppConfigured()) return true;
   const { token } = getGitHubConfig();
   return !!token && !token.includes("your-github");
 }
 
-function getAuthHeaders(): Record<string, string> {
-  const { token } = getGitHubConfig();
-  if (!token) throw new Error("GITHUB_TOKEN not configured");
+/** Shared header set used by both `githubFetch*` and the raw-fetch
+ *  callers in `deployment-propagation.ts` / `issue-deployment-sync.ts`.
+ *  Returned object also carries the auth `mode` so callers can invoke
+ *  `captureRateLimitForMode(mode, res)` after their fetch. */
+export async function getGitHubRequestHeaders(): Promise<{
+  headers: Record<string, string>;
+  mode: "app" | "pat";
+}> {
+  const auth = await getAuthForRequest();
   return {
-    Authorization: `Bearer ${token}`,
-    Accept: "application/vnd.github+json",
-    "X-GitHub-Api-Version": "2022-11-28",
+    headers: {
+      Authorization: auth.header,
+      Accept: "application/vnd.github+json",
+      "X-GitHub-Api-Version": "2022-11-28",
+    },
+    mode: auth.mode,
   };
+}
+
+/** Merge caller-supplied headers with GitHub auth/default headers.
+ *  `RequestInit.headers` is `HeadersInit` — it may be a `Headers`
+ *  instance, a `[string, string][]` tuple array, or a plain object.
+ *  Object-spread silently drops headers for the first two forms
+ *  (`{...new Headers()}` is `{}`, `{...[["k","v"]]}` produces numeric
+ *  keys). Pipe through the `Headers` constructor so all three shapes
+ *  survive, then apply GitHub auth on top. */
+function mergeRequestHeaders(
+  callerHeaders: HeadersInit | undefined,
+  authHeaders: Record<string, string>,
+): Headers {
+  const merged = new Headers(callerHeaders);
+  for (const [key, value] of Object.entries(authHeaders)) {
+    merged.set(key, value);
+  }
+  return merged;
+}
+
+/** Low-level fetch with one-retry on App 401. Installation tokens can
+ *  go stale between requests (key rotation, permissions revoked at the
+ *  org) and our cache would keep serving them for up to 55 min. On a
+ *  401 from App auth, clear the cache and try once more — the retry
+ *  refetches a fresh token (or falls through to PAT if App is broken
+ *  entirely). Rate-limit capture happens for both attempts. */
+export async function githubRawFetch(
+  url: string,
+  init?: RequestInit,
+): Promise<{ res: Response; mode: "app" | "pat" }> {
+  let { headers, mode } = await getGitHubRequestHeaders();
+  let res = await fetch(url, {
+    ...init,
+    headers: mergeRequestHeaders(init?.headers, headers),
+    cache: "no-store",
+  });
+  captureRateLimitForMode(mode, res);
+
+  if (res.status === 401 && mode === "app") {
+    clearInstallationTokenCache();
+    ({ headers, mode } = await getGitHubRequestHeaders());
+    res = await fetch(url, {
+      ...init,
+      headers: mergeRequestHeaders(init?.headers, headers),
+      cache: "no-store",
+    });
+    captureRateLimitForMode(mode, res);
+  }
+  return { res, mode };
 }
 
 // --- Sanitize ---
@@ -33,53 +100,27 @@ function sanitizeErrorText(text: string): string {
     .substring(0, 500);
 }
 
-// --- Fetch ---
+// --- Rate-limit public surface (kept stable for existing callers) ---
 
 /**
- * Last-seen GitHub rate-limit state, updated by every githubFetch /
- * githubFetchAll response that carries `X-RateLimit-*` headers.
- * Module-level so all GH-touching flows (per-issue sync, webhook,
- * backfill, etc.) contribute to one shared counter. Callers that care
- * (e.g., the deployment-backfill circuit breaker) read it via
- * `getLastKnownRateLimit()`.
- *
- * Null means we haven't seen a response yet this process lifetime.
- * After a restart, the next request repopulates it.
+ * Last-seen rate limit for the CURRENTLY-ACTIVE auth mode. The backfill
+ * circuit breaker consumes this — it cares about the bucket it's about
+ * to draw from next. App and PAT have separate buckets; the selector
+ * flips between them.
  */
-let lastRateLimit: { remaining: number; limit: number; resetAt: Date } | null = null;
-
 export function getLastKnownRateLimit(): { remaining: number; limit: number; resetAt: Date } | null {
-  return lastRateLimit ? { ...lastRateLimit } : null;
+  const snap = getActiveRateLimit();
+  return snap ? { ...snap } : null;
 }
 
-/** Parse `X-RateLimit-*` headers from a fetch Response and update module state.
- *  Safe to call on any response — if headers are absent, nothing changes. */
-function captureRateLimitHeaders(res: Response): void {
-  const remaining = res.headers.get("x-ratelimit-remaining");
-  const limit = res.headers.get("x-ratelimit-limit");
-  const reset = res.headers.get("x-ratelimit-reset");
-  if (remaining === null || reset === null) return;
-  const remainingNum = Number.parseInt(remaining, 10);
-  const resetSec = Number.parseInt(reset, 10);
-  if (!Number.isFinite(remainingNum) || !Number.isFinite(resetSec)) return;
-  lastRateLimit = {
-    remaining: remainingNum,
-    limit: limit ? Number.parseInt(limit, 10) : lastRateLimit?.limit ?? 5000,
-    resetAt: new Date(resetSec * 1000),
-  };
-}
+// --- Fetch ---
 
 export async function githubFetch<T>(path: string): Promise<T> {
   const url = path.startsWith("http")
     ? path
     : `https://api.github.com${path}`;
 
-  const res = await fetch(url, {
-    headers: getAuthHeaders(),
-    cache: "no-store",
-  });
-
-  captureRateLimitHeaders(res);
+  const { res } = await githubRawFetch(url);
 
   if (!res.ok) {
     const text = await res.text();
@@ -100,12 +141,7 @@ export async function githubFetchAll<T>(path: string, maxPages = 10): Promise<T[
   let page = 0;
 
   while (url && page < maxPages) {
-    const res: Response = await fetch(url, {
-      headers: getAuthHeaders(),
-      cache: "no-store",
-    });
-
-    captureRateLimitHeaders(res);
+    const { res } = await githubRawFetch(url);
 
     if (!res.ok) {
       const text = await res.text();
@@ -162,8 +198,8 @@ export function verifyWebhookSignature(
  * backfill). The `/rate_limit` endpoint itself does NOT count against
  * the rate limit — it's free to call.
  *
- * Also updates the module-level `lastRateLimit` as a side effect via
- * githubFetch.
+ * Also updates the active-mode rate-limit snapshot as a side effect via
+ * `githubFetch`.
  */
 export async function getRateLimit(): Promise<{
   remaining: number;

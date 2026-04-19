@@ -4,7 +4,7 @@ import { inArray } from "drizzle-orm";
 import { recordDeployment } from "./deployments";
 import { extractJiraKeys } from "./jira-keys";
 import { propagateDeploymentToOtherBranches } from "./deployment-propagation";
-import { githubFetch } from "./client";
+import { githubFetch, isGitHubConfigured } from "./client";
 import { getAuthHeader, getBaseUrl, sanitizeErrorText } from "@/lib/jira/client";
 
 /** Shape of the GitHub REST `/repos/{owner}/{repo}/pulls/{number}` response
@@ -148,7 +148,7 @@ export async function recordDeploymentsForIssue(
             let deployedAt = new Date(pr.mergedAt || pr.lastUpdate || Date.now());
             const prNum = parseInt(pr.id?.replace("#", "") || "0", 10);
 
-            if (!commitSha && prNum && process.env.GITHUB_TOKEN) {
+            if (!commitSha && prNum && isGitHubConfigured()) {
               try {
                 // githubFetch captures X-RateLimit-* headers into the shared
                 // counter read by the deployment-backfill circuit breaker.
@@ -208,7 +208,7 @@ export async function recordDeploymentsForIssue(
   }
 
   // --- Strategy 2: GitHub search fallback ---
-  if (deploymentsRecorded === 0 && process.env.GITHUB_TOKEN) {
+  if (deploymentsRecorded === 0 && isGitHubConfigured()) {
     try {
       for (const repo of allRepos) {
         let searchData: GhSearchResponse;
@@ -281,7 +281,7 @@ export async function recordDeploymentsForIssue(
   }
 
   // --- Strategy 3: JIRA comments fallback ---
-  if (deploymentsRecorded === 0 && process.env.GITHUB_TOKEN) {
+  if (deploymentsRecorded === 0 && isGitHubConfigured()) {
     try {
       const commentsUrl = `${getBaseUrl()}/rest/api/3/issue/${jiraKey}/comment?maxResults=20`;
       const commentsRes = await fetch(commentsUrl, {

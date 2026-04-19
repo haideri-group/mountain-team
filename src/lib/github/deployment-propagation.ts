@@ -3,6 +3,7 @@ import { deployments, githubBranchMappings } from "@/lib/db/schema";
 import { and, eq } from "drizzle-orm";
 import { recordDeployment } from "./deployments";
 import { sanitizeErrorText } from "@/lib/jira/client";
+import { githubRawFetch } from "./client";
 
 /**
  * GitHub `compare` and branch-deploy-date helpers, plus the
@@ -47,15 +48,8 @@ export async function cachedCompare(
   const key = `${repoFullName}:${base}...${head}`;
   if (ghCompareCache.has(key)) return ghCompareCache.get(key)!;
 
-  const res = await fetch(
+  const { res } = await githubRawFetch(
     `https://api.github.com/repos/${repoFullName}/compare/${base}...${head}`,
-    {
-      headers: {
-        Authorization: `Bearer ${process.env.GITHUB_TOKEN}`,
-        Accept: "application/vnd.github+json",
-      },
-      cache: "no-store",
-    },
   );
   if (!res.ok) return null;
 
@@ -80,15 +74,8 @@ async function getBranchCommits(
   const cached = branchCommitsCache.get(key);
   if (cached) return cached as GhCommitSummary[];
 
-  const res = await fetch(
+  const { res } = await githubRawFetch(
     `https://api.github.com/repos/${repoFullName}/commits?sha=${encodeURIComponent(branchPattern)}&per_page=20`,
-    {
-      headers: {
-        Authorization: `Bearer ${process.env.GITHUB_TOKEN}`,
-        Accept: "application/vnd.github+json",
-      },
-      cache: "no-store",
-    },
   );
   if (!res.ok) return null;
   const commits = (await res.json()) as GhCommitSummary[];
