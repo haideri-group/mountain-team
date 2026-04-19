@@ -42,11 +42,13 @@ function extractJobTitle(orgs?: DirectoryOrganization[]): string | null {
 
 // Format a People API Date object as YYYY-MM-DD. Fills missing month/day with
 // 01 so downstream date parsing stays valid. Returns null if no year.
+// The API may signal "not significant" by returning 0 for month/day (per spec),
+// so `||` — not `??` — is required to replace falsy zeros alongside null/undefined.
 function formatDirectoryDate(d?: DirectoryDate): string | null {
   if (!d || !d.year) return null;
   const y = String(d.year).padStart(4, "0");
-  const m = String(d.month ?? 1).padStart(2, "0");
-  const day = String(d.day ?? 1).padStart(2, "0");
+  const m = String(d.month || 1).padStart(2, "0");
+  const day = String(d.day || 1).padStart(2, "0");
   return `${y}-${m}-${day}`;
 }
 
