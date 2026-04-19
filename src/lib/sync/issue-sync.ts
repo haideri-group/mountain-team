@@ -311,8 +311,12 @@ export async function runIssueSync(
   const insertTriggeredBy = opts?.triggeredBy ?? null;
   const insertUserId =
     opts?.triggeredBy === "manual" ? (opts?.triggeredByUserId ?? null) : null;
+  // Operational log only. Never serialize the user identifier here —
+  // `triggeredByUserId` is persisted in `sync_logs` and exposed through
+  // the /automations UI, but raw server logs are a wider audience than
+  // the admin dashboard and shouldn't broadcast who triggered each run.
   console.log(
-    `[runIssueSync] logId=${logId} type=${type} opts=${JSON.stringify(opts ?? null)} → inserting triggeredBy=${insertTriggeredBy ?? "NULL"} userId=${insertUserId ?? "NULL"}`,
+    `[runIssueSync] logId=${logId} type=${type} triggeredBy=${insertTriggeredBy ?? "NULL"}`,
   );
   await db.insert(syncLogs).values({
     id: logId,
