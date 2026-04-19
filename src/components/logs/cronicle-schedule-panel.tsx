@@ -396,29 +396,69 @@ function formatEta(sec: number): string {
   return m > 0 ? `${h}h ${m}m` : `${h}h`;
 }
 
+/** Map a runner's raw phase key to a user-facing title. Same wording
+ *  the Settings-page sync panel uses, for consistency across surfaces. */
+function phaseTitle(phase: string): string {
+  switch (phase) {
+    case "fetching":
+      return "Fetching from JIRA";
+    case "processing":
+      return "Processing";
+    case "preflight":
+      return "Preflight Checks";
+    case "selecting":
+      return "Selecting Work";
+    case "running":
+      return "Running";
+    case "done":
+      return "Complete";
+    case "failed":
+      return "Failed";
+    default:
+      return phase.charAt(0).toUpperCase() + phase.slice(1);
+  }
+}
+
 /**
- * Inline progress bar shown under a running event's title. Two modes:
- *   - Determinate: `pct` is 0–100, bar fills to that value.
- *   - Indeterminate: `pct` is null (total unknown yet) — renders an
- *     animated stripe so the admin knows something is happening even
- *     before total count is available.
- *
- * Appends "~ETA" when determinate and the rate estimate is stable.
+ * Rich inline progress panel under the running event title — same shape
+ * as the Settings page's live-sync panel: spinner + phase title + pct
+ * on one row, wrapping message on the next, then a thicker bar, then
+ * counts + ETA. Appears only while `status === "running"`.
  */
 function RunningProgress({ progress }: RunningProgressProps) {
   const { processed, total, pct, phase, message, etaSeconds } = progress;
   const hasCounts = processed !== null && total !== null && total > 0;
   const determinate = pct !== null;
-  const base = hasCounts
-    ? `${processed!.toLocaleString()} / ${total!.toLocaleString()}${determinate ? ` · ${pct}%` : ""}`
-    : message || phase;
-  const label =
-    etaSeconds !== null && etaSeconds > 0
-      ? `${base} · ~${formatEta(etaSeconds)} left`
-      : base;
+  const remaining =
+    hasCounts && processed !== null && total !== null
+      ? total - processed
+      : null;
   return (
-    <div className="mt-1.5 space-y-1">
-      <div className="h-1 w-full rounded-full bg-muted/60 overflow-hidden">
+    <div className="mt-2 rounded-lg bg-muted/40 px-3 py-2.5 space-y-1.5">
+      {/* Header: spinner + phase title (+ pct) */}
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center gap-1.5 min-w-0">
+          <Loader2 className="h-3 w-3 text-amber-500 animate-spin shrink-0" />
+          <span className="text-[10px] font-bold font-mono uppercase tracking-wider truncate">
+            {phaseTitle(phase)}
+          </span>
+        </div>
+        {determinate && (
+          <span className="text-[10px] font-bold font-mono shrink-0">
+            {pct}%
+          </span>
+        )}
+      </div>
+
+      {/* Wrapping message (the "Fetching details: 7 / 14" kind) */}
+      {message && (
+        <p className="text-[11px] text-muted-foreground leading-snug">
+          {message}
+        </p>
+      )}
+
+      {/* Progress bar */}
+      <div className="h-1.5 w-full rounded-full bg-muted/60 overflow-hidden">
         {determinate ? (
           <div
             className="h-full rounded-full transition-[width] duration-300 ease-out"
@@ -428,19 +468,33 @@ function RunningProgress({ progress }: RunningProgressProps) {
             }}
           />
         ) : (
-          // Indeterminate: narrow brand pill slides left-to-right
-          // continuously. Keyframes live in globals.css so the component
-          // stays declarative; `motion-reduce:animate-none` respects OS
-          // "reduce motion" accessibility preference.
           <div
             className="h-full w-1/3 rounded-full animate-progress-marquee motion-reduce:animate-none motion-reduce:mx-auto"
             style={{ background: BRAND_GRADIENT }}
           />
         )}
       </div>
-      <p className="text-[10px] font-mono text-muted-foreground truncate">
-        {label}
-      </p>
+
+      {/* Footer: counts on the left, remaining + ETA on the right */}
+      {(hasCounts || (etaSeconds !== null && etaSeconds > 0)) && (
+        <div className="flex items-center justify-between gap-2 text-[10px] font-mono text-muted-foreground">
+          {hasCounts ? (
+            <span>
+              {processed!.toLocaleString()} / {total!.toLocaleString()}
+            </span>
+          ) : (
+            <span />
+          )}
+          <span className="flex items-center gap-2">
+            {remaining !== null && remaining > 0 && (
+              <span>{remaining.toLocaleString()} remaining</span>
+            )}
+            {etaSeconds !== null && etaSeconds > 0 && (
+              <span>~{formatEta(etaSeconds)} left</span>
+            )}
+          </span>
+        </div>
+      )}
     </div>
   );
 }
