@@ -17,16 +17,22 @@
  * directly from the internet — clients can spoof it.
  */
 export function getClientIp(request: Request): string | null {
-  const cfIp = request.headers.get("cf-connecting-ip");
-  if (cfIp) return normalize(cfIp);
+  // Each header is consulted in trust order. A blank or malformed value at
+  // a higher-priority header must NOT short-circuit the fallback chain —
+  // we only stop once a header yields a normalizable IP.
+  const cfIp = normalize(request.headers.get("cf-connecting-ip") ?? "");
+  if (cfIp) return cfIp;
 
-  const realIp = request.headers.get("x-real-ip");
-  if (realIp) return normalize(realIp);
+  const realIp = normalize(request.headers.get("x-real-ip") ?? "");
+  if (realIp) return realIp;
 
   const xff = request.headers.get("x-forwarded-for");
   if (xff) {
     const leftmost = xff.split(",")[0]?.trim();
-    if (leftmost) return normalize(leftmost);
+    if (leftmost) {
+      const normalized = normalize(leftmost);
+      if (normalized) return normalized;
+    }
   }
 
   return null;

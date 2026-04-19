@@ -18,9 +18,21 @@ function parseRule(
   try {
     if (trimmed.includes("/")) {
       const [addr, prefix] = ipaddr.parseCIDR(trimmed);
+      // v4-mapped-in-v6 rules (e.g. "::ffff:1.2.3.0/120") must be unmapped
+      // to IPv4 so they compare against IPv4 client addresses (`isIpAllowed`
+      // already unmaps the client). A mapped /96+ covers exactly the
+      // IPv4 host bits — shift the prefix down by 96. Anything shorter
+      // than /96 is a genuine IPv6 range, so leave it alone.
+      if (addr.kind() === "ipv6" && (addr as ipaddr.IPv6).isIPv4MappedAddress()) {
+        if (prefix < 96) return { addr, prefix };
+        return { addr: (addr as ipaddr.IPv6).toIPv4Address(), prefix: prefix - 96 };
+      }
       return { addr, prefix };
     }
     const addr = ipaddr.parse(trimmed);
+    if (addr.kind() === "ipv6" && (addr as ipaddr.IPv6).isIPv4MappedAddress()) {
+      return { addr: (addr as ipaddr.IPv6).toIPv4Address(), prefix: 32 };
+    }
     return { addr, prefix: addr.kind() === "ipv4" ? 32 : 128 };
   } catch {
     return null;
