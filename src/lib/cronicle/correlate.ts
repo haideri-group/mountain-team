@@ -14,9 +14,11 @@ import type {
  *   1. Resolve the URL path the sync's cron fires at (TYPE_TO_URL_PATH).
  *   2. Find the TeamFlow event whose `params.url` contains that path.
  *   3. Pull that event's recent history and pick the job whose
- *      `event_start` (Cronicle's intended fire time) is within ±60s of the
- *      sync row's `startedAt`. Fallback to `time_start` if `event_start`
- *      isn't populated.
+ *      `time_start` (when Cronicle actually fired the HTTP request) is
+ *      within ±60s of the sync row's `startedAt`. Fallback to
+ *      `event_start` (scheduled fire time) only when `time_start` is
+ *      missing — scheduled time can lag real fire time by minutes for
+ *      queued or retried jobs (notably deployment_backfill).
  *   4. Project to `CronicleCorrelation` + build a direct link to the job
  *      in the Cronicle UI.
  *
@@ -62,7 +64,11 @@ function findMatchingJob(
 ): CronicleJob | null {
   let best: { job: CronicleJob; delta: number } | null = null;
   for (const j of jobs) {
-    const anchor = j.event_start ?? j.time_start;
+    // Anchor on actual fire time (`time_start`), not scheduled time
+    // (`event_start`). For deployment_backfill and other long-running
+    // or retried jobs, the two can differ by minutes and the sync_logs
+    // row's `startedAt` tracks `time_start`, not `event_start`.
+    const anchor = j.time_start ?? j.event_start;
     if (!anchor) continue;
     const delta = Math.abs(anchor - startedAtSec);
     if (delta > CORRELATION_WINDOW_SEC) continue;
@@ -106,7 +112,7 @@ export async function correlateSyncLog(
     eventId: event.id,
     eventTitle: event.title,
     jobId: job.id,
-    cronicleStart: job.event_start ?? job.time_start,
+    cronicleStart: job.time_start ?? job.event_start,
     cronicleEnd: job.time_end ?? null,
     status: normalizeJobStatus(job),
     description: job.description,

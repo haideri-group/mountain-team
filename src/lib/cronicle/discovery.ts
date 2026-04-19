@@ -254,7 +254,13 @@ export async function projectEventPublic(
   const urlPath = extractUrlPath(event.params.url);
   const types = syncTypesForUrlPath(urlPath);
   if (latest && types.length > 0) {
-    const anchor = latest.event_start ?? latest.time_start;
+    // Anchor on `time_start` (when Cronicle actually fired the HTTP
+    // request) — that's what the app's `sync_logs.startedAt` matches.
+    // `event_start` is the SCHEDULED time, which can be minutes earlier
+    // if Cronicle queued the fire or retried after a failure (notably for
+    // the 40-minute deployment_backfill). Falling back to event_start
+    // only when time_start is missing on the Cronicle record.
+    const anchor = latest.time_start ?? latest.event_start;
     if (Number.isFinite(anchor)) {
       try {
         syncLogId = await findSyncLogIdNearTime({
