@@ -1,6 +1,6 @@
 import { db } from "@/lib/db";
 import { githubRepos, githubBranchMappings } from "@/lib/db/schema";
-import { eq } from "drizzle-orm";
+import { inArray } from "drizzle-orm";
 import { recordDeployment } from "./deployments";
 import { extractJiraKeys } from "./jira-keys";
 import {
@@ -79,12 +79,22 @@ export async function recordDeploymentsForIssue(
             string,
             typeof githubBranchMappings.$inferSelect[]
           >();
-          for (const repo of allRepos) {
-            const mappings = await db
+          // Single query + in-memory group — avoids an N+1 as repo count grows.
+          if (allRepos.length > 0) {
+            const allMappings = await db
               .select()
               .from(githubBranchMappings)
-              .where(eq(githubBranchMappings.repoId, repo.id));
-            mappingsByRepo.set(repo.id, mappings);
+              .where(
+                inArray(
+                  githubBranchMappings.repoId,
+                  allRepos.map((r) => r.id),
+                ),
+              );
+            for (const m of allMappings) {
+              const list = mappingsByRepo.get(m.repoId);
+              if (list) list.push(m);
+              else mappingsByRepo.set(m.repoId, [m]);
+            }
           }
           for (const { detail, pr } of mergedPRs) {
             const destBranch = pr.destination?.branch;
