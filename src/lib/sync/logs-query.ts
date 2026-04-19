@@ -374,6 +374,45 @@ export async function findSyncLogIdNearTime(input: {
  *  Uses MySQL-native `NOW() - INTERVAL` so the age comparison isn't
  *  skewed by mysql2 driver timezone round-trips (see notes on
  *  `summarize24h`). */
+/** Median duration (ms) of the last N completed runs for the given
+ *  types. Used by the schedule panel to estimate an ETA for sync
+ *  families that don't publish live progress counts (team_sync,
+ *  release_sync, worklog_sync, timedoctor_sync). Returns null when
+ *  fewer than 2 historical runs are available — one sample is too
+ *  noisy to extrapolate from. */
+export async function medianRecentDurationMs(
+  types: SyncLogType[],
+  sampleSize = 5,
+): Promise<number | null> {
+  if (types.length === 0) return null;
+  const rows = await db
+    .select({
+      startedAt: syncLogs.startedAt,
+      completedAt: syncLogs.completedAt,
+    })
+    .from(syncLogs)
+    .where(
+      and(
+        inArray(syncLogs.type, types),
+        eq(syncLogs.status, "completed"),
+      ),
+    )
+    .orderBy(desc(syncLogs.startedAt))
+    .limit(sampleSize);
+  const durations: number[] = [];
+  for (const r of rows) {
+    if (!r.startedAt || !r.completedAt) continue;
+    const d = r.completedAt.getTime() - r.startedAt.getTime();
+    if (d > 0) durations.push(d);
+  }
+  if (durations.length < 2) return null;
+  durations.sort((a, b) => a - b);
+  const mid = Math.floor(durations.length / 2);
+  return durations.length % 2 === 0
+    ? Math.round((durations[mid - 1] + durations[mid]) / 2)
+    : durations[mid];
+}
+
 /** Return the currently-running sync_logs row of any of the given
  *  types, if one exists — regardless of whether Cronicle has a
  *  corresponding job entry. Used by the schedule panel's progress

@@ -34,6 +34,57 @@ export interface TeamSyncResult {
   adminAccountId: string;
 }
 
+// --- Progress tracking (in-memory) ---
+
+export interface TeamSyncProgress {
+  phase: "idle" | "fetching" | "processing" | "done" | "failed";
+  message: string;
+  membersProcessed: number;
+  membersTotal: number;
+}
+
+interface TeamSyncState {
+  currentProgress: TeamSyncProgress;
+  activeLogId: string | null;
+}
+
+const globalForTeamSync = globalThis as unknown as {
+  _teamSyncState?: TeamSyncState;
+};
+if (!globalForTeamSync._teamSyncState) {
+  globalForTeamSync._teamSyncState = {
+    currentProgress: {
+      phase: "idle",
+      message: "",
+      membersProcessed: 0,
+      membersTotal: 0,
+    },
+    activeLogId: null,
+  };
+}
+const tstate = globalForTeamSync._teamSyncState;
+
+export function getTeamSyncProgressForLogId(
+  logId: string,
+): TeamSyncProgress | null {
+  if (tstate.activeLogId !== logId) return null;
+  return { ...tstate.currentProgress };
+}
+
+function updateTeamProgress(update: Partial<TeamSyncProgress>) {
+  tstate.currentProgress = { ...tstate.currentProgress, ...update };
+}
+
+function resetTeamProgress() {
+  tstate.currentProgress = {
+    phase: "idle",
+    message: "",
+    membersProcessed: 0,
+    membersTotal: 0,
+  };
+  tstate.activeLogId = null;
+}
+
 // --- Helpers ---
 
 function pickColor(usedColors: Set<string>): string {
@@ -60,6 +111,8 @@ async function syncTeamMembers(): Promise<TeamSyncResult> {
     errors: [],
     adminAccountId: "",
   };
+
+  updateTeamProgress({ phase: "fetching", message: "Fetching team members..." });
 
   // 1. Fetch admin's accountId to exclude
   const adminAccountId = await fetchCurrentUserAccountId();
@@ -116,7 +169,17 @@ async function syncTeamMembers(): Promise<TeamSyncResult> {
   const teamAccountIdSet = new Set(resolvedUsers.map((u) => u.accountId));
   const usedColors = new Set(dbMembers.map((m) => m.color).filter(Boolean) as string[]);
 
+  // Expose total for the /automations progress bar. Processed ticks up
+  // inside the loop below.
+  updateTeamProgress({
+    phase: "processing",
+    message: `Processing ${resolvedUsers.length} team members`,
+    membersTotal: resolvedUsers.length,
+    membersProcessed: 0,
+  });
+
   // 6. Process each resolved user (new or update)
+  let membersProcessedCount = 0;
   for (const user of resolvedUsers) {
     const existing = dbByAccountId.get(user.accountId);
 
@@ -190,6 +253,8 @@ async function syncTeamMembers(): Promise<TeamSyncResult> {
         result.unchanged++;
       }
     }
+    membersProcessedCount += 1;
+    updateTeamProgress({ membersProcessed: membersProcessedCount });
   }
 
   // 7. Mark departed: DB members (active/on_leave) NOT in team anymore
@@ -230,6 +295,8 @@ export async function runTeamSync(
 }> {
   const logId = `sync_${Date.now()}`;
   const startedAt = new Date();
+  resetTeamProgress();
+  tstate.activeLogId = logId;
 
   // Create running log entry — stamp triggeredBy at INSERT so the row
   // is correctly attributed from the moment it exists. Stamping after
@@ -239,9 +306,6 @@ export async function runTeamSync(
   const insertTriggeredBy = opts?.triggeredBy ?? null;
   const insertUserId =
     opts?.triggeredBy === "manual" ? (opts?.triggeredByUserId ?? null) : null;
-  console.log(
-    `[runTeamSync] logId=${logId} opts=${JSON.stringify(opts ?? null)} → inserting triggeredBy=${insertTriggeredBy ?? "NULL"} userId=${insertUserId ?? "NULL"}`,
-  );
   await db.insert(syncLogs).values({
     id: logId,
     type: "team_sync",

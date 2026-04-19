@@ -4,11 +4,13 @@ import {
   findRunningSyncLog,
   findSyncLogIdNearTime,
   getSyncLogStatusById,
+  medianRecentDurationMs,
   type SyncLogType,
 } from "@/lib/sync/logs-query";
 import { TYPE_TO_URL_PATH } from "./correlate";
 import { getSyncProgressForLogId } from "@/lib/sync/issue-sync";
 import { getDeploymentBackfillProgressForLogId } from "@/lib/sync/deployment-backfill";
+import { getTeamSyncProgressForLogId } from "@/lib/sync/team-sync";
 import type { CronicleEvent, CronicleEventPublic, CronicleJob } from "./types";
 
 /**
@@ -331,14 +333,26 @@ export async function projectEventPublic(
                 logStatus.type === "incremental" ||
                 logStatus.type === "manual"
               ? getSyncProgressForLogId(syncLogId)
-              : null;
+              : logStatus.type === "team_sync"
+                ? getTeamSyncProgressForLogId(syncLogId)
+                : null;
         if (raw) {
+          // Normalize across the three progress shapes:
+          //   issue sync:         issuesProcessed / issuesTotal
+          //   backfill:           issuesProcessed / issuesTotal
+          //   team sync:          membersProcessed / membersTotal
           const processed =
-            "issuesProcessed" in raw
-              ? (raw.issuesProcessed ?? null)
-              : null;
+            "membersProcessed" in raw
+              ? (raw.membersProcessed ?? null)
+              : "issuesProcessed" in raw
+                ? (raw.issuesProcessed ?? null)
+                : null;
           const total =
-            "issuesTotal" in raw ? (raw.issuesTotal ?? null) : null;
+            "membersTotal" in raw
+              ? (raw.membersTotal ?? null)
+              : "issuesTotal" in raw
+                ? (raw.issuesTotal ?? null)
+                : null;
           const pct =
             processed !== null && total !== null && total > 0
               ? Math.min(100, Math.round((processed / total) * 100))
@@ -374,14 +388,9 @@ export async function projectEventPublic(
             etaSeconds,
           };
         } else {
-          // Sync IS running, but we can't see its in-memory progress:
-          //   - different server process (scheduled cron on prod while
-          //     viewing /automations on dev), OR
-          //   - sync family that doesn't publish progress (team_sync,
-          //     release_sync, worklog_sync, timedoctor_sync).
-          // Fall back to an indeterminate bar so the admin can tell
-          // the run is in flight without live counts. No ETA possible
-          // without counts.
+          // Sync IS running but this process can't see its in-memory
+          // counts (different server, or sync type that doesn't publish
+          // progress). Indeterminate bar, no ETA — real-time only.
           progress = {
             phase: "running",
             message: "In progress",
