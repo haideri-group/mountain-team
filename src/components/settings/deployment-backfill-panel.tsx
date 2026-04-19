@@ -9,6 +9,7 @@ import {
   Loader2,
   Zap,
 } from "lucide-react";
+import { BRAND_GRADIENT } from "@/lib/brand";
 
 interface SyncLogData {
   id: string;
@@ -61,11 +62,13 @@ function formatTimeAgo(date: string | Date | null): string {
 function formatDateTime(date: string | Date | null): string {
   if (!date) return "—";
   return new Date(date).toLocaleString("en-GB", {
+    timeZone: "Asia/Karachi",
     day: "numeric",
     month: "short",
     year: "numeric",
     hour: "2-digit",
     minute: "2-digit",
+    hour12: true,
   });
 }
 
@@ -232,7 +235,8 @@ export function DeploymentBackfillPanel({
           onClick={handleRun}
           disabled={running}
           className="flex items-center gap-2 px-5 h-9 rounded-full text-sm font-bold font-mono uppercase tracking-wider text-white shadow-md transition-all disabled:opacity-50"
-          style={{ background: "linear-gradient(135deg, #944a00, #ff8400)" }}
+          style={{ background: BRAND_GRADIENT }}
+          aria-label={running ? "Deployment backfill running" : "Run deployment backfill now"}
         >
           <RefreshCw className={`h-3.5 w-3.5 ${running ? "animate-spin" : ""}`} />
           {running ? "Running..." : "Run Now"}
@@ -255,7 +259,7 @@ export function DeploymentBackfillPanel({
               className="h-full rounded-full transition-all duration-500"
               style={{
                 width: `${coveragePct}%`,
-                background: "linear-gradient(135deg, #944a00, #ff8400)",
+                background: BRAND_GRADIENT,
               }}
             />
           </div>
@@ -299,7 +303,7 @@ export function DeploymentBackfillPanel({
                     className="h-full rounded-full transition-all duration-300"
                     style={{
                       width: `${progressPct}%`,
-                      background: "linear-gradient(135deg, #944a00, #ff8400)",
+                      background: BRAND_GRADIENT,
                     }}
                   />
                 </div>

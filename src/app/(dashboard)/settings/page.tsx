@@ -48,21 +48,22 @@ export default async function SettingsPage() {
   let unsyncedCount = 0;
   let totalTracked = 0;
   if (trackedBoardIds.length > 0) {
-    const [totalRow] = await db
-      .select({ n: sql<number>`count(*)` })
-      .from(issues)
-      .where(inArray(issues.boardId, trackedBoardIds));
-    totalTracked = Number(totalRow?.n ?? 0);
-
-    const [unsyncedRow] = await db
-      .select({ n: sql<number>`count(*)` })
-      .from(issues)
-      .where(
-        and(
-          inArray(issues.boardId, trackedBoardIds),
-          isNull(issues.deploymentsSyncedAt),
+    const [[totalRow], [unsyncedRow]] = await Promise.all([
+      db
+        .select({ n: sql<number>`count(*)` })
+        .from(issues)
+        .where(inArray(issues.boardId, trackedBoardIds)),
+      db
+        .select({ n: sql<number>`count(*)` })
+        .from(issues)
+        .where(
+          and(
+            inArray(issues.boardId, trackedBoardIds),
+            isNull(issues.deploymentsSyncedAt),
+          ),
         ),
-      );
+    ]);
+    totalTracked = Number(totalRow?.n ?? 0);
     unsyncedCount = Number(unsyncedRow?.n ?? 0);
   }
 

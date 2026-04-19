@@ -3,6 +3,7 @@ import { auth } from "@/auth";
 import { db } from "@/lib/db";
 import { syncLogs } from "@/lib/db/schema";
 import { desc, eq } from "drizzle-orm";
+import { sanitizeErrorText } from "@/lib/jira/client";
 import {
   getDeploymentBackfillProgress,
   isBackfillRunning,
@@ -50,7 +51,11 @@ export async function POST() {
   } catch (error) {
     console.error("Manual deployment backfill failed:", error);
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : "Backfill failed" },
+      {
+        error: sanitizeErrorText(
+          error instanceof Error ? error.message : "Backfill failed",
+        ),
+      },
       { status: 500 },
     );
   }

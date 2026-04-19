@@ -152,10 +152,24 @@ interface QueueCandidate {
  *   P4: JIRA updated since last sync stamp
  *   P5: age-based rotation (oldest stamp first)
  *
- * The SQL pre-filter skips done/closed issues that already have ≥1
- * production/canonical deployment row AND have been synced before — those
- * are refined in JS against `getExpectedSites(brands)` to drop rows that
- * are truly complete (all expected sites deployed).
+ * Completeness refinement happens in JS (not SQL) because multi-site brand
+ * matrices can't be expressed cleanly in a WHERE clause: a done issue with
+ * `brands = "Tile Mountain, Bathroom Mountain"` and one production deployment
+ * (`tilemtn`) must stay queued until the `bathmtn` site lands. An SQL-level
+ * `EXISTS` check would drop it as soon as any production/canonical row
+ * existed.
+ *
+ * The query over-fetches (`limit * 2`) and JS-side filtering against
+ * `getDeploymentCompleteness(brands, …)` drops only truly complete
+ * done/closed issues.
+ *
+ * NOTE on `jiraUpdatedAt` parsing:
+ *   `issues.jiraUpdatedAt` is stored as the raw JIRA `fields.updated` string
+ *   (varchar(50) — e.g. `2026-04-19T12:34:56.789+0000`). MySQL `STR_TO_DATE`
+ *   has no `%z` specifier, so we truncate to the first 23 characters
+ *   (`YYYY-MM-DDTHH:MM:SS.sss`) before parsing. The resulting timestamp is
+ *   UTC-ish for comparison purposes — accurate within seconds, which is
+ *   sufficient for the P4 "updated since last sync" bucket.
  */
 async function selectQueue(limit: number): Promise<QueueCandidate[]> {
   const rows = await db.execute(sql`
@@ -171,20 +185,11 @@ async function selectQueue(limit: number): Promise<QueueCandidate[]> {
         WHEN i.status NOT IN ('done', 'closed')
              AND i.deploymentsSyncedAt < DATE_SUB(NOW(), INTERVAL 6 HOUR) THEN 3
         WHEN i.jiraUpdatedAt IS NOT NULL
-             AND STR_TO_DATE(i.jiraUpdatedAt, '%Y-%m-%dT%H:%i:%s.%f%z') > i.deploymentsSyncedAt THEN 4
+             AND STR_TO_DATE(LEFT(i.jiraUpdatedAt, 23), '%Y-%m-%dT%H:%i:%s.%f') > i.deploymentsSyncedAt THEN 4
         ELSE 5
       END AS priority
     FROM issues i
     WHERE i.boardId IN (SELECT id FROM boards WHERE isTracked = 1)
-      AND NOT (
-        i.status IN ('done', 'closed')
-        AND i.deploymentsSyncedAt IS NOT NULL
-        AND EXISTS (
-          SELECT 1 FROM deployments d
-          WHERE d.jiraKey = i.jiraKey
-            AND d.environment IN ('production', 'canonical')
-        )
-      )
     ORDER BY
       priority ASC,
       (i.deploymentsSyncedAt IS NOT NULL) ASC,
@@ -215,19 +220,19 @@ async function selectQueue(limit: number): Promise<QueueCandidate[]> {
   }));
 
   // JS-side completion refinement — drop done/closed issues whose expected
-  // sites (from brands) are already covered by existing deployments.
-  const p5Keys = candidates.filter((c) => c.priority === 5).map((c) => c.jiraKey);
-  if (p5Keys.length === 0) return candidates.slice(0, limit);
+  // sites (from brands) are already fully covered by existing deployments.
+  // Applies to every priority bucket because a done issue can reach P2/P4/P5
+  // and still be fully deployed.
+  const doneClosedKeys = candidates
+    .filter((c) => c.status === "done" || c.status === "closed")
+    .map((c) => c.jiraKey);
+  if (doneClosedKeys.length === 0) return candidates.slice(0, limit);
 
   const allProductionSites = await getAllProductionSites();
-  const deployedByKey = await getDeployedSiteNamesForKeys(p5Keys);
+  const deployedByKey = await getDeployedSiteNamesForKeys(doneClosedKeys);
 
   const filtered: QueueCandidate[] = [];
   for (const c of candidates) {
-    if (c.priority !== 5) {
-      filtered.push(c);
-      continue;
-    }
     if (c.status === "done" || c.status === "closed") {
       const deployed = [...(deployedByKey.get(c.jiraKey) ?? new Set<string>())];
       const completeness = getDeploymentCompleteness(c.brands, deployed, allProductionSites);
@@ -316,6 +321,30 @@ export async function runDeploymentBackfill(): Promise<BackfillRunResult> {
       durationMs: Date.now() - startedAt,
     };
   }
+
+  // Cross-instance guard: if another process has a running sync_logs row
+  // for deployment_backfill, defer. Railway hobby is single-instance today,
+  // but this keeps the guarantee intact if we scale horizontally or if a
+  // stuck log row from a previous crash still says "running".
+  const [alreadyRunningLog] = await db
+    .select({ id: syncLogs.id })
+    .from(syncLogs)
+    .where(
+      and(
+        eq(syncLogs.type, "deployment_backfill"),
+        eq(syncLogs.status, "running"),
+      ),
+    )
+    .limit(1);
+
+  if (alreadyRunningLog) {
+    return {
+      ...result,
+      deferred: true,
+      durationMs: Date.now() - startedAt,
+    };
+  }
+
   runInFlight = true;
 
   resetProgress();
