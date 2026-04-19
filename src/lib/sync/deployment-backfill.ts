@@ -448,27 +448,50 @@ export async function runDeploymentBackfill(
       };
     }
 
-    // Reclaim the crashed row before proceeding.
+    // Reclaim the crashed row before proceeding. Re-assert
+    // `status='running'` inside the UPDATE so a race where the legitimate
+    // writer completed this row between our SELECT and this UPDATE
+    // doesn't stamp a completed row back to `failed`. Same guard pattern
+    // used in `src/lib/sync/reclaim.ts` for the admin-triggered reclaim
+    // paths; we only emit the failure SSE when the update actually
+    // affected a row.
     const recoveredAt = new Date();
-    await db
+    const updateResult = await db
       .update(syncLogs)
       .set({
         status: "failed",
         completedAt: recoveredAt,
         error: "Recovered stale deployment_backfill run lock",
       })
-      .where(eq(syncLogs.id, alreadyRunningLog.id));
-    // Emit SSE so the /automations summary + table refresh the stale
-    // stuck-count; without this the "Reclaim all stuck" banner can
-    // linger on the client even though the row is already `failed`.
-    emitSyncLogChange({
-      id: alreadyRunningLog.id,
-      type: "deployment_backfill",
-      status: "failed",
-      startedAt: null,
-      completedAt: recoveredAt.toISOString(),
-      transition: "finished",
-    });
+      .where(
+        and(
+          eq(syncLogs.id, alreadyRunningLog.id),
+          eq(syncLogs.status, "running"),
+        ),
+      );
+
+    // drizzle-orm/mysql2 returns a `[ResultSetHeader]` tuple; use
+    // `.affectedRows` to confirm the guarded UPDATE actually flipped
+    // the row (not a no-op because the legitimate writer finished
+    // first). Only then broadcast the failure transition.
+    const affected =
+      (Array.isArray(updateResult)
+        ? (updateResult[0] as { affectedRows?: number })?.affectedRows
+        : (updateResult as { affectedRows?: number })?.affectedRows) ?? 0;
+
+    if (affected > 0) {
+      // Emit SSE so the /automations summary + table refresh the stale
+      // stuck-count; without this the "Reclaim all stuck" banner can
+      // linger on the client even though the row is already `failed`.
+      emitSyncLogChange({
+        id: alreadyRunningLog.id,
+        type: "deployment_backfill",
+        status: "failed",
+        startedAt: null,
+        completedAt: recoveredAt.toISOString(),
+        transition: "finished",
+      });
+    }
   }
 
   bstate.runInFlight = true;
