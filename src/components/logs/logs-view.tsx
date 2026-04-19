@@ -82,17 +82,6 @@ export function LogsView() {
     load();
   }, [load]);
 
-  // Kick off a Cronicle reconciliation on mount — if any `running` row's
-  // Cronicle counterpart already timed out, mark the row as failed so
-  // the admin doesn't see a "stuck running" state that contradicts the
-  // scheduler's record. Fire-and-forget; when the batch emits SSE for
-  // each reconciled row, `load()` refetches automatically.
-  useEffect(() => {
-    fetch("/api/automations/reconcile", { method: "POST" }).catch(() => {
-      /* reconcile is best-effort; silent on failure */
-    });
-  }, []);
-
   // Subscribe to server-side event stream exactly once per mount. We read
   // the latest `load` / `selectedId` / `loadDetail` via refs so changing
   // filters or the selected row does NOT re-open the EventSource.
@@ -104,6 +93,30 @@ export function LogsView() {
   useEffect(() => {
     selectedIdRef.current = selectedId;
   });
+
+  // Kick off a Cronicle reconciliation on mount — if any `running` row's
+  // Cronicle counterpart already timed out, mark the row as failed so
+  // the admin doesn't see a "stuck running" state that contradicts the
+  // scheduler's record. Fire-and-forget.
+  //
+  // Why the explicit refresh after .then(): the SSE subscription is
+  // opened in a separate useEffect below, and reconcile's
+  // `emitSyncLogChange` events can fire BEFORE the EventSource is
+  // connected — those initial events get dropped. Re-running load() +
+  // bumping refreshTick here guarantees the table, summary strip, and
+  // CronicleSchedulePanel all reflect the reconciled state even when
+  // SSE misses the race. Idempotent: if SSE also delivers an event, the
+  // second refetch is cheap.
+  useEffect(() => {
+    fetch("/api/automations/reconcile", { method: "POST" })
+      .then(() => {
+        loadRef.current();
+        setRefreshTick((t) => t + 1);
+      })
+      .catch(() => {
+        /* reconcile is best-effort; silent on failure */
+      });
+  }, []);
 
   const loadDetail = useCallback(async (id: string) => {
     setDetailLoading(true);
