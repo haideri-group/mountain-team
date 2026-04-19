@@ -150,6 +150,12 @@ export async function propagateDeploymentToOtherBranches(params: {
   deployedBy: string | null;
   baseDeployedAt: Date;
   branchMappings?: typeof githubBranchMappings.$inferSelect[];
+  /** When true, skip `findBranchDeployDate` (up to 21 GitHub calls per
+   *  branch) and stamp every propagated branch with `baseDeployedAt`
+   *  instead of the branch-specific merge date. Used by the bulk
+   *  deployment-backfill cron where throughput > per-branch accuracy.
+   *  Per-issue Sync button leaves this false. */
+  approximateDates?: boolean;
 }): Promise<number> {
   // Skip synthetic placeholder SHAs (e.g., "pr-6483") — not real commits
   if (params.commitSha.startsWith("pr-")) return 0;
@@ -205,12 +211,14 @@ export async function propagateDeploymentToOtherBranches(params: {
       );
       if (!cmp || (cmp.status !== "behind" && cmp.status !== "identical")) continue;
 
-      const branchDeployedAt = await findBranchDeployDate(
-        params.repoFullName,
-        mapping.branchPattern,
-        params.commitSha,
-        params.baseDeployedAt,
-      );
+      const branchDeployedAt = params.approximateDates
+        ? params.baseDeployedAt
+        : await findBranchDeployDate(
+            params.repoFullName,
+            mapping.branchPattern,
+            params.commitSha,
+            params.baseDeployedAt,
+          );
 
       const result = await recordDeployment({
         jiraKey: params.jiraKey,

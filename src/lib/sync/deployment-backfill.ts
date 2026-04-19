@@ -490,6 +490,11 @@ export async function runDeploymentBackfill(): Promise<BackfillRunResult> {
         const syncResult = await recordDeploymentsForIssue({
           jiraKey: candidate.jiraKey,
           jiraIssueId,
+          // Backfill uses the PR merge date as the approximate per-branch
+          // deploy date — skips `findBranchDeployDate` (~21 GH calls per
+          // branch) in favor of throughput. Per-issue Sync button keeps
+          // the accurate path for user-triggered single-issue refreshes.
+          approximateDates: true,
         });
 
         result.recorded += syncResult.deploymentsRecorded;
