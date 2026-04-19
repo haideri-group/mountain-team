@@ -22,8 +22,18 @@ export async function requirePublicOrSession(
   const ip = getClientIp(request);
   if (!ip) return { allowed: false, reason: "unauthorized" };
 
-  const allowlist = await getAllowlist();
-  if (isIpAllowed(ip, allowlist)) return { allowed: true };
+  // Fail closed: a DB/connectivity failure here must surface as a clean
+  // 401 deny, not a 500 — otherwise a transient blip takes down every
+  // public GET endpoint.
+  try {
+    const allowlist = await getAllowlist();
+    if (isIpAllowed(ip, allowlist)) return { allowed: true };
+  } catch (err) {
+    console.warn(
+      "IP allowlist lookup failed in requirePublicOrSession:",
+      err instanceof Error ? err.message : String(err),
+    );
+  }
 
   return { allowed: false, reason: "unauthorized" };
 }

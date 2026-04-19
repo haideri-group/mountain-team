@@ -17,12 +17,18 @@ const TTL_MS = 60 * 1000;
 
 let cache: { cidrs: string[]; expiresAt: number } | null = null;
 let inFlight: Promise<string[]> | null = null;
+// Monotonic generation counter bumped on every invalidation. Any load that
+// was started before the bump must NOT write its result back — otherwise a
+// DB read racing an admin mutation could repopulate the cache with stale
+// CIDRs for the full TTL, violating the "takes effect immediately" contract.
+let generation = 0;
 
 export async function getAllowlist(): Promise<string[]> {
   const now = Date.now();
   if (cache && cache.expiresAt > now) return cache.cidrs;
   if (inFlight) return inFlight;
 
+  const requestGeneration = generation;
   inFlight = (async () => {
     try {
       const rows = await db
@@ -30,7 +36,10 @@ export async function getAllowlist(): Promise<string[]> {
         .from(ipAllowlist)
         .where(eq(ipAllowlist.enabled, true));
       const cidrs = rows.map((r) => r.cidr);
-      cache = { cidrs, expiresAt: Date.now() + TTL_MS };
+      // Only cache if no invalidation happened while we were reading.
+      if (requestGeneration === generation) {
+        cache = { cidrs, expiresAt: Date.now() + TTL_MS };
+      }
       return cidrs;
     } finally {
       inFlight = null;
@@ -42,4 +51,10 @@ export async function getAllowlist(): Promise<string[]> {
 
 export function invalidateAllowlistCache(): void {
   cache = null;
+  generation += 1;
+  // Dropping `inFlight` is intentional: the promise keeps resolving for
+  // existing callers (they'll just see pre-mutation data for THEIR request),
+  // but the next getAllowlist() after invalidation starts a fresh read
+  // instead of awaiting the stale one.
+  inFlight = null;
 }
