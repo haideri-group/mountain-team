@@ -220,6 +220,29 @@ export function LogsDrawer({ open, detail, loading, onClose, onMarkFailed }: Pro
             {/* Cronicle correlation */}
             {detail.cronicle && (
               <Section title="Scheduler Record">
+                {/* When the app says `completed` but Cronicle says
+                    `timeout` / `error`, the scheduler's HTTP timeout
+                    fired while our handler was still running. The sync
+                    actually finished; Cronicle just gave up waiting.
+                    Surface this explicitly so admins don't think
+                    they're looking at a failure. */}
+                {detail.log.status === "completed" &&
+                  (detail.cronicle.status === "timeout" ||
+                    detail.cronicle.status === "error") && (
+                    <div className="mb-3 rounded-lg bg-amber-500/15 px-3 py-2 text-[11px] text-amber-800 dark:text-amber-300">
+                      <p className="font-semibold">
+                        Cronicle timed out, TeamFlow completed successfully.
+                      </p>
+                      <p className="mt-1 text-amber-700/90 dark:text-amber-300/80">
+                        The scheduler marked this job as
+                        <span className="font-mono"> {detail.cronicle.status} </span>
+                        after its HTTP timeout elapsed, but the app finished
+                        the sync normally. The app record (above) is
+                        authoritative. Consider raising the event&apos;s
+                        timeout in Cronicle if this happens often.
+                      </p>
+                    </div>
+                  )}
                 <KV label="Job" value={detail.cronicle.eventTitle} />
                 <KV label="Job ID" value={detail.cronicle.jobId} />
                 <KV

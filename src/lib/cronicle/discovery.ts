@@ -172,6 +172,28 @@ function normalizeJobStatus(
 }
 
 /**
+ * Pick the Cronicle job whose `time_start` is closest to the anchor
+ * timestamp (usually a sync_log's `startedAt` in epoch seconds). Used
+ * instead of "just take the latest job" so the schedule panel's
+ * external-link deep-links to the specific Cronicle fire that matches
+ * the sync_log we're actually surfacing — not a later retry. Returns
+ * `undefined` when `jobs` is empty or every entry lacks a usable time.
+ */
+function pickCorrelatedJob(
+  jobs: CronicleJob[],
+  anchorEpochSec: number,
+): CronicleJob | undefined {
+  let best: { job: CronicleJob; delta: number } | undefined;
+  for (const j of jobs) {
+    const t = j.time_start ?? j.event_start;
+    if (!t) continue;
+    const delta = Math.abs(t - anchorEpochSec);
+    if (!best || delta < best.delta) best = { job: j, delta };
+  }
+  return best?.job;
+}
+
+/**
  * Compute the next fire timestamp (epoch seconds) for a Cronicle event's
  * timing spec. Best-effort: handles the common shape we use
  * (hours + minutes, optional days/months/weekdays) without a full cron
@@ -270,7 +292,11 @@ function runningTypesForUrlPath(urlPath: string): SyncLogType[] {
 export async function projectEventPublic(
   event: CronicleEvent,
 ): Promise<CronicleEventPublic> {
-  const jobs = await listEventHistory(event.id, 1);
+  // Fetch a small window of recent jobs so `pickCorrelatedJob` can
+  // match the job that actually corresponds to our sync_log (instead of
+  // blindly using the most recent Cronicle job, which could be a retry
+  // that fired after the original timed out).
+  const jobs = await listEventHistory(event.id, 5);
   const latest = jobs[0];
 
   // Look for a currently-RUNNING sync_log of this event's type FIRST.
@@ -321,15 +347,37 @@ export async function projectEventPublic(
     }
   }
 
-  // Build a direct Cronicle link for the icon to fall back to when we
-  // have no matching app-side sync_logs row. Covers the case where
-  // Cronicle couldn't even reach TeamFlow (DNS failure, connection
-  // refused, TLS error) — the failure exists only in Cronicle's log
-  // and this link takes the admin there.
+  // Resolve the Cronicle job that BEST corresponds to the sync_log
+  // we're surfacing (by closest `time_start` to the sync_log's
+  // `startedAt`). Using `latest` directly would point at a later
+  // retry if Cronicle auto-retried after a timeout, which would send
+  // the admin to the wrong job in the external-link flow.
+  const syncLogStartSec = runningSyncLog
+    ? Math.floor(runningSyncLog.startedAt.getTime() / 1000)
+    : null;
+  let correlatedJob: CronicleJob | undefined;
+  if (syncLogStartSec !== null && jobs.length > 0) {
+    correlatedJob = pickCorrelatedJob(jobs, syncLogStartSec);
+  } else if (syncLogId && jobs.length > 0) {
+    // Non-running sync_log — fetch its startedAt to anchor the pick.
+    try {
+      const anchorRow = await getSyncLogStatusById(syncLogId);
+      void anchorRow;
+      // Keep logic cheap: we don't need startedAt in this path because
+      // `findSyncLogIdNearTime` above already matched the sync_log to
+      // Cronicle's `time_start` within ±60s, so `latest` is overwhelmingly
+      // the right pick. Leave `correlatedJob` as `undefined` → falls
+      // through to `latest` below.
+    } catch {
+      // swallow
+    }
+  }
+  const jobForLink = correlatedJob ?? latest;
+
   const cronicleBase = (process.env.CRONICLE_BASE_URL || "").replace(/\/$/, "");
   const jobDetailsUrl =
-    latest && cronicleBase
-      ? `${cronicleBase}/#JobDetails?id=${latest.id}`
+    jobForLink && cronicleBase
+      ? `${cronicleBase}/#JobDetails?id=${jobForLink.id}`
       : null;
 
   // In-flight progress for the schedule panel's inline bar. We only surface
@@ -433,31 +481,93 @@ export async function projectEventPublic(
     }
   }
 
-  // Build lastRun. Prefer the running sync_log when one exists — that's
-  // the authoritative source for "there's an active run" (regardless of
-  // whether Cronicle has a matching job, which Run Now skips). Otherwise
-  // fall back to Cronicle's latest job. Progress bar shows whenever
-  // `progress` is populated AND status === "running".
+  // Build lastRun following the truth hierarchy:
+  //   1. Running sync_log → "running" (app is authoritative).
+  //   2. Correlated sync_log that's terminal (completed/failed) → use
+  //      sync_log's status. Cronicle's job might say "timeout" because
+  //      its HTTP timeout fired while our handler was still working, but
+  //      the app actually finished — we trust the app's record.
+  //   3. Only a Cronicle job, no correlated sync_log → use Cronicle's
+  //      status (DNS failures, crashes before logRunStart, etc.).
+  //   4. Nothing → no last run.
+  //
+  // `statusSource` tells the client which rung of this hierarchy won,
+  // so the drawer can render an "app succeeded but Cronicle timed out"
+  // disclosure banner when appropriate.
+  const cronicleJobStatus = jobForLink ? normalizeJobStatus(jobForLink) : null;
   let lastRun: CronicleEventPublic["lastRun"] = null;
   if (runningSyncLog) {
     lastRun = {
-      jobId: latest?.id,
+      jobId: jobForLink?.id,
       start: Math.floor(runningSyncLog.startedAt.getTime() / 1000),
       end: null,
       status: "running",
+      statusSource: "app",
       elapsed: undefined,
       syncLogId,
+      cronicleJobStatus,
       jobDetailsUrl,
       progress,
     };
+  } else if (syncLogId) {
+    // Correlated but not currently running — fetch the sync_log's
+    // terminal status and project it. This is where the
+    // Cronicle-says-timeout / app-says-completed case gets resolved
+    // correctly.
+    let appStatus: "success" | "error" | "running" = "running";
+    let appStartSec: number = jobForLink?.time_start ?? 0;
+    try {
+      const row = await getSyncLogStatusById(syncLogId);
+      if (row?.status === "completed") appStatus = "success";
+      else if (row?.status === "failed") appStatus = "error";
+      else if (row?.status === "running") appStatus = "running";
+      // Best-effort: the anchor time belongs to the sync_log if we
+      // have it, so the start timestamp on screen reflects the app's
+      // view, not Cronicle's.
+      if (row?.startedAt) {
+        appStartSec = Math.floor(new Date(row.startedAt).getTime() / 1000);
+      }
+    } catch {
+      // If the lookup fails, fall through to Cronicle below.
+      if (jobForLink) {
+        lastRun = {
+          jobId: jobForLink.id,
+          start: jobForLink.time_start,
+          end: jobForLink.time_end ?? null,
+          status: normalizeJobStatus(jobForLink),
+          statusSource: "cronicle",
+          elapsed: jobForLink.elapsed,
+          syncLogId,
+          cronicleJobStatus,
+          jobDetailsUrl,
+          progress,
+        };
+      }
+    }
+    if (!lastRun) {
+      lastRun = {
+        jobId: jobForLink?.id,
+        start: appStartSec,
+        end: jobForLink?.time_end ?? null,
+        status: appStatus,
+        statusSource: "app",
+        elapsed: jobForLink?.elapsed,
+        syncLogId,
+        cronicleJobStatus,
+        jobDetailsUrl,
+        progress,
+      };
+    }
   } else if (latest) {
     lastRun = {
       jobId: latest.id,
       start: latest.time_start,
       end: latest.time_end ?? null,
       status: normalizeJobStatus(latest),
+      statusSource: "cronicle",
       elapsed: latest.elapsed,
       syncLogId,
+      cronicleJobStatus,
       jobDetailsUrl,
       progress,
     };
