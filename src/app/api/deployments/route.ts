@@ -11,10 +11,19 @@ import { getExpectedSites, getDeploymentCompleteness, getSiteLabel } from "@/lib
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
+/**
+ * Formats a Date as `YYYY-MM-DD` in the app's display timezone (Pakistan).
+ * Used to anchor week boundaries to the user's calendar rather than UTC.
+ */
 function getPKTDateString(date: Date): string {
   return date.toLocaleDateString("en-CA", { timeZone: APP_TIMEZONE });
 }
 
+/**
+ * Returns Monday 00:00 of the week containing `now`, interpreted in the
+ * app's display timezone (Pakistan / `+05:00`). Weeks are Monday-anchored
+ * to match JIRA sprint conventions and the "Deployments This Week" KPI.
+ */
 function getStartOfWeekPKT(now: Date): Date {
   const dateStr = getPKTDateString(now);
   const [y, m, d] = dateStr.split("-").map(Number);
@@ -26,12 +35,35 @@ function getStartOfWeekPKT(now: Date): Date {
   return new Date(`${mondayStr}T00:00:00+05:00`);
 }
 
+/**
+ * Whole days elapsed from `from` to `to`, floored. Negative if `to` is
+ * earlier. Used for "X days since deploy" / "X days in staging" metrics.
+ */
 function daysBetween(from: Date, to: Date): number {
   return Math.floor((to.getTime() - from.getTime()) / (1000 * 60 * 60 * 24));
 }
 
 // ─── Route ───────────────────────────────────────────────────────────────────
 
+/**
+ * GET `/api/deployments` — aggregated data for the `/deployments` dashboard.
+ *
+ * Auth: any signed-in user (admin or user). Returns 401 otherwise.
+ *
+ * Query params (all optional):
+ *   - `environment` — `"staging" | "production"`
+ *   - `repo`        — repo `fullName` (e.g. `"tilemountainuk/tile-mountain-sdk"`)
+ *   - `site`        — site label (e.g. `"Tile Mountain"`) or raw code
+ *   - `board`       — board `jiraKey` prefix (e.g. `"BUTTERFLY"`)
+ *
+ * Response shape covers: KPI metrics, mismatches (attention required),
+ * the deployment pipeline, pending releases, recent deployments, site
+ * overview, and the filter dropdown option lists. See
+ * `src/components/deployments/types.ts` for exact types.
+ *
+ * Repo filter is pushed into SQL across every deployment query; unknown
+ * repo values short-circuit to an empty payload so the page doesn't 500.
+ */
 export async function GET(request: Request) {
   try {
     const session = await auth();
@@ -252,12 +284,28 @@ export async function GET(request: Request) {
     const mismatchList: Mismatch[] = [];
     const seenMismatchPairs = new Set<string>(); // `${type}:${jiraKey}` — allows multiple types per key
 
+    /**
+     * Maps age-in-days to a severity tier for mismatch rows.
+     * Thresholds mirror the task-aging alert (3+ days = warning) and
+     * give a "stuck for over a week" escalation at 7+ days.
+     */
     function ageSeverity(days: number): Mismatch["severity"] {
       if (days > 7) return "critical";
       if (days >= 3) return "warning";
       return "info";
     }
 
+    /**
+     * Builds a single Mismatch row from a production deploy + its issue.
+     *
+     * Uses the OLDEST prod deploy for the issue as the age anchor (via
+     * `oldestProdByKey`) so a re-deploy doesn't reset the "days stuck"
+     * clock — a 45-day-old mismatch remains 45 days old after a redeploy.
+     *
+     * Under a repo filter, `expected` is intersected with `repoSiteSet`
+     * to avoid reporting the other-repo's `BRAND_SITE_MAP` code as
+     * "missing".
+     */
     function buildMismatch(
       d: typeof allProdDeployments[0],
       issue: typeof mismatchIssueRows[0],
@@ -303,6 +351,13 @@ export async function GET(request: Request) {
       };
     }
 
+    /**
+     * Appends a Mismatch to the output list, deduplicating by
+     * `(type, jiraKey)`. A single issue can contribute multiple mismatch
+     * types (e.g. both `closed_but_deployed` and `partial_rollout`), but
+     * should only appear once per type regardless of how many production
+     * deploys it has.
+     */
     function pushUnique(m: Mismatch) {
       const key = `${m.type}:${m.jiraKey}`;
       if (seenMismatchPairs.has(key)) return;
@@ -506,6 +561,17 @@ export async function GET(request: Request) {
       pipelineDeployedSites.set(d.jiraKey, sites);
     }
 
+    /**
+     * Builds a single pipeline-task row from an issue in a pre-deploy
+     * status (Ready for Testing / Ready for Live / Rolling Out /
+     * Post-Live Testing).
+     *
+     * `deployedSites` comes from the already-repo-scoped query; under a
+     * repo filter, `expected` is intersected with `repoSiteSet` so the
+     * progress bar reflects completion within the selected repo only
+     * (a "Tile Mountain" task fully shipped to SDK should read complete,
+     * not "1/2").
+     */
     function buildPipelineTask(issue: typeof pipelineIssues[0]) {
       const board = boardMap.get(issue.boardId);
       const member = issue.assigneeId ? memberMap.get(issue.assigneeId) : null;
