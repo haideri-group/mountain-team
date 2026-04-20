@@ -40,6 +40,24 @@ yarn tsx scripts/migrate-<thing>.ts --apply    # execute
 
 `DATABASE_URL` in `.env.local` points at Railway's production MySQL, so these scripts run directly against prod from a local machine. There is no separate staging DB. `yarn db:push` rewrites schema without an audit trail and can silently drop data — **never use it against Railway**, only local dev databases.
 
+## Central Configuration (IMPORTANT)
+
+Cross-cutting constants — display timezone, Cronicle request budget, etc. — live in **`src/lib/config.ts`**. Import from there instead of hardcoding values inline or re-reading env vars per call site.
+
+**Why this matters:**
+- One-line change when a value moves. Timezone was `"Asia/Karachi"` sprinkled across dozens of `toLocaleString` calls before the constant was added — every new region would have been a grep-and-replace.
+- Keeps values documented. The JSDoc on each export explains *why* the number is what it is, so future readers don't see a bare `10_000` and wonder whether it's safe to change.
+- Consistent behavior between runtimes. A constant imported by both the app (`src/lib/cronicle/client.ts`) and a one-off script (`scripts/cronicle-set-timeouts.ts`) gives both surfaces the same budget. Using separate env vars or per-file magic numbers lets them silently drift.
+
+**Rules:**
+- No `"server-only"` marker on `config.ts` — it must be importable from server code, client code, AND scripts (`../src/lib/config`). Keep it side-effect-free.
+- Don't add env-var reads here. `config.ts` is for **compile-time constants**. Runtime-only values (API keys, connection strings) belong in `process.env` and read at the call site.
+- When adding a new constant, include a JSDoc that explains the value and where it's used — not just what it is.
+
+Current exports:
+- `APP_TIMEZONE` — IANA timezone for all user-facing date/time DISPLAY.
+- `CRONICLE_REQUEST_TIMEOUT_MS` — per-request budget for every Cronicle HTTP call.
+
 ## Next.js 16 Conventions (IMPORTANT)
 
 This project uses **Next.js 16.2.2** which has breaking changes from earlier versions. Always read bundled docs at `node_modules/next/dist/docs/` before using unfamiliar APIs.
