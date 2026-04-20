@@ -551,6 +551,13 @@ export async function projectEventPublic(
         progress,
       };
     } else if (jobForLink) {
+      // `row === null` means the sync_logs row we correlated against
+      // no longer exists. Drop the stale `syncLogId` from the
+      // projection — otherwise the panel renders the "open drawer"
+      // button, which would open against a missing row and 404. With
+      // `syncLogId: null`, the panel falls through to the external
+      // Cronicle-job link, which is the correct UX for "no app-side
+      // record."
       lastRun = {
         jobId: jobForLink.id,
         start: jobForLink.time_start,
@@ -558,7 +565,7 @@ export async function projectEventPublic(
         status: normalizeJobStatus(jobForLink),
         statusSource: "cronicle",
         elapsed: jobForLink.elapsed,
-        syncLogId,
+        syncLogId: null,
         cronicleJobStatus,
         jobDetailsUrl,
         progress,
