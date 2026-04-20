@@ -4,6 +4,11 @@ import { and, eq, inArray, sql } from "drizzle-orm";
 import { fetchSingleIssue } from "@/lib/jira/issues";
 import { recordDeploymentsForIssue } from "@/lib/github/issue-deployment-sync";
 import { emitSyncLogChange } from "./events";
+import {
+  persistProgress,
+  flushProgress,
+  clearProgressThrottle,
+} from "./progress-persist";
 import { clearCompareCache } from "@/lib/github/deployment-propagation";
 import {
   getLastKnownRateLimit,
@@ -355,10 +360,16 @@ async function logRunStart(
 async function logRunEnd(
   id: string,
   result: BackfillRunResult,
+  total: number,
   error?: string,
 ): Promise<void> {
   const completedAt = new Date();
   const status = error ? "failed" : "completed";
+  // Finalize progress columns first via `flushProgress`, which drains
+  // any in-flight throttled UPDATEs for this logId. The status UPDATE
+  // below no longer touches progress fields, so a late throttled write
+  // can't overwrite the final snapshot out of order.
+  await flushProgress(id, result.processed, total);
   await db
     .update(syncLogs)
     .set({
@@ -368,6 +379,7 @@ async function logRunEnd(
       error: error ? sanitizeErrorText(error).slice(0, 1000) : null,
     })
     .where(eq(syncLogs.id, id));
+  clearProgressThrottle(id);
   emitSyncLogChange({
     id,
     type: "deployment_backfill",
@@ -515,6 +527,12 @@ export async function runDeploymentBackfill(
   bstate.activeLogId = logId;
   result.logId = logId;
 
+  // Tracks the current denominator for `flushProgress` on any terminal
+  // path. Starts at 0 (deferred / pre-queue errors) and is bumped once
+  // the queue is selected. Declared at function scope so every
+  // `logRunEnd` call, including the outer `catch`, can reach it.
+  let runTotal = 0;
+
   try {
     // Pre-flight: poll /rate_limit. This endpoint does NOT count against
     // the limit, so it's free.
@@ -528,7 +546,7 @@ export async function runDeploymentBackfill(
         });
         result.deferred = true;
         result.durationMs = Date.now() - startedAt;
-        await logRunEnd(logId, result);
+        await logRunEnd(logId, result, runTotal);
         return result;
       }
     } catch (e) {
@@ -542,16 +560,21 @@ export async function runDeploymentBackfill(
 
     updateProgress({ phase: "selecting", message: "Selecting issue queue" });
     const queue = await selectQueue(cfg.maxIssuesPerRun);
+    runTotal = queue.length;
     updateProgress({
       issuesTotal: queue.length,
       phase: "processing",
       message: `Processing ${queue.length} issue${queue.length === 1 ? "" : "s"}`,
     });
+    // Persist total + 0 processed up front so cross-process readers
+    // (admin on dev viewing a prod-running backfill) see the bar width
+    // immediately — no more "In progress" marquee for 35+ minutes.
+    persistProgress(logId, 0, queue.length);
 
     if (queue.length === 0) {
       updateProgress({ phase: "done", message: "Queue empty — nothing to backfill" });
       result.durationMs = Date.now() - startedAt;
-      await logRunEnd(logId, result);
+      await logRunEnd(logId, result, runTotal);
       return result;
     }
 
@@ -605,6 +628,10 @@ export async function runDeploymentBackfill(
           issuesProcessed: result.processed,
           deploymentsRecorded: result.recorded,
         });
+        // Throttled (2s) persist — max one UPDATE per 2s regardless of
+        // how fast the loop iterates, so cross-process readers see
+        // live counts without pounding MySQL.
+        persistProgress(logId, result.processed, queue.length);
       } catch (e) {
         result.errors += 1;
         console.warn(
@@ -627,7 +654,7 @@ export async function runDeploymentBackfill(
     }
 
     result.durationMs = Date.now() - startedAt;
-    await logRunEnd(logId, result);
+    await logRunEnd(logId, result, runTotal);
     return result;
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
@@ -636,7 +663,7 @@ export async function runDeploymentBackfill(
       message: `Backfill failed: ${sanitizeErrorText(msg)}`,
     });
     result.durationMs = Date.now() - startedAt;
-    await logRunEnd(logId, result, msg);
+    await logRunEnd(logId, result, runTotal, msg);
     throw e;
   } finally {
     bstate.runInFlight = false;

@@ -249,6 +249,30 @@ export async function listSyncLogs(params: ListSyncLogsParams = {}): Promise<{
 /** Cheap lookup — just the status + type, for callers that only need to
  *  know whether a given sync_log is still `running`. Avoids hydrating
  *  the full LogDetailRow (sanitizeErrorText + ISO conversions). */
+/** Read the persisted live-progress counters (`progressProcessed` /
+ *  `progressTotal`) from a sync_logs row. Runners write these
+ *  throttled (every ~2s) during a run so any server process can
+ *  render the progress bar + ETA without access to the runner's
+ *  in-memory singleton. Returns `null` on miss; returns null values
+ *  when the row exists but the columns aren't populated. */
+export async function getPersistedProgress(
+  id: string,
+): Promise<{ processed: number | null; total: number | null } | null> {
+  const [row] = await db
+    .select({
+      progressProcessed: syncLogs.progressProcessed,
+      progressTotal: syncLogs.progressTotal,
+    })
+    .from(syncLogs)
+    .where(eq(syncLogs.id, id))
+    .limit(1);
+  if (!row) return null;
+  return {
+    processed: row.progressProcessed ?? null,
+    total: row.progressTotal ?? null,
+  };
+}
+
 export async function getSyncLogStatusById(
   id: string,
 ): Promise<{

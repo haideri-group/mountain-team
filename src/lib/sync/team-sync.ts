@@ -3,6 +3,11 @@ import { team_members, syncLogs } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 import { emitSyncLogChange } from "./events";
 import {
+  persistProgress,
+  flushProgress,
+  clearProgressThrottle,
+} from "./progress-persist";
+import {
   fetchAllTeamMembers,
   fetchJiraUserDetails,
   fetchCurrentUserAccountId,
@@ -160,6 +165,7 @@ async function syncTeamMembers(): Promise<TeamSyncResult> {
     membersTotal: totalUnits,
     membersProcessed: 0,
   });
+  if (tstate.activeLogId) persistProgress(tstate.activeLogId, 0, totalUnits);
 
   let fetchedCount = 0;
   const detailResults = await Promise.allSettled(
@@ -172,6 +178,9 @@ async function syncTeamMembers(): Promise<TeamSyncResult> {
           membersProcessed: fetchedCount,
           message: `Fetching details: ${fetchedCount} / ${filteredAccountIds.length}`,
         });
+        if (tstate.activeLogId) {
+          persistProgress(tstate.activeLogId, fetchedCount, totalUnits);
+        }
       }
     }),
   );
@@ -280,6 +289,9 @@ async function syncTeamMembers(): Promise<TeamSyncResult> {
     }
     membersProcessedCount += 1;
     updateTeamProgress({ membersProcessed: membersProcessedCount });
+    if (tstate.activeLogId) {
+      persistProgress(tstate.activeLogId, membersProcessedCount, totalUnits);
+    }
   }
 
   // 7. Mark departed: DB members (active/on_leave) NOT in team anymore
@@ -458,8 +470,18 @@ export async function runTeamSync(
       );
     }
 
-    // Update log to completed
+    // Update log to completed. Finalize progress columns first via
+    // `flushProgress`, using the actual tracked counters — the planned
+    // `membersTotal` budget hides any fetch failures, so we write the
+    // real processed/total pair instead. `flushProgress` also drains
+    // any in-flight throttled UPDATEs, so the status UPDATE below
+    // can't be overwritten by a stale write resolving out of order.
     const completedAt = new Date();
+    await flushProgress(
+      logId,
+      tstate.currentProgress.membersProcessed,
+      tstate.currentProgress.membersTotal,
+    );
     await db
       .update(syncLogs)
       .set({
@@ -470,6 +492,7 @@ export async function runTeamSync(
           result.errors.length > 0 ? result.errors.join("; ") : null,
       })
       .where(eq(syncLogs.id, logId));
+    clearProgressThrottle(logId);
     emitSyncLogChange({
       id: logId,
       type: "team_sync",
@@ -481,8 +504,16 @@ export async function runTeamSync(
 
     return { logId, result };
   } catch (error) {
-    // Update log to failed
+    // Update log to failed. Persist the final progress snapshot
+    // before the status flip so a reopened drawer shows "got to X/Y
+    // before failing" rather than whatever the last throttled write
+    // happened to capture (which can lag by up to 2 s).
     const completedAt = new Date();
+    await flushProgress(
+      logId,
+      tstate.currentProgress.membersProcessed,
+      tstate.currentProgress.membersTotal,
+    );
     await db
       .update(syncLogs)
       .set({
@@ -491,6 +522,7 @@ export async function runTeamSync(
         error: error instanceof Error ? error.message : "Unknown error",
       })
       .where(eq(syncLogs.id, logId));
+    clearProgressThrottle(logId);
     emitSyncLogChange({
       id: logId,
       type: "team_sync",

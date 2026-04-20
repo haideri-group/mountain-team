@@ -136,6 +136,13 @@ export const syncLogs = mysqlTable("sync_logs", {
   startedAt: timestamp("startedAt").defaultNow(),
   completedAt: timestamp("completedAt"),
   issueCount: int("issueCount").default(0),
+  // Live progress counts, written by the runner during a sync so
+  // cross-process readers (e.g. admin viewing /automations on dev while
+  // the cron runs on prod) can render the progress bar + ETA even
+  // though the in-memory singleton is empty in their process. Nullable:
+  // only populated while a sync is actively publishing progress.
+  progressProcessed: int("progressProcessed"),
+  progressTotal: int("progressTotal"),
   memberCount: int("memberCount").default(0),
   error: text("error"),
   // Who initiated this run: `cron` (scheduled fire), `manual` (admin
