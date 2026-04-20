@@ -16,7 +16,11 @@ import { sanitizeErrorText } from "@/lib/jira/client";
 import { recordDeploymentsForIssue } from "@/lib/github/issue-deployment-sync";
 import { clearCompareCache } from "@/lib/github/deployment-propagation";
 import { emitSyncLogChange } from "./events";
-import { persistProgress, clearProgressThrottle } from "./progress-persist";
+import {
+  persistProgress,
+  flushProgress,
+  clearProgressThrottle,
+} from "./progress-persist";
 import { upsertWorklogs, fetchIssueWorklogs } from "@/lib/sync/worklog-sync";
 import { reconcileReleaseIssues } from "@/lib/releases/sync-release-issues";
 import { refreshReleasesForIssue } from "@/lib/sync/release-sync";
@@ -356,14 +360,24 @@ export async function runIssueSync(
     });
 
     const completedAt = new Date();
+    // Finalize the progress columns FIRST, using the actual loop
+    // counters (attempted, not succeeded) so a run with per-issue
+    // failures still shows the true denominator — e.g. 100/100
+    // rather than 97/97 for a run that attempted 100 and failed 3.
+    // `flushProgress` awaits any in-flight throttled UPDATEs for the
+    // same logId, so the status UPDATE below can't be overwritten by
+    // a stale write resolving out of order.
+    await flushProgress(
+      logId,
+      state.currentProgress.issuesProcessed,
+      state.currentProgress.issuesTotal,
+    );
     await db
       .update(syncLogs)
       .set({
         status: "completed",
         completedAt,
         issueCount: result.total,
-        progressProcessed: result.total,
-        progressTotal: result.total,
         error: result.errors.length > 0 ? result.errors.join("; ") : null,
       })
       .where(eq(syncLogs.id, logId));
@@ -425,6 +439,15 @@ export async function runIssueSync(
     });
 
     const completedAt = new Date();
+    // Persist the final progress snapshot before the status flip so a
+    // reopened drawer shows "got to X/Y before failing" instead of
+    // whatever the last throttled write happened to capture (which
+    // can lag the real counters by up to 2 s).
+    await flushProgress(
+      logId,
+      state.currentProgress.issuesProcessed,
+      state.currentProgress.issuesTotal,
+    );
     await db
       .update(syncLogs)
       .set({

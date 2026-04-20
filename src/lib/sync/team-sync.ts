@@ -2,7 +2,11 @@ import { db } from "@/lib/db";
 import { team_members, syncLogs } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 import { emitSyncLogChange } from "./events";
-import { persistProgress, clearProgressThrottle } from "./progress-persist";
+import {
+  persistProgress,
+  flushProgress,
+  clearProgressThrottle,
+} from "./progress-persist";
 import {
   fetchAllTeamMembers,
   fetchJiraUserDetails,
@@ -466,18 +470,24 @@ export async function runTeamSync(
       );
     }
 
-    // Update log to completed
+    // Update log to completed. Finalize progress columns first via
+    // `flushProgress`, using the actual tracked counters — the planned
+    // `membersTotal` budget hides any fetch failures, so we write the
+    // real processed/total pair instead. `flushProgress` also drains
+    // any in-flight throttled UPDATEs, so the status UPDATE below
+    // can't be overwritten by a stale write resolving out of order.
     const completedAt = new Date();
+    await flushProgress(
+      logId,
+      tstate.currentProgress.membersProcessed,
+      tstate.currentProgress.membersTotal,
+    );
     await db
       .update(syncLogs)
       .set({
         status: "completed",
         completedAt,
         memberCount: result.total,
-        // Reflect the final progress snapshot on the DB row so
-        // completed-run drawers can still show "N / N" counts.
-        progressProcessed: tstate.currentProgress.membersTotal,
-        progressTotal: tstate.currentProgress.membersTotal,
         error:
           result.errors.length > 0 ? result.errors.join("; ") : null,
       })
@@ -494,8 +504,16 @@ export async function runTeamSync(
 
     return { logId, result };
   } catch (error) {
-    // Update log to failed
+    // Update log to failed. Persist the final progress snapshot
+    // before the status flip so a reopened drawer shows "got to X/Y
+    // before failing" rather than whatever the last throttled write
+    // happened to capture (which can lag by up to 2 s).
     const completedAt = new Date();
+    await flushProgress(
+      logId,
+      tstate.currentProgress.membersProcessed,
+      tstate.currentProgress.membersTotal,
+    );
     await db
       .update(syncLogs)
       .set({
