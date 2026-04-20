@@ -511,7 +511,15 @@ export async function GET(request: Request) {
       const member = issue.assigneeId ? memberMap.get(issue.assigneeId) : null;
       const updatedAt = issue.jiraUpdatedAt ? new Date(issue.jiraUpdatedAt) : now;
       const deployedSites = pipelineDeployedSites.get(issue.jiraKey) || [];
-      const expected = getExpectedSites(issue.brands, allProductionSites);
+      // Match the repo-scope narrowing already applied in buildMismatch /
+      // partial-rollout pass. BRAND_SITE_MAP maps one brand to codes in
+      // BOTH repos ("Tile Mountain" → ["tilemtn", "tm"]); without the
+      // intersection, a task fully shipped to SDK reports "1/2" in the
+      // pipeline progress bar under an SDK filter.
+      const rawExpected = getExpectedSites(issue.brands, allProductionSites);
+      const expected = rawExpected && repoSiteSet
+        ? rawExpected.filter((s) => repoSiteSet.has(s))
+        : rawExpected;
 
       return {
         jiraKey: issue.jiraKey,
