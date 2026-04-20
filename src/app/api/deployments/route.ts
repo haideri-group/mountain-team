@@ -61,6 +61,14 @@ export async function GET(request: Request) {
     const allRepos = await db.select().from(githubRepos);
     const repoMap = new Map(allRepos.map((r) => [r.id, r]));
 
+    // Resolve the repo filter to an internal id once. Lets us push the
+    // filter into every downstream SQL query (instead of filtering rows
+    // in Node after a full-table pull) and gives a clean "unknown repo"
+    // signal for the early-return below.
+    const repoFilterId = repoFilter
+      ? allRepos.find((r) => r.fullName === repoFilter)?.id ?? null
+      : null;
+
     const allMembers = withResolvedAvatars(
       await db
         .select({
@@ -72,23 +80,56 @@ export async function GET(request: Request) {
     );
     const memberMap = new Map(allMembers.map((m) => [m.id, m]));
 
-    // All configured sites from branch mappings
+    // All configured sites from branch mappings. When a repo is selected,
+    // narrow the mappings to that repo's rows so the Site Overview and
+    // "All Brands" expected-site resolution only consider in-repo sites.
     const allMappings = await db.select().from(githubBranchMappings);
-    const siteNames = [...new Set(allMappings.filter((m) => m.siteName).map((m) => m.siteName!))].sort();
+    const effectiveMappings = repoFilterId
+      ? allMappings.filter((m) => m.repoId === repoFilterId)
+      : allMappings;
+    const siteNames = [...new Set(effectiveMappings.filter((m) => m.siteName).map((m) => m.siteName!))].sort();
     const allProductionSites = [...new Set(
-      allMappings.filter((m) => m.environment === "production" && m.siteName).map((m) => m.siteName!),
+      effectiveMappings.filter((m) => m.environment === "production" && m.siteName).map((m) => m.siteName!),
     )].sort();
+
+    // Site codes belonging to the selected repo — used to intersect
+    // brand-resolved "expected sites" for regular brands whose
+    // BRAND_SITE_MAP entries span both repos (e.g. "Tile Mountain" →
+    // ["tilemtn", "tm"]). Without this, the other-repo code shows as
+    // "missing" in a repo-filtered view.
+    const repoSiteSet = repoFilterId ? new Set(siteNames) : null;
+
+    // Unknown repo value → empty payload. Matches "filter hit zero rows"
+    // semantics; avoids a 500 and keeps the dropdown options populated
+    // so the user can switch to a valid repo from the same page state.
+    if (repoFilter && !repoFilterId) {
+      return NextResponse.json({
+        metrics: { deploymentsThisWeek: 0, pendingReleases: 0, statusMismatches: 0, avgDaysInStaging: 0 },
+        mismatches: [],
+        pipeline: { readyForTesting: [], readyForLive: [], rollingOut: [], postLiveTesting: [] },
+        pendingReleases: [],
+        recentDeployments: [],
+        siteOverview: [],
+        repos: allRepos.map((r) => ({ id: r.id, fullName: r.fullName })),
+        sites: [...new Set(siteNames.map((s) => getSiteLabel(s)))].sort(),
+        boards: allBoards.map((b) => ({ jiraKey: b.jiraKey, name: b.name, color: b.color })),
+      });
+    }
 
     // ── Fetch all deployments (last 30 days) ───────────────────────────
     let allDeployments = await db
       .select()
       .from(deployments)
-      .where(gte(deployments.deployedAt, thirtyDaysAgo))
+      .where(
+        and(
+          gte(deployments.deployedAt, thirtyDaysAgo),
+          ...(repoFilterId ? [eq(deployments.repoId, repoFilterId)] : []),
+        ),
+      )
       .orderBy(desc(deployments.deployedAt));
 
-    // Apply filters
+    // Apply remaining filters (repo is already pushed into SQL above).
     if (envFilter) allDeployments = allDeployments.filter((d) => d.environment === envFilter);
-    if (repoFilter) allDeployments = allDeployments.filter((d) => repoMap.get(d.repoId)?.fullName === repoFilter);
     if (siteFilter) {
       // siteFilter is a label (e.g., "Tile Mountain") — match all site codes for that brand
       const matchingCodes = siteNames.filter((s) => getSiteLabel(s) === siteFilter);
@@ -159,7 +200,12 @@ export async function GET(request: Request) {
     const allProdDeployments = await db
       .select()
       .from(deployments)
-      .where(inArray(deployments.environment, ["production", "canonical"]))
+      .where(
+        and(
+          inArray(deployments.environment, ["production", "canonical"]),
+          ...(repoFilterId ? [eq(deployments.repoId, repoFilterId)] : []),
+        ),
+      )
       .orderBy(desc(deployments.deployedAt));
 
     // Build per-issue production-deployed-sites map from the unbounded set,
@@ -220,7 +266,14 @@ export async function GET(request: Request) {
       const board = boardMap.get(issue.boardId);
       const member = issue.assigneeId ? memberMap.get(issue.assigneeId) : null;
       const deployedSites = issueDeployedSitesUnbounded.get(d.jiraKey) || [];
-      const expected = getExpectedSites(issue.brands, allProductionSites);
+      // BRAND_SITE_MAP entries span BOTH repos (e.g. "Tile Mountain" →
+      // ["tilemtn", "tm"]). Under a repo filter, intersect with that
+      // repo's site set so the other-repo code doesn't show up as
+      // "missing" in the mismatch row.
+      const rawExpected = getExpectedSites(issue.brands, allProductionSites);
+      const expected = rawExpected && repoSiteSet
+        ? rawExpected.filter((s) => repoSiteSet.has(s))
+        : rawExpected;
       const missing = expected ? expected.filter((s) => !deployedSites.includes(s)) : [];
       // Age reflects the ORIGINAL mismatch, not the most recent redeploy.
       const anchor = oldestProdByKey.get(d.jiraKey) || d;
@@ -294,6 +347,20 @@ export async function GET(request: Request) {
       if (!completeness || completeness.complete) continue;
       if (completeness.deployed.length === 0) continue;
 
+      // Under a repo filter, recompute completeness against the repo's
+      // site set only. A "Tile Mountain" task fully shipped to SDK would
+      // otherwise show `tm` (tilemountain2's code) as missing even though
+      // the user explicitly filtered to SDK. Skip the row if intersection
+      // leaves no expected sites or now appears complete.
+      const expectedInRepo = repoSiteSet
+        ? completeness.expected.filter((s) => repoSiteSet.has(s))
+        : completeness.expected;
+      const deployedInRepo = repoSiteSet
+        ? completeness.deployed.filter((s) => repoSiteSet.has(s))
+        : completeness.deployed;
+      const missingInRepo = expectedInRepo.filter((s) => !deployedInRepo.includes(s));
+      if (repoSiteSet && (expectedInRepo.length === 0 || missingInRepo.length === 0)) continue;
+
       // Use the OLDEST prod deploy as the mismatch anchor (O(1) via map —
       // no per-issue linear scan over unbounded history).
       const anchorDeploy = oldestProdByKey.get(jiraKey);
@@ -318,9 +385,9 @@ export async function GET(request: Request) {
         daysSinceDeployment: days,
         type: "partial_rollout",
         brands: issue.brands,
-        deployedSites: completeness.deployed,
-        expectedSites: completeness.expected,
-        missingSites: completeness.missing,
+        deployedSites: deployedInRepo,
+        expectedSites: expectedInRepo,
+        missingSites: missingInRepo,
         severity: ageSeverity(days),
       });
     }
@@ -397,13 +464,27 @@ export async function GET(request: Request) {
       ? await db
           .select({ jiraKey: deployments.jiraKey, environment: deployments.environment })
           .from(deployments)
-          .where(inArray(deployments.jiraKey, pipelineKeys))
+          .where(
+            and(
+              inArray(deployments.jiraKey, pipelineKeys),
+              ...(repoFilterId ? [eq(deployments.repoId, repoFilterId)] : []),
+            ),
+          )
       : [];
     const deployStatusMap = new Map<string, "production" | "staging" | null>();
     for (const d of pipelineDeployments) {
       const current = deployStatusMap.get(d.jiraKey);
       if (d.environment === "production" || d.environment === "canonical") deployStatusMap.set(d.jiraKey, "production");
       else if (d.environment === "staging" && current !== "production") deployStatusMap.set(d.jiraKey, "staging");
+    }
+
+    // Under a repo filter, keep only pipeline tasks that have at least one
+    // deploy in the selected repo. A task sitting in "Ready for Testing"
+    // with no deploys at all, or only deploys in the other repo, is hidden —
+    // otherwise the filter leaks cross-repo rows into the pipeline view.
+    if (repoFilterId) {
+      const keysWithRepoDeploy = new Set(pipelineDeployments.map((d) => d.jiraKey));
+      pipelineIssues = pipelineIssues.filter((i) => keysWithRepoDeploy.has(i.jiraKey));
     }
 
     // Per-pipeline-issue deployed sites (fetch from full deployment table, not the limited select above)
@@ -415,6 +496,7 @@ export async function GET(request: Request) {
           .where(and(
             inArray(deployments.jiraKey, pipelineKeys),
             inArray(deployments.environment, ["production", "canonical"]),
+            ...(repoFilterId ? [eq(deployments.repoId, repoFilterId)] : []),
           ))
       : [];
     for (const d of pipelineProdSites) {
@@ -518,6 +600,7 @@ export async function GET(request: Request) {
             and(
               inArray(deployments.environment, ["staging", "production"]),
               inArray(deployments.siteName, allConfiguredCodes),
+              ...(repoFilterId ? [eq(deployments.repoId, repoFilterId)] : []),
             ),
           )
           .orderBy(desc(deployments.deployedAt))
