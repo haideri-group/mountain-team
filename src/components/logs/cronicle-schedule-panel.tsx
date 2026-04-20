@@ -37,8 +37,10 @@ interface CronicleEventPublic {
     start: number;
     end: number | null;
     status: "success" | "error" | "timeout" | "running";
+    statusSource: "app" | "cronicle";
     elapsed?: number;
     syncLogId: string | null;
+    cronicleJobStatus: "success" | "error" | "timeout" | "running" | null;
     jobDetailsUrl: string | null;
     progress: CronicleRunProgress | null;
   } | null;

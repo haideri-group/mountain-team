@@ -275,14 +275,26 @@ export async function getPersistedProgress(
 
 export async function getSyncLogStatusById(
   id: string,
-): Promise<{ status: SyncLogStatus; type: SyncLogType } | null> {
+): Promise<{
+  status: SyncLogStatus;
+  type: SyncLogType;
+  startedAt: Date | null;
+} | null> {
   const [row] = await db
-    .select({ status: syncLogs.status, type: syncLogs.type })
+    .select({
+      status: syncLogs.status,
+      type: syncLogs.type,
+      startedAt: syncLogs.startedAt,
+    })
     .from(syncLogs)
     .where(eq(syncLogs.id, id))
     .limit(1);
   if (!row) return null;
-  return { status: row.status as SyncLogStatus, type: row.type as SyncLogType };
+  return {
+    status: row.status as SyncLogStatus,
+    type: row.type as SyncLogType,
+    startedAt: row.startedAt ?? null,
+  };
 }
 
 export async function getSyncLogById(id: string): Promise<LogDetailRow | null> {

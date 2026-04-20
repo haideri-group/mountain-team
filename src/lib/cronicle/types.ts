@@ -74,12 +74,26 @@ export interface CronicleEventPublic {
     end: number | null;
     status: "success" | "error" | "timeout" | "running";
     elapsed?: number;
+    /** Where the `status` value came from:
+     *    `"app"`      — from our own `sync_logs` row (authoritative for
+     *                   outcome when we have a correlated record).
+     *    `"cronicle"` — from Cronicle's job record (used only when we
+     *                   have no correlated `sync_logs` row, e.g. DNS
+     *                   failure or handler crashed before logRunStart).
+     *  Clients use this to decide whether to surface an "app success
+     *  vs Cronicle timeout" disclosure banner. */
+    statusSource: "app" | "cronicle";
     /** Id of the most recent sync_logs row matching this event's type —
      *  used by the UI to link the "last run" icon straight to the
      *  existing drawer. Null when no correlated app-side record exists
      *  (e.g. Cronicle's HTTP fire failed with a DNS / network error and
      *  the request never reached TeamFlow). */
     syncLogId: string | null;
+    /** Cronicle's raw status for the matched job (not the mapped
+     *  `status` above). Lets the drawer compare the two sources and
+     *  render a disagreement banner when they differ. `null` when we
+     *  have no matched Cronicle job. */
+    cronicleJobStatus: "success" | "error" | "timeout" | "running" | null;
     /** Direct link to the Cronicle job details page, for jobs where we
      *  have no matching `sync_logs` row. Lets admins click "failed" and
      *  land on Cronicle's own error log. */

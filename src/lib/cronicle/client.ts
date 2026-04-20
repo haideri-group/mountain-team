@@ -1,20 +1,20 @@
 import "server-only";
 import type { CronicleResult } from "./types";
+import { CRONICLE_REQUEST_TIMEOUT_MS } from "@/lib/config";
 
 /**
  * Low-level Cronicle HTTP wrapper.
  *
  * - `CRONICLE_API_KEY` stays server-side only (`import "server-only"`).
- * - Every call is bounded by a 10s `AbortSignal.timeout` — a hung Cronicle
- *   must not cascade into a slow page render.
+ * - Every call is bounded by `CRONICLE_REQUEST_TIMEOUT_MS` (central config,
+ *   `src/lib/config.ts`) — a hung Cronicle must not cascade into a slow
+ *   page render, and the same budget applies to operator scripts.
  * - Errors are swallowed and surfaced as `{ ok: false, error }` — the `/logs`
  *   page renders fully using `sync_logs` alone when Cronicle is unreachable.
  *
  * Returns `{ ok: false, error: "cronicle_not_configured" }` if env is missing,
  * so callers can distinguish "admin hasn't set this up" from "transient failure".
  */
-
-const TIMEOUT_MS = 10_000;
 
 function getBaseUrl(): string | null {
   const raw = process.env.CRONICLE_BASE_URL || "";
@@ -51,7 +51,7 @@ export async function cronicleGet<T>(
         Accept: "application/json",
       },
       cache: "no-store",
-      signal: AbortSignal.timeout(TIMEOUT_MS),
+      signal: AbortSignal.timeout(CRONICLE_REQUEST_TIMEOUT_MS),
     });
     if (!res.ok) {
       return {
