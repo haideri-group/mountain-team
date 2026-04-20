@@ -2,6 +2,7 @@ import { db } from "@/lib/db";
 import { team_members, syncLogs } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 import { emitSyncLogChange } from "./events";
+import { persistProgress, clearProgressThrottle } from "./progress-persist";
 import {
   fetchAllTeamMembers,
   fetchJiraUserDetails,
@@ -160,6 +161,7 @@ async function syncTeamMembers(): Promise<TeamSyncResult> {
     membersTotal: totalUnits,
     membersProcessed: 0,
   });
+  if (tstate.activeLogId) persistProgress(tstate.activeLogId, 0, totalUnits);
 
   let fetchedCount = 0;
   const detailResults = await Promise.allSettled(
@@ -172,6 +174,9 @@ async function syncTeamMembers(): Promise<TeamSyncResult> {
           membersProcessed: fetchedCount,
           message: `Fetching details: ${fetchedCount} / ${filteredAccountIds.length}`,
         });
+        if (tstate.activeLogId) {
+          persistProgress(tstate.activeLogId, fetchedCount, totalUnits);
+        }
       }
     }),
   );
@@ -280,6 +285,9 @@ async function syncTeamMembers(): Promise<TeamSyncResult> {
     }
     membersProcessedCount += 1;
     updateTeamProgress({ membersProcessed: membersProcessedCount });
+    if (tstate.activeLogId) {
+      persistProgress(tstate.activeLogId, membersProcessedCount, totalUnits);
+    }
   }
 
   // 7. Mark departed: DB members (active/on_leave) NOT in team anymore
@@ -466,10 +474,15 @@ export async function runTeamSync(
         status: "completed",
         completedAt,
         memberCount: result.total,
+        // Reflect the final progress snapshot on the DB row so
+        // completed-run drawers can still show "N / N" counts.
+        progressProcessed: tstate.currentProgress.membersTotal,
+        progressTotal: tstate.currentProgress.membersTotal,
         error:
           result.errors.length > 0 ? result.errors.join("; ") : null,
       })
       .where(eq(syncLogs.id, logId));
+    clearProgressThrottle(logId);
     emitSyncLogChange({
       id: logId,
       type: "team_sync",
@@ -491,6 +504,7 @@ export async function runTeamSync(
         error: error instanceof Error ? error.message : "Unknown error",
       })
       .where(eq(syncLogs.id, logId));
+    clearProgressThrottle(logId);
     emitSyncLogChange({
       id: logId,
       type: "team_sync",

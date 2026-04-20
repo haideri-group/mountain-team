@@ -16,6 +16,7 @@ import { sanitizeErrorText } from "@/lib/jira/client";
 import { recordDeploymentsForIssue } from "@/lib/github/issue-deployment-sync";
 import { clearCompareCache } from "@/lib/github/deployment-propagation";
 import { emitSyncLogChange } from "./events";
+import { persistProgress, clearProgressThrottle } from "./progress-persist";
 import { upsertWorklogs, fetchIssueWorklogs } from "@/lib/sync/worklog-sync";
 import { reconcileReleaseIssues } from "@/lib/releases/sync-release-issues";
 import { refreshReleasesForIssue } from "@/lib/sync/release-sync";
@@ -202,6 +203,11 @@ async function syncIssues(type: IssueSyncType, filterBoardKey?: string): Promise
     phase: "processing",
     message: `Processing ${rawIssues.length} issues...`,
   });
+  // Persist total immediately so cross-process readers (panel projector
+  // running on a different server) can show the bar width right away.
+  if (state.activeLogId) {
+    persistProgress(state.activeLogId, 0, rawIssues.length);
+  }
 
   // 6. Load existing issues for comparison (for cycle time detection)
   const existingIssues = await db.select().from(issues);
@@ -286,6 +292,10 @@ async function syncIssues(type: IssueSyncType, filterBoardKey?: string): Promise
       issuesProcessed: processedCount,
       message: `Processing issues... ${processedCount}/${rawIssues.length}`,
     });
+    // Throttled (2s) DB write so cross-process readers see live counts.
+    if (state.activeLogId) {
+      persistProgress(state.activeLogId, processedCount, rawIssues.length);
+    }
   }
 
   result.total = result.inserted + result.updated + result.skippedNoBoard;
@@ -352,9 +362,12 @@ export async function runIssueSync(
         status: "completed",
         completedAt,
         issueCount: result.total,
+        progressProcessed: result.total,
+        progressTotal: result.total,
         error: result.errors.length > 0 ? result.errors.join("; ") : null,
       })
       .where(eq(syncLogs.id, logId));
+    clearProgressThrottle(logId);
     emitSyncLogChange({
       id: logId,
       type,
@@ -420,6 +433,7 @@ export async function runIssueSync(
         error: error instanceof Error ? error.message : "Unknown error",
       })
       .where(eq(syncLogs.id, logId));
+    clearProgressThrottle(logId);
     emitSyncLogChange({
       id: logId,
       type,

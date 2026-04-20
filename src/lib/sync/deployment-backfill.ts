@@ -4,6 +4,7 @@ import { and, eq, inArray, sql } from "drizzle-orm";
 import { fetchSingleIssue } from "@/lib/jira/issues";
 import { recordDeploymentsForIssue } from "@/lib/github/issue-deployment-sync";
 import { emitSyncLogChange } from "./events";
+import { persistProgress, clearProgressThrottle } from "./progress-persist";
 import { clearCompareCache } from "@/lib/github/deployment-propagation";
 import {
   getLastKnownRateLimit,
@@ -365,9 +366,13 @@ async function logRunEnd(
       status,
       completedAt,
       issueCount: result.processed,
+      progressProcessed: result.processed,
+      // progressTotal left unchanged on purpose — the queue size set at
+      // processing start is still the correct denominator on completion.
       error: error ? sanitizeErrorText(error).slice(0, 1000) : null,
     })
     .where(eq(syncLogs.id, id));
+  clearProgressThrottle(id);
   emitSyncLogChange({
     id,
     type: "deployment_backfill",
@@ -547,6 +552,10 @@ export async function runDeploymentBackfill(
       phase: "processing",
       message: `Processing ${queue.length} issue${queue.length === 1 ? "" : "s"}`,
     });
+    // Persist total + 0 processed up front so cross-process readers
+    // (admin on dev viewing a prod-running backfill) see the bar width
+    // immediately — no more "In progress" marquee for 35+ minutes.
+    persistProgress(logId, 0, queue.length);
 
     if (queue.length === 0) {
       updateProgress({ phase: "done", message: "Queue empty — nothing to backfill" });
@@ -605,6 +614,10 @@ export async function runDeploymentBackfill(
           issuesProcessed: result.processed,
           deploymentsRecorded: result.recorded,
         });
+        // Throttled (2s) persist — max one UPDATE per 2s regardless of
+        // how fast the loop iterates, so cross-process readers see
+        // live counts without pounding MySQL.
+        persistProgress(logId, result.processed, queue.length);
       } catch (e) {
         result.errors += 1;
         console.warn(

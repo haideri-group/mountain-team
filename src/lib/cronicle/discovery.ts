@@ -3,6 +3,7 @@ import { cronicleGet, isCronicleConfigured } from "./client";
 import {
   findRunningSyncLog,
   findSyncLogIdNearTime,
+  getPersistedProgress,
   getSyncLogStatusById,
   medianRecentDurationMs,
   type SyncLogType,
@@ -410,16 +411,46 @@ export async function projectEventPublic(
             etaSeconds,
           };
         } else {
-          // Sync IS running but this process can't see its in-memory
-          // counts (different server, or sync type that doesn't publish
-          // progress). Indeterminate bar, no ETA — real-time only.
+          // Sync IS running but THIS process can't see its in-memory
+          // counts (the runner is on another server). Fall back to the
+          // persisted `progressProcessed` / `progressTotal` columns on
+          // the sync_logs row — the owning process writes those
+          // throttled (every ~2s) during the run so cross-process
+          // readers can render the bar + ETA even without the
+          // singleton.
+          const persisted = await getPersistedProgress(syncLogId);
+          const processed = persisted?.processed ?? null;
+          const total = persisted?.total ?? null;
+          const pct =
+            processed !== null && total !== null && total > 0
+              ? Math.min(100, Math.round((processed / total) * 100))
+              : null;
+          let etaSeconds: number | null = null;
+          if (
+            runningSyncLog &&
+            processed !== null &&
+            processed > 0 &&
+            total !== null &&
+            total > processed
+          ) {
+            const elapsedMs =
+              Date.now() - runningSyncLog.startedAt.getTime();
+            if (elapsedMs >= 5_000) {
+              const rate = processed / (elapsedMs / 1000);
+              const remaining = total - processed;
+              etaSeconds = Math.round(remaining / rate);
+            }
+          }
           progress = {
             phase: "running",
-            message: "In progress",
-            processed: null,
-            total: null,
-            pct: null,
-            etaSeconds: null,
+            message:
+              processed !== null && total !== null
+                ? `${processed.toLocaleString()} / ${total.toLocaleString()} processed`
+                : "In progress",
+            processed,
+            total,
+            pct,
+            etaSeconds,
           };
         }
       }
