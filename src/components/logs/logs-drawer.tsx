@@ -221,25 +221,40 @@ export function LogsDrawer({ open, detail, loading, onClose, onMarkFailed }: Pro
             {detail.cronicle && (
               <Section title="Scheduler Record">
                 {/* When the app says `completed` but Cronicle says
-                    `timeout` / `error`, the scheduler's HTTP timeout
-                    fired while our handler was still running. The sync
-                    actually finished; Cronicle just gave up waiting.
-                    Surface this explicitly so admins don't think
-                    they're looking at a failure. */}
+                    `timeout` / `error`, the two sources disagree. For
+                    `timeout` specifically, the scheduler's HTTP timeout
+                    fired while our handler was still running — the sync
+                    actually finished. For a generic `error`, Cronicle
+                    thinks the request failed (e.g. connection reset
+                    mid-response, non-2xx cached) but our handler still
+                    wrote `completed`. In both cases the app record is
+                    authoritative. Surface this explicitly with copy
+                    tailored to whichever status Cronicle reported, so
+                    admins aren't misled by a "timed out" narrative on a
+                    non-timeout error. */}
                 {detail.log.status === "completed" &&
                   (detail.cronicle.status === "timeout" ||
                     detail.cronicle.status === "error") && (
                     <div className="mb-3 rounded-lg bg-amber-500/15 px-3 py-2 text-[11px] text-amber-800 dark:text-amber-300">
                       <p className="font-semibold">
-                        Cronicle timed out, TeamFlow completed successfully.
+                        {detail.cronicle.status === "timeout"
+                          ? "Cronicle timed out, TeamFlow completed successfully."
+                          : "Cronicle reported an error, TeamFlow completed successfully."}
                       </p>
                       <p className="mt-1 text-amber-700/90 dark:text-amber-300/80">
                         The scheduler marked this job as
                         <span className="font-mono"> {detail.cronicle.status} </span>
-                        after its HTTP timeout elapsed, but the app finished
-                        the sync normally. The app record (above) is
-                        authoritative. Consider raising the event&apos;s
-                        timeout in Cronicle if this happens often.
+                        {detail.cronicle.status === "timeout"
+                          ? "after its HTTP timeout elapsed, "
+                          : "— likely a transient connection issue between Cronicle and TeamFlow — "}
+                        but the app finished the sync normally. The app
+                        record (above) is authoritative.
+                        {detail.cronicle.status === "timeout" && (
+                          <>
+                            {" "}Consider raising the event&apos;s
+                            timeout in Cronicle if this happens often.
+                          </>
+                        )}
                       </p>
                     </div>
                   )}

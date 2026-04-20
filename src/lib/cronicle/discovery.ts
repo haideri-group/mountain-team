@@ -514,37 +514,30 @@ export async function projectEventPublic(
     // terminal status and project it. This is where the
     // Cronicle-says-timeout / app-says-completed case gets resolved
     // correctly.
-    let appStatus: "success" | "error" | "running" = "running";
-    let appStartSec: number = jobForLink?.time_start ?? 0;
+    //
+    // `row === null` means the sync_logs row was deleted between the
+    // correlation step and this read (rare race — e.g. admin-purge
+    // while the panel is mid-render). Treat that exactly like the
+    // lookup throwing: fall back to Cronicle's verdict rather than
+    // synthesizing a `running` app record, which would keep the 1s
+    // poll loop alive against a row that no longer exists.
+    let row: Awaited<ReturnType<typeof getSyncLogStatusById>> = null;
     try {
-      const row = await getSyncLogStatusById(syncLogId);
-      if (row?.status === "completed") appStatus = "success";
-      else if (row?.status === "failed") appStatus = "error";
-      else if (row?.status === "running") appStatus = "running";
+      row = await getSyncLogStatusById(syncLogId);
+    } catch {
+      row = null;
+    }
+    if (row) {
+      let appStatus: "success" | "error" | "running" = "running";
+      if (row.status === "completed") appStatus = "success";
+      else if (row.status === "failed") appStatus = "error";
+      else if (row.status === "running") appStatus = "running";
       // Best-effort: the anchor time belongs to the sync_log if we
       // have it, so the start timestamp on screen reflects the app's
       // view, not Cronicle's.
-      if (row?.startedAt) {
-        appStartSec = Math.floor(new Date(row.startedAt).getTime() / 1000);
-      }
-    } catch {
-      // If the lookup fails, fall through to Cronicle below.
-      if (jobForLink) {
-        lastRun = {
-          jobId: jobForLink.id,
-          start: jobForLink.time_start,
-          end: jobForLink.time_end ?? null,
-          status: normalizeJobStatus(jobForLink),
-          statusSource: "cronicle",
-          elapsed: jobForLink.elapsed,
-          syncLogId,
-          cronicleJobStatus,
-          jobDetailsUrl,
-          progress,
-        };
-      }
-    }
-    if (!lastRun) {
+      const appStartSec = row.startedAt
+        ? Math.floor(new Date(row.startedAt).getTime() / 1000)
+        : (jobForLink?.time_start ?? 0);
       lastRun = {
         jobId: jobForLink?.id,
         start: appStartSec,
@@ -552,6 +545,19 @@ export async function projectEventPublic(
         status: appStatus,
         statusSource: "app",
         elapsed: jobForLink?.elapsed,
+        syncLogId,
+        cronicleJobStatus,
+        jobDetailsUrl,
+        progress,
+      };
+    } else if (jobForLink) {
+      lastRun = {
+        jobId: jobForLink.id,
+        start: jobForLink.time_start,
+        end: jobForLink.time_end ?? null,
+        status: normalizeJobStatus(jobForLink),
+        statusSource: "cronicle",
+        elapsed: jobForLink.elapsed,
         syncLogId,
         cronicleJobStatus,
         jobDetailsUrl,

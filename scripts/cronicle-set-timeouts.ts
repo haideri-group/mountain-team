@@ -22,6 +22,16 @@ import "dotenv/config";
 const APPLY = process.argv.includes("--apply");
 const MODE = APPLY ? "APPLY" : "DRY-RUN";
 
+/** Per-request budget for Cronicle API calls from this script. Matches
+ *  the app's `cronicleGet` (`src/lib/cronicle/client.ts`) so a stalled
+ *  Cronicle fails fast here the same way it does in the running app,
+ *  instead of hanging the operator's terminal. Operators who genuinely
+ *  need a longer budget (very large schedules) can override via
+ *  `CRONICLE_REQUEST_TIMEOUT_MS` in their environment. */
+const REQUEST_TIMEOUT_MS = Number(
+  process.env.CRONICLE_REQUEST_TIMEOUT_MS ?? 10_000,
+);
+
 interface CronicleEvent {
   id: string;
   title: string;
@@ -73,8 +83,12 @@ async function main() {
   console.log();
 
   // 1. Fetch the full schedule, filter to TeamFlow category.
+  // Bounded by 10s — same budget the app's `cronicleGet` uses — so a
+  // stalled Cronicle connection (TCP open, no response) fails fast
+  // instead of hanging the operator's terminal.
   const schedRes = await fetch(`${base}/api/app/get_schedule/v1`, {
     headers: { "X-API-Key": apiKey },
+    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
   });
   if (!schedRes.ok) {
     console.error(`get_schedule failed: HTTP ${schedRes.status}`);
@@ -124,6 +138,7 @@ async function main() {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({ id: e.id, timeout: target }),
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
       });
       if (!updateRes.ok) {
         console.error(
