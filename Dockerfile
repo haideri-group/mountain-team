@@ -64,6 +64,11 @@ COPY --from=builder --chown=nextjs:nodejs /app/public ./public
 # works at deploy time. Copy the TS sources + the tsx binary from deps.
 COPY --from=builder --chown=nextjs:nodejs /app/scripts ./scripts
 COPY --from=builder --chown=nextjs:nodejs /app/src/lib/db ./src/lib/db
+# Historical migrate-ip-allowlist.ts imports `../src/lib/ip/match` (which pulls
+# in ipaddr.js). Copied defensively so migrate-all can load the module even if
+# the user forgot to run `yarn db:migrate:baseline` against the staging DB —
+# without this, tsx crashes at import time before idempotency checks can skip.
+COPY --from=builder --chown=nextjs:nodejs /app/src/lib/ip ./src/lib/ip
 COPY --from=builder --chown=nextjs:nodejs /app/drizzle.config.ts ./drizzle.config.ts
 COPY --from=builder --chown=nextjs:nodejs /app/tsconfig.json ./tsconfig.json
 COPY --from=builder --chown=nextjs:nodejs /app/node_modules/.bin/tsx ./node_modules/.bin/tsx
@@ -71,6 +76,7 @@ COPY --from=builder --chown=nextjs:nodejs /app/node_modules/tsx ./node_modules/t
 COPY --from=builder --chown=nextjs:nodejs /app/node_modules/drizzle-orm ./node_modules/drizzle-orm
 COPY --from=builder --chown=nextjs:nodejs /app/node_modules/mysql2 ./node_modules/mysql2
 COPY --from=builder --chown=nextjs:nodejs /app/node_modules/dotenv ./node_modules/dotenv
+COPY --from=builder --chown=nextjs:nodejs /app/node_modules/ipaddr.js ./node_modules/ipaddr.js
 
 USER nextjs
 

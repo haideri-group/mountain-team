@@ -141,7 +141,15 @@ cd /home/haider/teamflow-staging
 # Pull the latest stage image (CI will have pushed one after the first PR to stage)
 docker compose pull web
 
-# Run migrations (creates the _migrations tracking table + applies any pending)
+# ONE-TIME: if you seeded the staging DB from a prod dump, mark all existing
+# migrations as already-applied. This prevents migrate-all from re-running
+# historical migrations (which would at best be redundant, and at worst crash
+# — migrate-ip-allowlist.ts pulls in code not present in the runtime image).
+# Skip this on a truly empty DB; run `yarn db:migrate:apply` instead to create
+# the schema from scratch.
+docker compose run --rm --no-deps web yarn db:migrate:baseline
+
+# Apply any pending (new) migrations — no-op right after baseline
 docker compose run --rm --no-deps web yarn db:migrate:apply
 
 # Start the web container
@@ -151,14 +159,15 @@ docker compose up -d web
 docker compose logs -f web
 ```
 
-If the app needs a prod-data snapshot to work against, restore one now:
+If the app needs a prod-data snapshot to work against, restore one BEFORE
+running `db:migrate:baseline`:
 
 ```bash
-# Example — adjust DATABASE_URL to your prod source
-mysqldump --single-transaction --no-tablespaces \
-  --host=<prod-host> --port=<prod-port> --user=<prod-user> --password \
-  teamflow_prod \
-  | docker exec -i mysql-server mysql -uroot -p"$MYSQL_ROOT_PASSWORD" teamflow
+# Using scripts/dump-prod-to-sql.sh to take the dump (runs locally via Docker)
+# then importing:
+scripts/dump-prod-to-sql.sh teamflow-prod.sql
+scp teamflow-prod.sql haider@<homelab>:/tmp/
+ssh haider@<homelab> "docker exec -i mysql-server mysql -uroot -p\"\$MYSQL_ROOT_PASSWORD\" teamflow < /tmp/teamflow-prod.sql"
 ```
 
 Visit https://staging-haider-team.appz.cc — should be live.

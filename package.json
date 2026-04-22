@@ -17,6 +17,7 @@
     "db:seed": "tsx scripts/seed.ts",
     "db:migrate:plan": "tsx scripts/migrate-all.ts",
     "db:migrate:apply": "tsx scripts/migrate-all.ts --apply",
+    "db:migrate:baseline": "tsx scripts/migrate-all.ts --baseline",
     "cache-avatars": "tsx scripts/cache-avatars.ts"
   },
   "dependencies": {

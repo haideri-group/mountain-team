@@ -31,6 +31,7 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const APPLY = process.argv.includes("--apply");
+const BASELINE = process.argv.includes("--baseline");
 const ALLOW_DESTRUCTIVE = process.env.ALLOW_DESTRUCTIVE_MIGRATIONS === "true";
 const LOCK_KEY = "teamflow_migrations";
 const LOCK_TIMEOUT_SECONDS = 30;
@@ -69,6 +70,31 @@ async function main() {
       appliedAt TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
   `);
+
+  // --baseline mode: record every currently-present migration as applied
+  // WITHOUT running any of them. Intended for seeding a staging DB whose
+  // schema was restored from a prod dump — the historical migrations are
+  // already reflected on disk, so re-running them would be wasteful at best
+  // and unsafe at worst (one of them imports `../src/lib/ip/match`, which
+  // isn't in the runtime image — see Dockerfile). After baseline, only NEW
+  // migrations added to scripts/ going forward will execute.
+  if (BASELINE) {
+    const all = discoverMigrations();
+    let inserted = 0;
+    let alreadyPresent = 0;
+    for (const m of all) {
+      const [res] = (await conn.query(
+        "INSERT IGNORE INTO _migrations (name, checksum) VALUES (?, ?)",
+        [m.name, m.checksum],
+      )) as [{ affectedRows: number }, unknown];
+      if (res.affectedRows > 0) inserted += 1;
+      else alreadyPresent += 1;
+    }
+    console.log(`Baseline complete: ${inserted} migration(s) recorded as applied, ${alreadyPresent} already present.`);
+    console.log("No migration scripts were executed. Future runs of --apply will only execute migrations added AFTER this baseline.");
+    await conn.end();
+    return;
+  }
 
   // Serialize against other deploys.
   const [lockRows] = (await conn.query("SELECT GET_LOCK(?, ?) AS got", [LOCK_KEY, LOCK_TIMEOUT_SECONDS])) as [
