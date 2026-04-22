@@ -1,6 +1,6 @@
 "use client";
 
-import { AlertTriangle, GitBranch, Split, XCircle } from "lucide-react";
+import { AlertTriangle, ChevronsRight, Split, XCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { Mismatch } from "./types";
 
@@ -26,7 +26,7 @@ const TYPE_CONFIG: Record<Mismatch["type"], TypeConfig> = {
   },
   staging_status_behind: {
     label: "Staging ahead of status",
-    icon: GitBranch,
+    icon: ChevronsRight,
     activeBg: "bg-sky-500/10",
     activeText: "text-sky-700 dark:text-sky-400",
     activeRing: "ring-1 ring-sky-500/25",
@@ -68,7 +68,9 @@ interface Props {
 }
 
 export function MismatchFilterPills({ counts, hiddenTypes, onToggle, onReset }: Props) {
-  const visibleTypes = ORDER.filter((t) => (counts.get(t) ?? 0) > 0);
+  const visibleTypes = ORDER
+    .map((type) => ({ type, count: counts.get(type) ?? 0 }))
+    .filter((entry) => entry.count > 0);
   if (visibleTypes.length <= 1) return null;
 
   const hasHidden = hiddenTypes.size > 0;
@@ -79,9 +81,8 @@ export function MismatchFilterPills({ counts, hiddenTypes, onToggle, onReset }: 
       aria-label="Filter alerts by type"
       className="flex items-center gap-1.5 flex-wrap mb-3"
     >
-      {visibleTypes.map((type) => {
+      {visibleTypes.map(({ type, count }) => {
         const cfg = TYPE_CONFIG[type];
-        const count = counts.get(type) ?? 0;
         const isActive = !hiddenTypes.has(type);
         const Icon = cfg.icon;
         return (
