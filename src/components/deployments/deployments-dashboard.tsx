@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import {
   Rocket,
   Server,
@@ -11,14 +11,16 @@ import {
   SlidersHorizontal,
   X,
   GitBranch,
+  EyeOff,
 } from "lucide-react";
 import { FilterSelect } from "@/components/shared/filter-select";
 import { StatusMismatches } from "./status-mismatches";
+import { MismatchFilterPills } from "./mismatch-filter-pills";
 import { DeploymentPipelineView } from "./deployment-pipeline";
 import { PendingReleasesTable } from "./pending-releases-table";
 import { RecentDeploymentsFeed } from "./recent-deployments";
 import { SiteOverviewTable } from "./site-overview";
-import type { DeploymentsData } from "./types";
+import type { DeploymentsData, Mismatch } from "./types";
 
 // ─── Section Label ───────────────────────────────────────────────────────────
 
@@ -50,6 +52,19 @@ export function DeploymentsDashboard() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
   const [filters, setFilters] = useState({ environment: "", repo: "", site: "", board: "" });
+  const [hiddenMismatchTypes, setHiddenMismatchTypes] = useState<Set<Mismatch["type"]>>(new Set());
+
+  const mismatches = data?.mismatches;
+  const mismatchTypeCounts = useMemo(() => {
+    const counts = new Map<Mismatch["type"], number>();
+    if (!mismatches) return counts;
+    for (const m of mismatches) counts.set(m.type, (counts.get(m.type) ?? 0) + 1);
+    return counts;
+  }, [mismatches]);
+  const visibleMismatches = useMemo(
+    () => (mismatches ?? []).filter((m) => !hiddenMismatchTypes.has(m.type)),
+    [mismatches, hiddenMismatchTypes],
+  );
 
   const fetchData = useCallback(async () => {
     setLoading(true);
@@ -103,6 +118,17 @@ export function DeploymentsDashboard() {
   const hasFilters = Object.values(filters).some((v) => v !== "");
   const totalPipeline = data.pipeline.readyForTesting.length + data.pipeline.readyForLive.length +
     data.pipeline.rollingOut.length + data.pipeline.postLiveTesting.length;
+
+  const allMismatchesHidden =
+    data.mismatches.length > 0 && visibleMismatches.length === 0;
+
+  const toggleMismatchType = (type: Mismatch["type"]) =>
+    setHiddenMismatchTypes((prev) => {
+      const next = new Set(prev);
+      if (next.has(type)) next.delete(type);
+      else next.add(type);
+      return next;
+    });
 
   return (
     <div className="space-y-6">
@@ -187,10 +213,36 @@ export function DeploymentsDashboard() {
 
       {/* Attention Required */}
       <div>
-        <SectionLabel icon={AlertTriangle} count={data.mismatches.length}>
+        <SectionLabel icon={AlertTriangle} count={visibleMismatches.length}>
           Attention Required
         </SectionLabel>
-        <StatusMismatches mismatches={data.mismatches} />
+        <MismatchFilterPills
+          counts={mismatchTypeCounts}
+          hiddenTypes={hiddenMismatchTypes}
+          onToggle={toggleMismatchType}
+          onReset={() => setHiddenMismatchTypes(new Set())}
+        />
+        {allMismatchesHidden ? (
+          <div className="bg-card rounded-xl p-5 flex items-center gap-3">
+            <EyeOff className="h-5 w-5 text-muted-foreground shrink-0" />
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-semibold font-mono text-foreground">All types hidden</p>
+              <p className="text-[10px] text-muted-foreground">
+                {data.mismatches.length} alert{data.mismatches.length === 1 ? "" : "s"} filtered out by type. Re-enable a pill above or
+                <button
+                  type="button"
+                  onClick={() => setHiddenMismatchTypes(new Set())}
+                  className="text-primary font-semibold hover:underline ml-1"
+                >
+                  show all
+                </button>
+                .
+              </p>
+            </div>
+          </div>
+        ) : (
+          <StatusMismatches mismatches={visibleMismatches} />
+        )}
       </div>
 
       {/* Deployment Pipeline */}
