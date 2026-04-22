@@ -18,7 +18,7 @@ if [[ ! -f .env ]]; then
   exit 1
 fi
 
-DB_URL=$(grep '^DATABASE_URL=' .env | head -1 | cut -d= -f2- | sed 's/^"//; s/"$//')
+DB_URL=$(grep -m1 '^DATABASE_URL=' .env | sed "s/^DATABASE_URL=//; s/^[\"']//; s/[\"']$//")
 if [[ -z "${DB_URL:-}" ]]; then
   echo "✗ DATABASE_URL missing from .env" >&2
   exit 1

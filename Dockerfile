@@ -7,7 +7,10 @@
 FROM node:24-alpine AS deps
 WORKDIR /app
 
-RUN apk add --no-cache libc6-compat
+# Note: `libc6-compat` was removed from Alpine 3.20+ (node:24-alpine uses
+# Alpine 3.23). No native glibc modules in TeamFlow's dep tree need it, so we
+# don't install it. If a future dep requires glibc compat, add `gcompat`
+# (the modern Alpine replacement) here.
 
 COPY package.json yarn.lock .yarnrc.yml ./
 COPY .yarn ./.yarn
@@ -25,7 +28,9 @@ WORKDIR /app
 # Build-time public env vars. Next.js bakes NEXT_PUBLIC_* into the bundle at
 # build time, so they must be available here — passed from CI via --build-arg.
 ARG NEXT_PUBLIC_JIRA_BASE_URL
+ARG NEXT_PUBLIC_APP_URL
 ENV NEXT_PUBLIC_JIRA_BASE_URL=$NEXT_PUBLIC_JIRA_BASE_URL
+ENV NEXT_PUBLIC_APP_URL=$NEXT_PUBLIC_APP_URL
 
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
@@ -71,8 +76,19 @@ COPY --from=builder --chown=nextjs:nodejs /app/src/lib/db ./src/lib/db
 COPY --from=builder --chown=nextjs:nodejs /app/src/lib/ip ./src/lib/ip
 COPY --from=builder --chown=nextjs:nodejs /app/drizzle.config.ts ./drizzle.config.ts
 COPY --from=builder --chown=nextjs:nodejs /app/tsconfig.json ./tsconfig.json
+# Cherry-picked runtime deps for scripts/migrate-all.ts + its transitive needs.
+# Rule of thumb: if a new migration script imports a package, add it here.
+# Intentional lean-image tradeoff — full node_modules is ~300 MB vs ~40 MB here.
+# Alternative: drop this entire cherry-pick and `COPY --from=builder /app/node_modules`
+# if the maintenance cost outweighs the size saving.
 COPY --from=builder --chown=nextjs:nodejs /app/node_modules/.bin/tsx ./node_modules/.bin/tsx
 COPY --from=builder --chown=nextjs:nodejs /app/node_modules/tsx ./node_modules/tsx
+# tsx's direct runtime dependencies
+COPY --from=builder --chown=nextjs:nodejs /app/node_modules/esbuild ./node_modules/esbuild
+COPY --from=builder --chown=nextjs:nodejs /app/node_modules/@esbuild ./node_modules/@esbuild
+COPY --from=builder --chown=nextjs:nodejs /app/node_modules/get-tsconfig ./node_modules/get-tsconfig
+COPY --from=builder --chown=nextjs:nodejs /app/node_modules/resolve-pkg-maps ./node_modules/resolve-pkg-maps
+# Migration-script deps
 COPY --from=builder --chown=nextjs:nodejs /app/node_modules/drizzle-orm ./node_modules/drizzle-orm
 COPY --from=builder --chown=nextjs:nodejs /app/node_modules/mysql2 ./node_modules/mysql2
 COPY --from=builder --chown=nextjs:nodejs /app/node_modules/dotenv ./node_modules/dotenv

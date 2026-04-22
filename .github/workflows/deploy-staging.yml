@@ -11,8 +11,10 @@ on:
   workflow_dispatch: # manual re-run button
 
 concurrency:
-  # Only one staging deploy in flight at a time; newer pushes cancel older
-  # queued runs to avoid stacking deploys.
+  # Only one staging deploy in flight at a time. `cancel-in-progress: false`
+  # means newer pushes QUEUE behind the current run — we don't cancel a deploy
+  # mid-migration. Queue depth >1 means the intermediate run is wasted but
+  # never leaves the DB in a half-migrated state.
   group: deploy-staging
   cancel-in-progress: false
 
@@ -85,6 +87,7 @@ jobs:
           # NEXT_PUBLIC_* vars are baked in at build time — pass via build-args.
           build-args: |
             NEXT_PUBLIC_JIRA_BASE_URL=${{ vars.NEXT_PUBLIC_JIRA_BASE_URL }}
+            NEXT_PUBLIC_APP_URL=${{ vars.NEXT_PUBLIC_APP_URL }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 

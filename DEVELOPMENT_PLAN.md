@@ -311,7 +311,7 @@ release_checklist_items (pre-release checklist)
 
 New tables and column additions introduced to support a second issue-tracker provider (ClickUp) alongside JIRA. All changes are additive; a deferred rename pass (Migration M5, Phase 28) drops deprecated `jira*` column names once the abstraction has soaked in production.
 
-```
+```text
 provider_config (per-provider auth + workspace identity + feature flag)
 ├── id: text (cuid, PK)
 ├── provider: text ('jira' | 'clickup')
