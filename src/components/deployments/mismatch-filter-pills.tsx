@@ -132,7 +132,7 @@ export function MismatchFilterPills({ counts, hiddenTypes, onToggle, onReset }: 
         <button
           type="button"
           onClick={onReset}
-          className="ml-1 h-7 px-2 rounded-full text-[10px] font-bold font-mono uppercase tracking-wider text-primary hover:bg-primary/10 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
+          className="ml-1 h-7 px-2 rounded-full text-[10px] font-bold font-mono uppercase tracking-wider text-primary hover:bg-primary/10 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 focus-visible:ring-offset-2 focus-visible:ring-offset-background"
         >
           Show all
         </button>

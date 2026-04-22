@@ -232,7 +232,7 @@ export function DeploymentsDashboard() {
                 <button
                   type="button"
                   onClick={() => setHiddenMismatchTypes(new Set())}
-                  className="text-primary font-semibold hover:underline ml-1"
+                  className="text-primary font-semibold hover:underline ml-1 rounded focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
                 >
                   show all
                 </button>
