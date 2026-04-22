@@ -4,7 +4,7 @@
 
 # ─── Stage 1: deps ───────────────────────────────────────────────────────────
 # Install node_modules once so subsequent builds reuse the cached layer.
-FROM node:20-alpine AS deps
+FROM node:24-alpine AS deps
 WORKDIR /app
 
 RUN apk add --no-cache libc6-compat
@@ -19,7 +19,7 @@ RUN corepack enable \
  && yarn install --immutable
 
 # ─── Stage 2: builder ────────────────────────────────────────────────────────
-FROM node:20-alpine AS builder
+FROM node:24-alpine AS builder
 WORKDIR /app
 
 # Build-time public env vars. Next.js bakes NEXT_PUBLIC_* into the bundle at
@@ -38,13 +38,18 @@ RUN corepack enable \
  && yarn build
 
 # ─── Stage 3: runner ─────────────────────────────────────────────────────────
-FROM node:20-alpine AS runner
+FROM node:24-alpine AS runner
 WORKDIR /app
 
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
 ENV PORT=3000
 ENV HOSTNAME=0.0.0.0
+
+# Yarn 4 via corepack — needed at runtime so `yarn db:migrate:apply` works
+# inside the one-shot migration container the deploy workflow runs.
+RUN corepack enable \
+ && corepack prepare yarn@4.13.0 --activate
 
 # Non-root runtime user.
 RUN addgroup --system --gid 1001 nodejs \
