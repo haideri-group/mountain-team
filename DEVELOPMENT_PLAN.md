@@ -4,7 +4,7 @@
 **Product:** TeamFlow
 **Company:** Tile Mountain
 **Repository:** https://github.com/haidertm/team-flow
-**Last Updated:** April 19, 2026
+**Last Updated:** April 22, 2026
 
 ---
 
@@ -307,6 +307,75 @@ release_checklist_items (pre-release checklist)
 
 ---
 
+### 5.1b Phase 22–28 Additions — ClickUp / Multi-Provider Integration
+
+New tables and column additions introduced to support a second issue-tracker provider (ClickUp) alongside JIRA. All changes are additive; a deferred rename pass (Migration M5, Phase 28) drops deprecated `jira*` column names once the abstraction has soaked in production.
+
+```text
+provider_config (per-provider auth + workspace identity + feature flag)
+├── id: text (cuid, PK)
+├── provider: text ('jira' | 'clickup')
+├── workspaceId: text (ClickUp team_id; JIRA cloudId)
+├── apiTokenCiphertext: text (nullable — AES-GCM; env var takes precedence)
+├── webhookSecret: text (nullable — AES-GCM; returned once at registration)
+├── enabled: integer (boolean — drives isClickUpEnabled() gate)
+├── createdAt: integer
+├── updatedAt: integer
+└── UNIQUE (provider, workspaceId)
+
+clickup_custom_fields (per-list custom field metadata cache)
+├── id: text (cuid, PK)
+├── listExternalId: text (ClickUp list_id; FK-by-convention → boards.externalBoardId)
+├── fieldExternalId: text (ClickUp custom field UUID)
+├── name: text
+├── type: text ('drop_down' | 'number' | 'text' | 'users' | ...)
+├── typeConfig: text (JSON — options, colours, etc.)
+├── createdAt: integer
+├── UNIQUE (listExternalId, fieldExternalId)
+└── INDEX (listExternalId)
+```
+
+**Column additions to existing tables (Migration M1, Phase 22):**
+- `boards.provider: enum('jira','clickup')` default `'jira'` — provider discriminator.
+- `boards.externalWorkspaceId: text (nullable)` — ClickUp team_id; null for JIRA.
+- `boards.externalBoardId: text (nullable)` — ClickUp list_id; null for JIRA.
+- `issues.provider: enum('jira','clickup')` default `'jira'`.
+- `issues.externalId: text (nullable)` — ClickUp native task id; null for JIRA (`jiraKey` already covers JIRA's native identity).
+- `issues.providerStatusName: text (nullable)` — provider-agnostic alias of `jiraStatusName`.
+- `issues.providerCreatedAt: text (nullable)`, `issues.providerUpdatedAt: text (nullable)` — provider-agnostic aliases of the JIRA-specific timestamps.
+- `INDEX (provider, externalId)` on `issues` — supports webhook upsert lookups.
+
+**Column additions for multi-provider team members (Migration M2, Phase 24):**
+- `team_members.jiraAccountId` **relaxed** from `UNIQUE NOT NULL` → `UNIQUE` (nullable) — allows ClickUp-only members.
+- `team_members.clickupUserId: text (nullable, UNIQUE)` — ClickUp user integer id stored as string.
+- `team_members.providerScope: enum('jira','clickup','both')` default `'jira'` — derived by team-sync from which provider IDs are populated.
+
+**Column additions for deployment + release key portability (Migration M3, Phase 26):**
+- `deployments.externalKey: text (nullable, backfilled from jiraKey)` — provider-agnostic alias.
+- `deployments.provider: enum('jira','clickup')` default `'jira'`.
+- `INDEX (provider, externalKey)` on `deployments`.
+- `release_issues.externalKey: text (nullable, backfilled from jiraKey)`.
+- `release_issues.provider: enum('jira','clickup')` default `'jira'`.
+
+**Column additions for provider-aware status mappings (Migration M4, Phase 26):**
+- `status_mappings.provider: enum('jira','clickup')` default `'jira'`.
+- `status_mappings.providerStatusName: text (backfilled from jiraStatusName)`.
+- Existing `UNIQUE (jiraStatusName)` replaced with `UNIQUE (provider, providerStatusName)`.
+
+**Sync log type enum extension (Migration M4, Phase 26):**
+- `sync_logs.type` adds values: `'clickup_sync'`, `'clickup_team_sync'`, `'clickup_worklog_sync'`.
+
+**Deferred rename pass (Migration M5, Phase 28):**
+- After a 1-week soak of stable ClickUp operation AND a CI grep-audit confirms zero callsites outside `src/lib/providers/jira/` reference the deprecated names, rename:
+  - `boards.jiraKey` → `externalKey`
+  - `issues.jiraKey` → `externalKey`, drop `jiraStatusName` / `jiraCreatedAt` / `jiraUpdatedAt`, add `UNIQUE (provider, externalKey)`
+  - `worklogs.jiraKey` → `externalKey`, `worklogs.jiraWorklogId` → `externalWorklogId`, `worklogs.authorAccountId` → `authorExternalId`
+  - `deployments.jiraKey` → dropped (the M3 alias `externalKey` becomes primary)
+  - `release_issues.jiraKey` → dropped
+  - `status_mappings.jiraStatusName` → dropped
+
+---
+
 ### 5.2 Critical Business Rules
 - **Done vs Closed:** `done` = full development lifecycle completed (dev → QA → deploy). `closed` = task cancelled, no work done. Velocity and performance metrics count ONLY `done` tasks.
 - **Frontend label:** JIRA tasks with "Frontend" label are tracked. This filters team-level velocity.
@@ -330,20 +399,27 @@ Role is stored in `users.role` and exposed via Auth.js session. Sidebar dynamica
 
 ---
 
-## 7. JIRA Integration
+## 7. Issue Tracker Providers
 
-### 7.1 Authentication
+TeamFlow supports two issue-tracker providers side-by-side: **JIRA** (§7a, the original) and **ClickUp** (§7b, added in Phases 22–28). Every sync, webhook, fetch, and UI render dispatches through a provider registry (`src/lib/providers/registry.ts`) so adding a third provider later is a matter of implementing the `IssueProvider` interface, not forking the dashboard.
+
+Per-provider configuration lives in the `provider_config` table (see §5.1b). Runtime resolution is by the `boards.provider` column on each tracked board row.
+
+### 7a. JIRA
+
+#### 7a.1 Authentication
 - Basic Auth: base64(email + ":" + API token)
 - Server-side only — token never exposed to client
+- Env vars: `NEXT_PUBLIC_JIRA_BASE_URL`, `JIRA_USER_EMAIL`, `JIRA_API_TOKEN`, `JIRA_CLOUD_ID`
 
-### 7.2 Sync Types
+#### 7a.2 Sync Types
 | Type | Frequency | Description |
 |------|-----------|-------------|
 | Full | Daily (configurable) | Re-sync all issues from all tracked boards |
 | Incremental | Every 5 min (configurable) | Fetch issues updated since last sync |
 | Manual | On demand (admin only) | Triggered via "Sync Now" button |
 
-### 7.3 Key JQL Queries
+#### 7a.3 Key JQL Queries
 ```
 # Frontend team issues (all)
 project = {boardKey} AND labels = "Frontend" ORDER BY updated DESC
@@ -358,7 +434,7 @@ project IN ({trackedBoards}) AND labels = "Frontend" AND duedate < now() AND sta
 project IN ({trackedBoards}) AND labels = "Frontend" AND status = "Blocked" ORDER BY updated DESC
 ```
 
-### 7.4 Data Flow
+#### 7a.4 Data Flow
 1. Sync engine checks lock (prevent concurrent runs)
 2. Creates `sync_logs` entry with status "running"
 3. Fetches issues from each tracked board via JQL
@@ -367,7 +443,7 @@ project IN ({trackedBoards}) AND labels = "Frontend" AND status = "Blocked" ORDE
 6. Detects status changes → generates notifications
 7. Updates `sync_logs` with completed status + counts
 
-### 7.5 Board Structure
+#### 7a.5 Board Structure
 | Board | Key | Type | Has Sprints |
 |-------|-----|------|-------------|
 | Production | PROD | Continuous | No |
@@ -376,10 +452,108 @@ project IN ({trackedBoards}) AND labels = "Frontend" AND status = "Blocked" ORDE
 | Dolphin (Customer Portal) | DOLPHIN | Project | Yes |
 | Falcon (Performance) | FALCON | Project | Yes |
 
-### 7.6 Custom Fields
+#### 7a.6 Custom Fields
 - **Expected Deployment Date:** Custom datepicker field being added to JIRA (pending)
 - **Story Points:** `customfield_10016` (standard)
 - **Start Date:** `customfield_10015`
+
+---
+
+### 7b. ClickUp
+
+Added in Phases 22–28. JIRA continues to work unchanged; ClickUp is an **additional** source, never a replacement.
+
+#### 7b.1 Authentication
+
+- Personal API token — `Authorization: pk_xxxxxxxx...` as a **raw** header value (ClickUp quirk: **no `Bearer` prefix** for personal tokens).
+- Server-side only; mirrored into `provider_config.apiTokenCiphertext` (AES-GCM) for masked display in Settings. Env var takes precedence at read time.
+- Env vars: `CLICKUP_API_TOKEN`, `CLICKUP_WORKSPACE_ID`, `CLICKUP_MEMBER_GROUP_ID` (optional), `CLICKUP_WEBHOOK_SECRET`.
+- OAuth intentionally skipped — ClickUp exposes no OAuth scopes, so per-user auth adds complexity with zero security upside.
+
+#### 7b.2 Sync Types
+
+| Type | Frequency | Description |
+|------|-----------|-------------|
+| Full | Daily (configurable) | Enumerates every tracked list (`GET /list/{id}/task`), paginates through all tasks |
+| Incremental | Every 5 min (configurable) | `GET /team/{team_id}/task?date_updated_gt={lastSync}&list_ids[]=...` — workspace-level delta |
+| Manual | On demand (admin only) | Triggered via "Sync Now" (per-board or all) |
+| Webhook | Real-time | `POST /api/webhooks/clickup` — HMAC-verified, hydrate-then-upsert |
+
+#### 7b.3 Key Queries (no JQL equivalent — flat query params)
+
+```http
+# Workspace-wide delta since last sync
+GET /api/v2/team/{team_id}/task
+  ?date_updated_gt={ms}
+  &list_ids[]={listId1}&list_ids[]={listId2}
+  &include_closed=true
+  &subtasks=true
+  &page={n}          # 100/page cap, iterate until last_page=true
+
+# Full list sync
+GET /api/v2/list/{list_id}/task
+  ?page={n}
+  &include_closed=true
+  &subtasks=true
+  &order_by=updated&reverse=true
+
+# Single task (by native id OR custom_id)
+GET /api/v2/task/{id_or_custom_id}
+  ?custom_task_ids=true&team_id={workspace_id}   # required when using custom_id
+  &include_subtasks=true
+  &include_markdown_description=true
+
+# Workspace members (flat list, email inline)
+GET /api/v2/team
+```
+
+#### 7b.4 Data Flow
+
+1. Cron checks lock → creates `sync_logs` row (`type='clickup_sync'`)
+2. Resolves ClickUp-provider boards from DB (`WHERE provider='clickup' AND isTracked=true`)
+3. Dispatches through `providerFor(board).fetchIssuesChanged(...)`:
+   - Full: paginate `GET /list/{id}/task` for each tracked list
+   - Incremental: single `GET /team/{id}/task?date_updated_gt=...&list_ids[]=...`
+4. Normalizes ClickUp tasks → `NormalizedIssue` via `src/lib/providers/clickup/normalize.ts`
+5. Upserts via `(provider='clickup', externalId=task.id)` as the dedup key
+6. Writes `externalKey = task.custom_id ?? task.id` for display
+7. Detects status transitions → reuses existing notification generator
+8. Updates `sync_logs` with counters + rate-limit metrics
+
+#### 7b.5 Board Structure
+
+ClickUp "boards" in TeamFlow **are ClickUp Lists, not Spaces.** One tracked board row = one ClickUp list. Admins pick Workspace → Space → List in the "Add Board" Settings form. A Space with Custom Task IDs enabled produces JIRA-like keys (`CLK-1234`); a Space without Custom Task IDs produces native IDs (`86a1zqx8r`) — both are supported.
+
+#### 7b.6 Status Model
+
+ClickUp has fully customisable statuses per Space (optionally overridden per List). Every custom status carries a coarse `type` — `open | custom | done | closed` — that maps to TeamFlow's 8 app statuses through a combination of:
+1. **Type-based direct map** (`open → todo`, `done → done`, `closed → closed`).
+2. **Heuristic name match** for the `custom` type (e.g. `/review|code review|pr/i` → `in_review`).
+3. **Admin override** via the existing Status Mappings Settings UI (Phase 10.10) — extended with a `provider` column so JIRA and ClickUp mappings coexist.
+
+Unknown statuses auto-insert into `status_mappings` flagged for review.
+
+#### 7b.7 Custom Fields
+
+- ClickUp custom field metadata cached in the `clickup_custom_fields` table per tracked list (§5.1b).
+- V1: custom field **values** stored in `issues.raw` JSON; no per-field rendering surface.
+- V2 (deferred): per-field UI like JIRA's Request Priority / Website / Brands.
+- First-class fields that skip the custom-field dance: `points` (story points), `time_estimate` / `time_spent` (milliseconds → divided by 1000 into existing integer-seconds columns), `tags` (→ `labels`), `assignees[]` (multi-assignee; first assignee written to existing single-value column for compat).
+
+#### 7b.8 Webhooks
+
+- Endpoint: `POST /api/webhooks/clickup`.
+- Signature: `X-Signature` = HMAC-SHA256 of the raw request body, keyed by the per-webhook secret. Secret returned **once** at `POST /team/{id}/webhook` registration time; stored AES-GCM-encrypted in `provider_config.webhookSecret`.
+- Payload carries **only** `task_id` + `history_items[]` — requires a follow-up `GET /task/{task_id}` to hydrate the full record. Results in ~2× the API calls vs JIRA for the same event volume.
+- Idempotency: `${webhook_id}:${history_items[0].id}` as the dedup key in `webhook_logs`.
+- Coalesce window: 500ms per-`externalId` LRU to absorb the multiple webhooks ClickUp fires for a single user edit (e.g. `taskCreated` + `taskStatusUpdated` on a single create).
+
+#### 7b.9 Rate Limits
+
+- **100 requests/minute per personal token** on the Free/Unlimited/Business plan tier.
+- Effective cap: 80 req/min (20% headroom) via the shared `ClickUpRateLimiter` (`src/lib/providers/rate-limit.ts`).
+- On 429: sleep until `X-RateLimit-Reset + 1s`. No `Retry-After` header.
+- On 5xx: exponential backoff with jitter, max 3 retries.
 
 ---
 
@@ -420,6 +594,23 @@ GET    /api/reports/performance     → Developer ranking
 GET    /api/reports/heatmap         → Developer activity heatmap
 GET    /api/reports/turnaround      → Task turnaround histogram
 GET    /api/reports/pulse           → Weekly created vs completed
+```
+
+### 8a. ClickUp / Multi-Provider Routes (Phases 22–28)
+
+```http
+POST   /api/webhooks/clickup              → ClickUp webhook receiver (HMAC-verified, hydrate-then-upsert)
+
+GET    /api/clickup/workspaces            → List token-accessible ClickUp workspaces (admin only, Settings picker)
+GET    /api/clickup/spaces                → List Spaces for a workspace (admin only)
+GET    /api/clickup/lists                 → List folder-nested + folderless Lists for a Space (admin only)
+POST   /api/clickup/webhook/register      → Register / rotate workspace webhook (admin only)
+DELETE /api/clickup/webhook/register      → Unregister webhook (admin only)
+
+# The existing /api/boards, /api/issues/*, /api/sync/*, /api/search, /api/workload,
+# /api/calendar, /api/reports, /api/deployments routes become provider-aware via
+# the registry — no new top-level path, same response shapes enriched with a
+# `provider` discriminator per row.
 ```
 
 ---
@@ -1152,6 +1343,92 @@ Closes the cron-visibility gap that surfaced during the Phase 20 rollout. Today,
 
 _Status will flip to ✅ Complete once merged, index migration applied in prod, Cronicle panel verifies listing ≥ 4 TeamFlow events, and one stuck row has been successfully reclaimed through the UI._
 
+### Phase 22: Provider Abstraction Foundation — 🟡 Not started (awaiting staging environment)
+First of seven phases that add ClickUp as a second issue-tracker provider alongside JIRA. Phase 22 is a pure refactor — zero user-visible change — that introduces the abstraction layer every subsequent phase plugs into.
+- **New `src/lib/providers/` directory:** `types.ts` (`Provider`, `NormalizedIssue`, `NormalizedMember`, `NormalizedComment`, `NormalizedWorklog`, `NormalizedRelease`, `NormalizedWebhookEvent`), `interface.ts` (the `IssueProvider` contract: `whoami`, `listBoardCandidates`, `fetchIssue`, `fetchIssuesChanged`, `fetchMembers`, `fetchComments`, `fetchWorklogs`, `fetchReleases`, `verifyWebhook`, `issueUrl`, `branchKeyRegex`, `resolveKey`), `registry.ts` (`providerFor(board)` + `providerForKey(key)` helpers), `rate-limit.ts` (shared per-provider token-bucket on `globalThis`, ported from the existing JIRA throttle), `feature-flags.ts` (`isClickUpEnabled()` reading `provider_config` with 60s in-memory cache).
+- **`src/lib/providers/jira/index.ts`** — thin facade over the existing `src/lib/jira/*` code. No edits to existing JIRA code beyond an adapter that stamps `provider: 'jira'` on each `NormalizedIssue`.
+- **Migration M1 (see §5.1b)** — adds provider columns to `boards` + `issues`, creates `provider_config` table, backfills every existing row to `'jira'`. Dry-run by default, `--apply` to execute.
+- **No ClickUp code yet; no Settings UI changes; no new cron jobs.** Every route still routes to JIRA through the registry — identical behavior.
+- **Deployable as a no-op on day 1.** Used as the soak window before Phase 23 ships.
+- **Verification:** `yarn type-check` clean, every page pixel-identical to pre-phase, JIRA issue + team sync crons run green twice, M1 migration dry-run reviewed and `--apply` succeeds on staging with a documented rollback path.
+
+_Status will flip to ✅ Complete once the abstraction is in place and every existing route verifiably routes through the registry._
+
+### Phase 23: ClickUp Client + Normalizer (shadow mode) — 🟡 Not started
+Ships the ClickUp `IssueProvider` implementation behind the `isClickUpEnabled()` feature flag. Still no user-visible change.
+- **`src/lib/providers/clickup/client.ts`:** `clickupFetch<T>(path, opts)` — raw `Authorization: pk_${token}` header (no Bearer prefix), parses `X-RateLimit-Remaining` / `X-RateLimit-Reset`, backoff ladder on 429 / 5xx, circuit-breaks when `remaining < 5`.
+- **`src/lib/providers/clickup/normalize.ts`:** ClickUp task → `NormalizedIssue`. Multi-assignee aware (full `assigneeIds[]` + first written to legacy single-assignee column for compat). `time_estimate` / `time_spent` divided by 1000 (ClickUp uses ms). `points` → `storyPoints` first-class. `tags[].name` → `labels`. `custom_id ?? id` → `externalKey`. `id` → `externalId` always.
+- **`src/lib/providers/clickup/status-map.ts`:** heuristic mapping of `(type + lowercased status name)` → app status. 4-type direct map (`open → todo`, `done → done`, `closed → closed`, `custom → fallthrough`) + regex matches for review, testing, deployment, hold, rollout, post-live. Admin-editable via the existing Phase 10.10 Status Mappings Settings UI extended with a `provider` column.
+- **`src/lib/providers/clickup/branch-regex.ts`:** `/\b(?:[A-Z_]{2,10}-\d+|[a-z0-9]{7,12})\b/gi` — matches both `PREFIX-NUMBER` custom IDs and native ClickUp IDs. Candidates validated via `resolveKey()` before being treated as deployments.
+- **`scripts/clickup-smoke-test.ts`** (dev-only) — reads `CLICKUP_API_TOKEN`, lists workspaces → spaces → lists, fetches 10 tasks, normalizes each, prints a readable diff report.
+- **Unit tests:** 10 normalize snapshot tests, exhaustive status-map table test, positive/negative branch-regex tests.
+- **Verification:** smoke test produces clean output for a real Tile Mountain ClickUp workspace. Normalizer output diffed against a JIRA record for shape parity.
+
+_Status will flip to ✅ Complete once the client + normalizer + status-map unit tests all pass in CI and the smoke test runs end-to-end on the staging workspace._
+
+### Phase 24: Team Sync Supports ClickUp (partial visibility) — 🟡 Not started
+Extends team-member sync to merge JIRA + ClickUp member sets by email (Google Workspace email is the join key). Members appear on the Members page with the CU badge where they originate only from ClickUp.
+- **`src/lib/providers/clickup/members.ts`** — `GET /team` filtered to `CLICKUP_WORKSPACE_ID`, optional `CLICKUP_MEMBER_GROUP_ID` filter, excludes the token-owner's user ID (mirrors JIRA's `fetchCurrentUserAccountId` exclusion).
+- **Migration M2 (see §5.1b)** — relaxes `jiraAccountId NOT NULL` → `UNIQUE` nullable; adds `clickupUserId` (unique nullable) and `providerScope` (derived). Pre-flight grep audit baked into the migration script — refuses `--apply` if unsafe callsites still assume `jiraAccountId` is present.
+- **`src/lib/sync/team-sync.ts`** becomes multi-source: fetches from both providers in parallel, collapses by normalized email (lowercase + trim + strip `+suffix`), upserts a single `team_members` row per person populating whichever provider IDs are present. Departure rule: a member is marked `departed` only when present in **neither** source for their registered `providerScope`; otherwise the scope is downgraded. Admin-managed fields (`capacity`, `color`) are never overwritten by sync.
+- **Avatar priority on sync:** Google Directory (if admin signed in via Google OAuth) > ClickUp `profilePicture` > JIRA `avatarUrls.48x48` > Gravatar. R2 avatar caching (Phase 10.7) unchanged — ClickUp URLs cached the same way as JIRA/Gravatar.
+- **Members UI:** `<ProviderBadge>` chip renders next to each member's name conditional on `providerScope` (J, CU, or both stacked).
+- **Verification:** JIRA-only sync produces identical rows vs pre-phase. Flip ClickUp on, add a ClickUp-only test email, next sync creates a new row with `jiraAccountId=NULL`. Existing JIRA user also in ClickUp: both IDs populate one row. Remove from ClickUp: `providerScope` downgrades to `jira`, not marked departed.
+
+_Status will flip to ✅ Complete once the merge-by-email algorithm has run one full team-sync cycle against the staging workspace with no mis-attribution or duplicate rows._
+
+### Phase 25: Settings UI + "Add Board" for ClickUp — 🟡 Not started
+First user-visible phase. Admin can onboard a ClickUp list through Settings. Adding a board creates the row; no issue sync runs yet (deferred to Phase 26).
+- **`src/app/(dashboard)/settings/page.tsx`** — "Add Board" form gains a provider picker at the top (`○ JIRA ● ClickUp`). Selecting ClickUp swaps the form to Workspace → Space → List pickers.
+- **`GET /api/clickup/workspaces`** — lists token-accessible workspaces.
+- **`GET /api/clickup/spaces?workspaceId=...`** — spaces for a workspace; returns `custom_item_ids_enabled` flag for the "Custom Task IDs disabled" warning banner.
+- **`GET /api/clickup/lists?workspaceId=...&spaceId=...`** — merges folder-nested + folderless lists in one flat response; annotates each with `alreadyTracked: boolean` so the picker can grey out duplicates.
+- **`POST /api/boards`** — provider-aware. For ClickUp: requires `externalWorkspaceId`, `externalBoardId`, `displayName`. Validates token once via `whoami()` before allowing the insert.
+- **`<ProviderBadge>` component** (`src/components/shared/provider-badge.tsx`) — 12×12 rounded-full chip. JIRA: blue `#0052cc` "J". ClickUp: purple `#7b68ee` "CU". Used on the Settings boards table Provider column, then rolled out across 14 components in Phase 26.
+- **New env vars:** `CLICKUP_API_TOKEN`, `CLICKUP_WORKSPACE_ID`, `CLICKUP_MEMBER_GROUP_ID` (optional). `.env.example` updated.
+- **Verification:** add a ClickUp board via Settings — row appears with CU badge. Add a second from a different Space — both coexist. JIRA "Add Board" still works identically. Invalid token produces a clear error, not a 500.
+
+_Status will flip to ✅ Complete once two ClickUp lists are added from Settings on staging without errors and JIRA board management is regression-tested._
+
+### Phase 26: ClickUp Issue Sync + Webhook + GitHub Key Parsing — 🟡 Not started
+The big one. Real ClickUp issues appear across every dashboard. Webhook delivers near-real-time updates. GitHub branch parsing recognises both JIRA and ClickUp keys.
+- **Sync cron** (`/api/cron/sync-issues`) — extended to iterate every board regardless of provider, dispatch through `providerFor(board).fetchIssuesChanged(...)`, normalize, upsert by `(provider, externalId)`. Full vs incremental detection per-provider. ClickUp incremental uses `date_updated_gt` on the workspace task endpoint; full enumerates each tracked list.
+- **Webhook** (`POST /api/webhooks/clickup`) — raw-body HMAC-SHA256 verification via `X-Signature`. Idempotency key `${webhook_id}:${history_items[0].id}` deduped against `webhook_logs`. 500ms per-`externalId` LRU coalesce window to absorb ClickUp's multi-fire pattern on single user edits. Hydrate via `GET /task/{task_id}?include_subtasks=true&include_markdown_description=true`. Normalizes + upserts through the shared `processNormalizedEvent()` extracted from the JIRA webhook handler. Returns 200 within 3s.
+- **`taskDeleted` handling:** mark as `closed`, don't delete (mirrors JIRA rule).
+- **`taskMoved` handling:** new list tracked → update `boardId`; new list NOT tracked → mark as `closed` with an audit note.
+- **Webhook registration UI** in Settings: "Register ClickUp Webhook" button → `POST /team/{id}/webhook` → stores returned secret AES-GCM-encrypted in `provider_config.webhookSecret`. "Last delivered" indicator polled from `webhook_logs`. "Rotate" button atomically deletes + re-registers.
+- **Custom-Task-ID resolver** (`resolveKey`) — PREFIX-NUMBER inputs hit `GET /task/{id}?custom_task_ids=true&team_id={team_id}`; native-ID inputs hit `GET /task/{id}`. Returns the canonical native `id` on success or null on 404. 24h in-memory LRU cache keyed by `(provider, candidate)` — deployment backfill hot-loop depends on this.
+- **GitHub branch regex generalization:** `src/lib/github/jira-keys.ts` renamed to `src/lib/github/issue-keys.ts`, regex widened to `/\b(?:[A-Z_]{2,10}-\d+|[a-z0-9]{7,12})\b/gi`. Every candidate resolved via `providerForKey(candidate)` before being treated as a deployment. Unresolvable candidates logged, not created.
+- **UI rollout across 14 components:** `overview/dev-card.tsx`, `overview/issue-status-badge.tsx`, `overview/overview-dashboard.tsx`, `shared/issue-type-icon.tsx`, `layout/global-search.tsx` (regex broadened + results grouped by provider), `calendar/task-chip.tsx`, `deployments/deployment-pipeline.tsx`, `deployments/status-mismatches.tsx`, `deployments/recent-deployments.tsx`, `releases/release-issue-list.tsx`, `issue/issue-detail.tsx`, `issue/issue-sidebar.tsx`, `issue/issue-activity.tsx`, `settings/board-list.tsx` — each receives `<ProviderBadge>` next to the issue key.
+- **Migrations M3 + M4 (see §5.1b)** — deployment/release key portability, status-mappings provider column, `clickup_custom_fields` table, sync_logs type enum extension.
+- **Performance budgets:** ClickUp full sync of 5 lists × ~500 tasks under 5 min (100 req/min budget). Incremental sync under 60s. Webhook p99 handler under 3s. Issue detail three-phase load under 6s total.
+- **Verification:** full ClickUp sync of a test list populates Overview; incremental picks up edits within 60s; webhook round-trip under 10s; Cmd+K finds ClickUp issues by both `custom_id` and native `id`; `fix/CLK-42` branch in a merged PR creates a correctly-linked deployment row.
+
+_Status will flip to ✅ Complete once the end-to-end sync + webhook + branch-parsing pipeline has run stably on staging for 48 hours with zero false positives in the deployment linker._
+
+### Phase 27: Worklogs, Workload, Reports, Calendar for ClickUp — 🟡 Not started
+Downstream analytics start including ClickUp data.
+- **Worklogs:** `GET /team/{team_id}/time_entries` (preferred for author attribution) inserts into `worklogs` with `provider='clickup'`, `externalWorklogId={entry.id}`, `authorExternalId={entry.user.id}`. Author matching: `clickupUserId` first, email fallback. V1 uses first assignee only for multi-assignee capacity attribution; fairness split deferred to V2.
+- **Workload snapshots** (`src/lib/workload/snapshots.ts`) — formula reads `storyPoints` + `priority` + `labels` + `status`, all provider-agnostic. ClickUp's first-class `points` field maps directly.
+- **Reports:** every chart in `src/components/reports/*` queries `issues` by status and numeric fields — works unchanged. Follow-up polish: add a "Provider" filter pill to `/reports`.
+- **Calendar:** `/api/calendar` provider-agnostic; task chip renders `<ProviderBadge>`.
+- **Deployments page:** mismatch detector is status-based — works unchanged. Recent Deployments feed gains provider badge per row.
+- **Releases page:** stays JIRA-only in V1. Empty state card when every tracked board is `provider='clickup'`: "Releases are a JIRA-only feature in V1."
+- **Verification:** `/workload` capacity bar includes ClickUp task weight; `/reports` cycle-time chart includes ClickUp done issues; `/calendar` renders ClickUp chips; `/deployments` site overview lists ClickUp deployments alongside JIRA.
+
+_Status will flip to ✅ Complete once all downstream analytics pages render ClickUp data correctly and the existing JIRA charts show no regressions on the staging sweep._
+
+### Phase 28: Notifications, Search Polish, M5 Rename Pass, Docs — 🟡 Not started
+Tightens the seams and collapses the dual-column scheme into a single provider-agnostic set via Migration M5 (deferred rename pass).
+- **Notifications:** existing types reused across both providers. **One new type:** `provider_sync_failed` (fires when a provider's sync has `status='failed'` twice consecutively in `sync_logs`). Copy: "ClickUp sync has failed 2× in a row. Check Settings → Webhooks."
+- **Search:** `/api/search` returns `provider` on each hit; component renders badge; ranking provider-agnostic.
+- **GitHub integration finalize:** `src/lib/github/jira-keys.ts` → `issue-keys.ts`, function renames (`extractJiraKeys` → `extractIssueKeys`), every callsite updated in a single greppable pass.
+- **Migration M5 (see §5.1b)** — the deferred rename pass. **Gated behind a CI grep-audit** that fails the PR if any `jiraKey|jiraStatusName|jiraCreatedAt|jiraUpdatedAt|authorAccountId|jiraWorklogId|jiraVersionId` reference remains outside `src/lib/providers/jira/`. **Runs only after a full week of stable ClickUp operation in production** to allow any rare code path to surface before the old columns disappear.
+- **Docs:** `CLAUDE.md` reframed (JIRA Integration section → Issue Tracker Providers with JIRA + ClickUp subsections). `.env.example` adds `CLICKUP_API_TOKEN`, `CLICKUP_WORKSPACE_ID`, `CLICKUP_MEMBER_GROUP_ID`, `CLICKUP_WEBHOOK_SECRET`. `docs/CLICKUP_API_CHEATSHEET.md` distilled from research agent output, committed.
+- **Verification:** CI grep-audit green; M5 dry-run on a staging DB clone; full regression sweep post-apply; `yarn type-check` + `yarn lint` + `yarn build` clean.
+
+_Status will flip to ✅ Complete once M5 is applied in production, the grep audit enforces the new column names in CI, and the docs PR merges._
+
 ---
 
 ## 10. Notification Types
@@ -1169,6 +1446,9 @@ _Status will flip to ✅ Complete once merged, index migration applied in prod, 
 | Release Deployed | Marked released in JIRA OR full production coverage | Info (read style) | White (green Rocket icon, 50% opacity) |
 | Release Scope Changed | Issue added/removed after release start | Warning | White (amber Package icon) |
 | Release Stale | `in_progress` > 7d with < 10% release velocity | Warning | White (amber clock icon) |
+| Provider Sync Failed | ClickUp or JIRA sync has `status='failed'` twice consecutively in `sync_logs` | Error | White (red AlertTriangle icon) |
+
+_Phase 28 adds **one** new notification type: `provider_sync_failed`. Every other ClickUp event (status change, new assignment, aging, overdue, capacity) reuses the existing types — the notification layer is provider-agnostic._
 
 ---
 
@@ -1196,6 +1476,11 @@ _Status will flip to ✅ Complete once merged, index migration applied in prod, 
 20. **Super-admin protection:** `syed.haider@ki5.co.uk` is the system owner — always admin, cannot be deactivated or demoted. Enforced in auth callbacks and API endpoints.
 21. **User accounts are deactivated, never deleted.** Deactivated users cannot login. Immediate session invalidation via per-request DB check.
 22. **New Google sign-ins default to `user` role.** Admin must manually promote to `admin` from the Users page.
+23. **ClickUp "boards" are ClickUp Lists, not Spaces.** One tracked board row = one ClickUp List. Spaces + folders are inventory-only in the "Add Board" Settings picker.
+24. **ClickUp tasks are identified by the provider's native `id`; `custom_id` is an alias for display.** DB upserts dedupe on `(provider, externalId)`. Display prefers `custom_id` when present (`CLK-1234`-style), falls back to the native `id` (`86a1zqx8r`-style).
+25. **Branch-name regex recognises both PREFIX-NUMBER and native ClickUp IDs.** The widened `/\b(?:[A-Z_]{2,10}-\d+|[a-z0-9]{7,12})\b/gi` pattern matches `fix/PROD-5123`, `fix/CLK-42`, `hotfix_CLK-42_v1`, and direct `86a1zqx8r`. Candidates validated via `providerForKey(candidate)` before a deployment row is written — unresolvable candidates are logged, not created.
+26. **Provider is shown as a 12×12 badge chip on every issue key render.** JIRA = blue `#0052cc` "J"; ClickUp = purple `#7b68ee` "CU". Applied consistently across dev cards, calendar chips, issue detail, deployment rows, release issue lists, search results, and the Members page.
+27. **Members are deduplicated across providers by email.** Google Workspace email is the join key. A single `team_members` row can hold both `jiraAccountId` and `clickupUserId`; `providerScope` derives to `jira`, `clickup`, or `both`. Removal from one provider downgrades scope, doesn't mark departed unless removed from ALL registered providers.
 
 ---
 
@@ -1410,9 +1695,17 @@ mountain-team/
 | 20 | Deployment Backfill Cron | — | — | 🟡 In progress |
 | 20.5 | IP Allowlist for Public Routes | — | — | 🟡 In progress |
 | 21 | Sync Logs + Cronicle Correlation | — | — | 🟡 In progress |
+| 22 | ClickUp — Provider Abstraction Foundation | 3–4 days | Extra Large | 🟡 Not started (awaiting staging) |
+| 23 | ClickUp — Client + Normalizer (shadow) | 3 days | Large | 🟡 Not started |
+| 24 | ClickUp — Team Sync (multi-source merge-by-email) | 3 days | Large | 🟡 Not started |
+| 25 | ClickUp — Settings UI + "Add Board" | 2 days | Medium | 🟡 Not started |
+| 26 | ClickUp — Issue Sync + Webhook + GitHub Key Parsing | 6–7 days | Extra Large | 🟡 Not started |
+| 27 | ClickUp — Worklogs + Workload + Reports + Calendar | 3 days | Large | 🟡 Not started |
+| 28 | ClickUp — Notifications + Search + M5 Rename + Docs | 3–4 days | Large | 🟡 Not started |
 | **Total (original)** | | **30-42 days** | **6-8 weeks** | |
+| **Total (with ClickUp, Phases 22–28)** | | **+23–26 days** | **+4–5 weeks** | |
 
-**Note:** Phases 6, 7, and 8 can be parallelized since they all depend on Phase 5 (mock data). Phase 10 requires Phases 3 + 4. Phase 11 requires all prior phases. Phases 12–18 were added to the scope during implementation as new requirements emerged. Phase 19 (Releases Command Center) runs after Phase 18 merges and ships in three waves (A foundation, B insights, C collaboration), with Phase D (bundles) kicking off only after Phase A has been in use for ~2 weeks. Phase 20 (Deployment Backfill Cron) closes the historical deployment-coverage gap for all 4,075 tracked issues; runs every 3 hours in a rate-limit-aware batch, reaches full coverage in ~2.5 days.
+**Note:** Phases 6, 7, and 8 can be parallelized since they all depend on Phase 5 (mock data). Phase 10 requires Phases 3 + 4. Phase 11 requires all prior phases. Phases 12–18 were added to the scope during implementation as new requirements emerged. Phase 19 (Releases Command Center) runs after Phase 18 merges and ships in three waves (A foundation, B insights, C collaboration), with Phase D (bundles) kicking off only after Phase A has been in use for ~2 weeks. Phase 20 (Deployment Backfill Cron) closes the historical deployment-coverage gap for all 4,075 tracked issues; runs every 3 hours in a rate-limit-aware batch, reaches full coverage in ~2.5 days. Phases 22–28 (ClickUp integration) are sequential and **gated on a separate staging server being provisioned first** — they are not started until the staging environment is available so production JIRA operations are never put at risk. Phase 22 ships as a no-op refactor; Phase 23 is shadow-only; first user-visible ClickUp change is Phase 25. Phase 28's M5 rename pass runs only after one full week of stable ClickUp operation in production.
 
 ---
 
