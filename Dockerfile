@@ -13,10 +13,11 @@ WORKDIR /app
 # (the modern Alpine replacement) here.
 
 COPY package.json yarn.lock .yarnrc.yml ./
-COPY .yarn ./.yarn
 
 # Yarn 4 is managed via corepack — packageManager field in package.json
-# pins the exact version, so this is reproducible.
+# pins the exact version, so this is reproducible. No need to copy `.yarn/`
+# (this project uses `nodeLinker: node-modules`, so nothing in .yarn/ is
+# committed — it's just the runtime install-state cache).
 RUN corepack enable \
  && corepack prepare yarn@4.13.0 --activate \
  && yarn install --immutable
