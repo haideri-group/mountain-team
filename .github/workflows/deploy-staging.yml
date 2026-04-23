@@ -1,9 +1,14 @@
 name: Deploy — Staging
 
 # Fires on every push to the `stage` branch. Builds a Docker image, pushes it
-# to ghcr.io, then SSHes into the homelab to pull + restart the staging stack.
-# Migrations run via `yarn db:migrate:apply` inside a one-shot container before
-# the long-lived web container starts, so schema lands before code.
+# to the self-hosted registry at `registry.appz.cc`, then SSHes into the
+# homelab to pull + restart the staging stack. Migrations run via
+# `yarn db:migrate:apply` inside a one-shot container before the long-lived
+# web container starts, so schema lands before code.
+#
+# Registry lives on the same homelab (see `/opt/registry/` and the nginx site
+# `/etc/nginx/sites-available/registry.appz.cc`). Credentials: staging env →
+# `vars.REGISTRY_{HOST,USERNAME}` + `secrets.REGISTRY_PASSWORD`.
 
 on:
   push:
@@ -19,9 +24,10 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository }}
-  # Tag scheme: stage-latest (mutable, what compose pulls) + stage-<sha> (audit/rollback).
+  # Image coordinates: registry.appz.cc/teamflow:{stage-latest, stage-<sha>}.
+  # REGISTRY host comes from staging env vars so we can swap it without editing
+  # the workflow. IMAGE_NAME stays hardcoded — one project per registry repo.
+  IMAGE_NAME: teamflow
   LATEST_TAG: stage-latest
 
 jobs:
@@ -63,13 +69,10 @@ jobs:
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/stage'
     # Opts into the `staging` GitHub Environment so env-scoped vars
-    # (NEXT_PUBLIC_APP_URL, etc.) are available during the build.
+    # (NEXT_PUBLIC_APP_URL, REGISTRY_*) are available during the build.
     # Environment branch protection also blocks workflow_dispatch from
     # any branch other than `stage` at the platform level.
     environment: staging
-    permissions:
-      contents: read
-      packages: write
     outputs:
       sha_tag: ${{ steps.meta.outputs.sha_tag }}
     steps:
@@ -78,12 +81,12 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Login to GHCR
+      - name: Login to registry
         uses: docker/login-action@v3
         with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          registry: ${{ vars.REGISTRY_HOST }}
+          username: ${{ vars.REGISTRY_USERNAME }}
+          password: ${{ secrets.REGISTRY_PASSWORD }}
 
       - name: Compute tags
         id: meta
@@ -99,8 +102,8 @@ jobs:
           context: .
           push: true
           tags: |
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.LATEST_TAG }}
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.sha_tag }}
+            ${{ vars.REGISTRY_HOST }}/${{ env.IMAGE_NAME }}:${{ env.LATEST_TAG }}
+            ${{ vars.REGISTRY_HOST }}/${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.sha_tag }}
           # NEXT_PUBLIC_* vars are baked in at build time — pass via build-args.
           build-args: |
             NEXT_PUBLIC_JIRA_BASE_URL=${{ vars.NEXT_PUBLIC_JIRA_BASE_URL }}
@@ -114,11 +117,28 @@ jobs:
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/stage'
     # Opts into the `staging` GitHub Environment so env-scoped secrets
-    # (SSH_HOST, SSH_USER, SSH_KEY, GHCR_READ_TOKEN) and vars (SSH_PORT,
-    # GHCR_READ_USER) resolve. Without this, `${{ secrets.* }}` silently
-    # expand to empty and appleboy/ssh-action aborts with "missing server host".
+    # (SSH_HOST, SSH_USER, SSH_KEY, REGISTRY_PASSWORD) and vars (SSH_PORT,
+    # REGISTRY_{HOST,USERNAME}) resolve. Without this, `${{ secrets.* }}`
+    # silently expand to empty and appleboy/ssh-action aborts with
+    # "missing server host".
     environment: staging
     steps:
+      - uses: actions/checkout@v4
+
+      # The homelab's docker-compose file is manually maintained (no git
+      # checkout at /home/haider/teamflow-staging/). SCP the repo's
+      # docker-compose.staging.yml on every deploy so the `image:` line on the
+      # homelab always matches what CI just pushed — one source of truth.
+      - name: Sync compose file to homelab
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_KEY }}
+          port: ${{ vars.SSH_PORT || 22 }}
+          source: docker-compose.staging.yml
+          target: /home/haider/teamflow-staging/
+
       - name: Deploy to homelab
         uses: appleboy/ssh-action@v1.2.0
         with:
@@ -127,24 +147,31 @@ jobs:
           key: ${{ secrets.SSH_KEY }}
           port: ${{ vars.SSH_PORT || 22 }}
           command_timeout: 10m
+          # Pass registry creds into the SSH session via envs so we can use them
+          # without echoing secrets inline (appleboy/ssh-action handles masking).
+          envs: REG_HOST,REG_USER,REG_PASS,IMAGE_NAME
           script: |
             set -euo pipefail
             cd /home/haider/teamflow-staging
 
-            echo "▶ Logging in to GHCR from server…"
-            echo "${{ secrets.GHCR_READ_TOKEN }}" | docker login ghcr.io -u "${{ vars.GHCR_READ_USER }}" --password-stdin
+            # Export under the name docker compose expects for substitution in
+            # docker-compose.staging.yml's `image: ${REGISTRY_HOST:-…}` line.
+            export REGISTRY_HOST="$REG_HOST"
+
+            echo "▶ Logging into registry from homelab…"
+            echo "$REG_PASS" | docker login "$REG_HOST" -u "$REG_USER" --password-stdin
 
             echo "▶ Pulling new image…"
-            docker compose pull web
+            docker compose -f docker-compose.staging.yml pull web
 
             echo "▶ Running migrations (one-shot container)…"
             # One-shot container: uses the NEW image's migrate script, reaches MySQL
             # via the shared network, exits when done. --rm + --no-deps ensures we
             # don't spin up sibling services that don't exist anyway.
-            docker compose run --rm --no-deps web yarn db:migrate:apply
+            docker compose -f docker-compose.staging.yml run --rm --no-deps web yarn db:migrate:apply
 
             echo "▶ Restarting web with new image…"
-            docker compose up -d web
+            docker compose -f docker-compose.staging.yml up -d web
 
             echo "▶ Waiting for /api/health…"
             HEALTHY=false
@@ -159,41 +186,116 @@ jobs:
 
             if [ "$HEALTHY" != "true" ]; then
               echo "  ✗ Health check failed after 60s. Dumping recent logs:"
-              docker compose logs --tail 80 web
+              docker compose -f docker-compose.staging.yml logs --tail 80 web
               exit 1
             fi
 
-            # ─── Prune old images ──────────────────────────────────────────
-            # Keep `stage-latest` (always) + the 3 most recent `stage-<sha>`
-            # tags for quick rollback. Older per-SHA tags are deleted, then
-            # `image prune` sweeps any dangling layers those held open.
-            # Without this, disk grows unbounded as deploys accumulate — with
-            # it, steady-state usage on the homelab stays ~1 GB regardless of
-            # deploy frequency.
-            echo "▶ Pruning old images (keep stage-latest + 3 most recent stage-<sha>)…"
-            OLD_TAGS=$(
-              docker image ls ghcr.io/haideri-group/mountain-team --format '{{.CreatedAt}}|{{.Tag}}' \
+            # ─── Prune old local images (homelab docker daemon) ────────────
+            # Keep `stage-latest` + 3 most recent `stage-<sha>` tags locally
+            # for fast rollback. Doesn't free registry-side storage — that's
+            # the next block. Bounds homelab docker cache at ~400-800 MB.
+            echo "▶ Pruning old local images (keep stage-latest + 3 stage-<sha>)…"
+            LOCAL_OLD=$(
+              docker image ls "${REG_HOST}/${IMAGE_NAME}" --format '{{.CreatedAt}}|{{.Tag}}' \
                 | sort -r \
                 | awk -F'|' '$2 ~ /^stage-[a-f0-9]{7,}$/ { print $2 }' \
                 | tail -n +4
             )
-            if [ -n "$OLD_TAGS" ]; then
-              for tag in $OLD_TAGS; do
-                echo "  removing :${tag}"
-                docker rmi -f "ghcr.io/haideri-group/mountain-team:${tag}" || true
+            if [ -n "$LOCAL_OLD" ]; then
+              for tag in $LOCAL_OLD; do
+                echo "  local removing :${tag}"
+                docker rmi -f "${REG_HOST}/${IMAGE_NAME}:${tag}" || true
               done
             else
-              echo "  nothing to prune."
+              echo "  nothing to prune locally."
             fi
             docker image prune -f
+
+            # ─── Prune old tags on the registry itself ─────────────────────
+            # Mirrors the local policy (keep 3 newest stage-<sha>) but against
+            # the registry HTTP API so registry disk is bounded too. Only
+            # deletes manifests here — actual blob reclamation happens in the
+            # weekly `registry garbage-collect` cron on the homelab.
+            #
+            # Sorting by the `created` field in each tag's image config blob.
+            # The registry v2 tags API returns names only, not timestamps, so
+            # we fetch each tag's manifest → config blob → `created` ourselves.
+            # With <20 tags steady-state, this is <1 s of extra HTTP traffic.
+            echo "▶ Pruning old tags on ${REG_HOST}/${IMAGE_NAME} (keep 3 newest)…"
+            REPO_URL="https://${REG_HOST}/v2/${IMAGE_NAME}"
+            ALL_TAGS=$(curl -fsS -u "${REG_USER}:${REG_PASS}" "${REPO_URL}/tags/list" \
+              | jq -r '.tags[]? // empty' \
+              | grep -E '^stage-[a-f0-9]{7,}$' \
+              || true)
+            if [ -z "$ALL_TAGS" ]; then
+              echo "  no stage-<sha> tags found in registry."
+            else
+              # Sanity check: at steady state we should have 3-4 tags. More
+              # than 20 means cleanup has been silently failing — surface it
+              # loudly so we notice at the next deploy instead of after 50.
+              TAG_COUNT=$(echo "$ALL_TAGS" | wc -l)
+              if [ "$TAG_COUNT" -gt 20 ]; then
+                echo "  ⚠ ${TAG_COUNT} stage-<sha> tags found — cleanup may have been failing."
+                echo "    Investigate: manual cleanup may be needed, or this script's API calls are being rejected."
+              fi
+
+              # Build "<iso-date> <tag>" pairs, sort desc, skip top 3.
+              PAIRS=""
+              for tag in $ALL_TAGS; do
+                MANIFEST=$(curl -fsS -u "${REG_USER}:${REG_PASS}" \
+                  -H 'Accept: application/vnd.docker.distribution.manifest.v2+json' \
+                  "${REPO_URL}/manifests/${tag}")
+                CONFIG_DIGEST=$(echo "$MANIFEST" | jq -r '.config.digest // empty')
+                if [ -z "$CONFIG_DIGEST" ]; then
+                  continue
+                fi
+                CREATED=$(curl -fsS -u "${REG_USER}:${REG_PASS}" \
+                  "${REPO_URL}/blobs/${CONFIG_DIGEST}" \
+                  | jq -r '.created // "1970-01-01T00:00:00Z"')
+                PAIRS="${PAIRS}${CREATED} ${tag}
+            "
+              done
+              # Keep newline-separated tags — piping through `while read` so
+              # each line is processed in isolation. Previous version flattened
+              # multiple tags into a single concatenated string via `tr -d '\n '`,
+              # which meant ≥2 old tags never actually got deleted.
+              REG_OLD=$(printf '%s' "$PAIRS" | sort -r | tail -n +4 | awk '{print $2}')
+              if [ -z "$REG_OLD" ]; then
+                echo "  nothing to prune from registry (≤3 stage-<sha> tags)."
+              else
+                PRUNED=0
+                while IFS= read -r tag; do
+                  [ -z "$tag" ] && continue
+                  # Must use the *v2* Accept header to get the correct digest
+                  # back in Docker-Content-Digest for the DELETE call.
+                  DIGEST=$(curl -fsSI -u "${REG_USER}:${REG_PASS}" \
+                    -H 'Accept: application/vnd.docker.distribution.manifest.v2+json' \
+                    "${REPO_URL}/manifests/${tag}" \
+                    | grep -i '^docker-content-digest:' \
+                    | awk '{print $2}' | tr -d '\r\n')
+                  if [ -n "$DIGEST" ]; then
+                    curl -fsS -u "${REG_USER}:${REG_PASS}" -X DELETE \
+                      "${REPO_URL}/manifests/${DIGEST}" -o /dev/null || true
+                    echo "  registry deleted :${tag}"
+                    PRUNED=$((PRUNED + 1))
+                  fi
+                done <<< "$REG_OLD"
+                echo "  deleted ${PRUNED} tag(s); blobs freed by next weekly garbage-collect cron."
+              fi
+            fi
 
             # Visibility: each deploy log ends with the current Docker disk
             # footprint. If this trends upward across deploys, something is
             # bypassing the prune (e.g., unrelated images on the host).
             echo "▶ Docker disk usage after deploy:"
             docker system df
+        env:
+          REG_HOST: ${{ vars.REGISTRY_HOST }}
+          REG_USER: ${{ vars.REGISTRY_USERNAME }}
+          REG_PASS: ${{ secrets.REGISTRY_PASSWORD }}
+          IMAGE_NAME: ${{ env.IMAGE_NAME }}
 
       - name: Report success
         if: success()
         run: |
-          echo "::notice title=Staging deployed::Image ${{ needs.build-and-push.outputs.sha_tag }} is live at https://staging-haider-team.appz.cc"
+          echo "::notice title=Staging deployed::Image ${{ vars.REGISTRY_HOST }}/${{ env.IMAGE_NAME }}:${{ needs.build-and-push.outputs.sha_tag }} is live at https://staging-haider-team.appz.cc"
