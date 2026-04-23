@@ -33,6 +33,14 @@ ARG NEXT_PUBLIC_APP_URL
 ENV NEXT_PUBLIC_JIRA_BASE_URL=$NEXT_PUBLIC_JIRA_BASE_URL
 ENV NEXT_PUBLIC_APP_URL=$NEXT_PUBLIC_APP_URL
 
+# Placeholder DATABASE_URL. `src/lib/db/index.ts` throws at module load if the
+# var isn't set; Next.js imports every route at build time for metadata
+# collection, so the build would fail here. We never actually connect during
+# build — just need the import to not throw. Real value is injected at runtime
+# via docker-compose .env on the server.
+ARG DATABASE_URL="mysql://build:build@localhost:3306/build"
+ENV DATABASE_URL=$DATABASE_URL
+
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 
