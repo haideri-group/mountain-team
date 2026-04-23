@@ -60,8 +60,12 @@ ENV NEXT_TELEMETRY_DISABLED=1
 ENV PORT=3000
 ENV HOSTNAME=0.0.0.0
 
-# Yarn 4 via corepack — needed at runtime so `yarn db:migrate:apply` works
-# inside the one-shot migration container the deploy workflow runs.
+# Yarn 4 via corepack — kept for interactive debugging inside the container
+# (e.g. `docker exec -it tmstage-web sh` → `yarn <anything>`). The deploy
+# workflow itself does NOT use yarn at runtime: it runs tsx directly against
+# scripts/migrate-all.ts, because the runtime image doesn't ship yarn.lock
+# and yarn 4 aborts on workspace validation. Safe to remove this block if
+# interactive yarn access is never needed — saves ~30 MB per image.
 RUN corepack enable \
  && corepack prepare yarn@4.13.0 --activate
 
@@ -74,8 +78,9 @@ COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
 COPY --from=builder --chown=nextjs:nodejs /app/public ./public
 
-# Scripts + tsx runtime — needed so `docker compose exec web yarn db:migrate:apply`
-# works at deploy time. Copy the TS sources + the tsx binary from deps.
+# Scripts + tsx runtime — the deploy workflow runs
+# `docker compose run --rm --no-deps web node_modules/.bin/tsx scripts/migrate-all.ts --apply`
+# in a one-shot container, so these files must be present in the final image.
 COPY --from=builder --chown=nextjs:nodejs /app/scripts ./scripts
 COPY --from=builder --chown=nextjs:nodejs /app/src/lib/db ./src/lib/db
 # Historical migrate-ip-allowlist.ts imports `../src/lib/ip/match` (which pulls
