@@ -2,8 +2,11 @@ name: Deploy — Staging
 
 # Fires on every push to the `stage` branch. Builds a Docker image, pushes it
 # to ghcr.io, then SSHes into the homelab to pull + restart the staging stack.
-# Migrations run via `yarn db:migrate:apply` inside a one-shot container before
-# the long-lived web container starts, so schema lands before code.
+# Migrations run via `tsx scripts/migrate-all.ts --apply` inside a one-shot
+# container before the long-lived web container starts, so schema lands before
+# code. tsx is invoked directly (not through yarn) because the runtime image
+# doesn't ship yarn.lock — yarn would fail workspace validation before the
+# migration script ever executes.
 
 on:
   push:
@@ -141,7 +144,13 @@ jobs:
             # One-shot container: uses the NEW image's migrate script, reaches MySQL
             # via the shared network, exits when done. --rm + --no-deps ensures we
             # don't spin up sibling services that don't exist anyway.
-            docker compose run --rm --no-deps web yarn db:migrate:apply
+            #
+            # tsx invoked directly instead of via `yarn db:migrate:apply` — the
+            # runtime image omits yarn.lock (Next.js standalone ships a stripped
+            # package.json), so yarn 4 aborts on workspace validation before the
+            # migration script runs. scripts/migrate-all.ts is already idempotent
+            # and no-ops cleanly when there are zero pending migrations.
+            docker compose run --rm --no-deps web node_modules/.bin/tsx scripts/migrate-all.ts --apply
 
             echo "▶ Restarting web with new image…"
             docker compose up -d web
