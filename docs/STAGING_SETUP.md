@@ -184,6 +184,8 @@ In `https://github.com/haideri-group/mountain-team/settings/secrets/actions`, ad
 |---|---|
 | `STAGING_SSH_PORT` | `22` (or your custom SSH port) |
 | `NEXT_PUBLIC_JIRA_BASE_URL` | `https://tilemountain.atlassian.net` — baked into the client bundle anyway |
+| `NEXT_PUBLIC_APP_URL` | `https://staging-haider-team.appz.cc` — staging app URL, baked at build time |
+| `GHCR_READ_USER` | GitHub username that owns the GHCR PAT (e.g., `haidertm`) — used by the server-side `docker login ghcr.io -u …` at deploy time |
 
 **Secrets** (encrypted, never shown in logs):
 

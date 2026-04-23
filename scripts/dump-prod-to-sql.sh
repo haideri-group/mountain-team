@@ -18,7 +18,12 @@ if [[ ! -f .env ]]; then
   exit 1
 fi
 
-DB_URL=$(grep -m1 '^DATABASE_URL=' .env | sed "s/^DATABASE_URL=//; s/^[\"']//; s/[\"']$//")
+# sed -n '...p' always exits 0 (unlike grep, which exits 1 on no match and
+# would abort the script via `set -o pipefail`). The shell parameter-expansion
+# trim handles both double and single quotes around the value.
+DB_URL=$(sed -n 's/^DATABASE_URL=//p' .env | head -n1)
+DB_URL="${DB_URL#\"}"; DB_URL="${DB_URL%\"}"
+DB_URL="${DB_URL#\'}"; DB_URL="${DB_URL%\'}"
 if [[ -z "${DB_URL:-}" ]]; then
   echo "✗ DATABASE_URL missing from .env" >&2
   exit 1

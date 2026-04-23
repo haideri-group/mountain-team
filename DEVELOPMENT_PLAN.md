@@ -464,12 +464,14 @@ project IN ({trackedBoards}) AND labels = "Frontend" AND status = "Blocked" ORDE
 Added in Phases 22–28. JIRA continues to work unchanged; ClickUp is an **additional** source, never a replacement.
 
 #### 7b.1 Authentication
+
 - Personal API token — `Authorization: pk_xxxxxxxx...` as a **raw** header value (ClickUp quirk: **no `Bearer` prefix** for personal tokens).
 - Server-side only; mirrored into `provider_config.apiTokenCiphertext` (AES-GCM) for masked display in Settings. Env var takes precedence at read time.
 - Env vars: `CLICKUP_API_TOKEN`, `CLICKUP_WORKSPACE_ID`, `CLICKUP_MEMBER_GROUP_ID` (optional), `CLICKUP_WEBHOOK_SECRET`.
 - OAuth intentionally skipped — ClickUp exposes no OAuth scopes, so per-user auth adds complexity with zero security upside.
 
 #### 7b.2 Sync Types
+
 | Type | Frequency | Description |
 |------|-----------|-------------|
 | Full | Daily (configurable) | Enumerates every tracked list (`GET /list/{id}/task`), paginates through all tasks |
@@ -478,7 +480,8 @@ Added in Phases 22–28. JIRA continues to work unchanged; ClickUp is an **addit
 | Webhook | Real-time | `POST /api/webhooks/clickup` — HMAC-verified, hydrate-then-upsert |
 
 #### 7b.3 Key Queries (no JQL equivalent — flat query params)
-```
+
+```http
 # Workspace-wide delta since last sync
 GET /api/v2/team/{team_id}/task
   ?date_updated_gt={ms}
@@ -505,6 +508,7 @@ GET /api/v2/team
 ```
 
 #### 7b.4 Data Flow
+
 1. Cron checks lock → creates `sync_logs` row (`type='clickup_sync'`)
 2. Resolves ClickUp-provider boards from DB (`WHERE provider='clickup' AND isTracked=true`)
 3. Dispatches through `providerFor(board).fetchIssuesChanged(...)`:
@@ -517,9 +521,11 @@ GET /api/v2/team
 8. Updates `sync_logs` with counters + rate-limit metrics
 
 #### 7b.5 Board Structure
+
 ClickUp "boards" in TeamFlow **are ClickUp Lists, not Spaces.** One tracked board row = one ClickUp list. Admins pick Workspace → Space → List in the "Add Board" Settings form. A Space with Custom Task IDs enabled produces JIRA-like keys (`CLK-1234`); a Space without Custom Task IDs produces native IDs (`86a1zqx8r`) — both are supported.
 
 #### 7b.6 Status Model
+
 ClickUp has fully customisable statuses per Space (optionally overridden per List). Every custom status carries a coarse `type` — `open | custom | done | closed` — that maps to TeamFlow's 8 app statuses through a combination of:
 1. **Type-based direct map** (`open → todo`, `done → done`, `closed → closed`).
 2. **Heuristic name match** for the `custom` type (e.g. `/review|code review|pr/i` → `in_review`).
@@ -528,12 +534,14 @@ ClickUp has fully customisable statuses per Space (optionally overridden per Lis
 Unknown statuses auto-insert into `status_mappings` flagged for review.
 
 #### 7b.7 Custom Fields
+
 - ClickUp custom field metadata cached in the `clickup_custom_fields` table per tracked list (§5.1b).
 - V1: custom field **values** stored in `issues.raw` JSON; no per-field rendering surface.
 - V2 (deferred): per-field UI like JIRA's Request Priority / Website / Brands.
 - First-class fields that skip the custom-field dance: `points` (story points), `time_estimate` / `time_spent` (milliseconds → divided by 1000 into existing integer-seconds columns), `tags` (→ `labels`), `assignees[]` (multi-assignee; first assignee written to existing single-value column for compat).
 
 #### 7b.8 Webhooks
+
 - Endpoint: `POST /api/webhooks/clickup`.
 - Signature: `X-Signature` = HMAC-SHA256 of the raw request body, keyed by the per-webhook secret. Secret returned **once** at `POST /team/{id}/webhook` registration time; stored AES-GCM-encrypted in `provider_config.webhookSecret`.
 - Payload carries **only** `task_id` + `history_items[]` — requires a follow-up `GET /task/{task_id}` to hydrate the full record. Results in ~2× the API calls vs JIRA for the same event volume.
@@ -541,6 +549,7 @@ Unknown statuses auto-insert into `status_mappings` flagged for review.
 - Coalesce window: 500ms per-`externalId` LRU to absorb the multiple webhooks ClickUp fires for a single user edit (e.g. `taskCreated` + `taskStatusUpdated` on a single create).
 
 #### 7b.9 Rate Limits
+
 - **100 requests/minute per personal token** on the Free/Unlimited/Business plan tier.
 - Effective cap: 80 req/min (20% headroom) via the shared `ClickUpRateLimiter` (`src/lib/providers/rate-limit.ts`).
 - On 429: sleep until `X-RateLimit-Reset + 1s`. No `Retry-After` header.
@@ -589,7 +598,7 @@ GET    /api/reports/pulse           → Weekly created vs completed
 
 ### 8a. ClickUp / Multi-Provider Routes (Phases 22–28)
 
-```
+```http
 POST   /api/webhooks/clickup              → ClickUp webhook receiver (HMAC-verified, hydrate-then-upsert)
 
 GET    /api/clickup/workspaces            → List token-accessible ClickUp workspaces (admin only, Settings picker)

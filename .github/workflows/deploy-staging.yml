@@ -28,6 +28,11 @@ jobs:
   checks:
     name: Type-check + Lint
     runs-on: ubuntu-latest
+    # Guard: workflow_dispatch can fire from any branch/tag. Staging must
+    # only ever be built + deployed from the `stage` branch — otherwise a
+    # manual trigger from a feature branch would overwrite `stage-latest`
+    # with that branch's code and push it to the homelab.
+    if: github.ref == 'refs/heads/stage'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -50,6 +55,7 @@ jobs:
     name: Build + Push Image
     needs: checks
     runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/stage'
     permissions:
       contents: read
       packages: write
@@ -95,6 +101,7 @@ jobs:
     name: SSH Deploy → Homelab
     needs: build-and-push
     runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/stage'
     steps:
       - name: Deploy to homelab
         uses: appleboy/ssh-action@v1.2.0
@@ -109,7 +116,7 @@ jobs:
             cd /home/haider/teamflow-staging
 
             echo "▶ Logging in to GHCR from server…"
-            echo "${{ secrets.GHCR_READ_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+            echo "${{ secrets.GHCR_READ_TOKEN }}" | docker login ghcr.io -u "${{ vars.GHCR_READ_USER }}" --password-stdin
 
             echo "▶ Pulling new image…"
             docker compose pull web
