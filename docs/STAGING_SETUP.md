@@ -8,7 +8,7 @@ the staging site at **https://staging-haider-team.appz.cc**.
 
 ## Architecture
 
-- **Web container:** `tmstage-web` on `127.0.0.1:3007`, Docker image pulled from `ghcr.io/haideri-group/mountain-team:stage-latest`.
+- **Web container:** `tmstage-web` on `127.0.0.1:3007`, Docker image pulled from `registry.appz.cc/teamflow:stage-latest` (self-hosted registry — see `/opt/registry/` on the homelab).
 - **MySQL:** shared with the existing `mysql-server` container — staging uses its own `teamflow` database + dedicated user.
 - **phpMyAdmin:** reuses the existing `https://phpmyadmin.appz.cc` — log in as `teamflow_user` to see only staging data.
 - **nginx:** system-level nginx proxies `staging-haider-team.appz.cc` → `127.0.0.1:3007` and handles TLS via certbot.
@@ -118,18 +118,27 @@ Critical values to fill:
 
 ---
 
-## 5. GitHub container registry access (server side)
+## 5. Self-hosted registry access (server side)
 
-The server needs to be able to pull private images from GHCR. Create a **read-only** GitHub Personal Access Token with the `read:packages` scope:
+The staging image lives on the self-hosted registry at `registry.appz.cc`
+(docker-compose stack in `/opt/registry/`, nginx site at
+`/etc/nginx/sites-available/registry.appz.cc`, htpasswd auth).
 
-- https://github.com/settings/tokens/new → scopes: `read:packages`
-- Copy the token, log in on the server **once**:
+The CI workflow logs the homelab into the registry on every deploy using
+`vars.REGISTRY_USERNAME` + `secrets.REGISTRY_PASSWORD` from the `staging`
+GitHub Environment, so no one-time local `docker login` is required for
+the automated path.
+
+For manual debugging (running `docker compose pull web` by hand), log in once:
 
 ```bash
-echo "ghp_xxxxxxxxxxxx" | docker login ghcr.io -u <your-github-username> --password-stdin
+docker login registry.appz.cc -u staging-push
+# paste the password from /opt/registry/auth/htpasswd (in plaintext, not the hash)
+# — or from whoever provisioned the registry
 ```
 
-Docker caches this in `~/.docker/config.json` and the subsequent `docker compose pull` calls work without re-auth.
+Docker caches this in `~/.docker/config.json` and subsequent pulls work
+without re-auth.
 
 ---
 
@@ -200,7 +209,8 @@ environments.
 |---|---|
 | `SSH_PORT` | `22` (or your custom SSH port) |
 | `NEXT_PUBLIC_APP_URL` | `https://staging-haider-team.appz.cc` — staging app URL, baked at build time |
-| `GHCR_READ_USER` | GitHub username that owns the GHCR PAT (e.g., `haidertm`) — used by the server-side `docker login ghcr.io -u …` at deploy time |
+| `REGISTRY_HOST` | `registry.appz.cc` — self-hosted Docker registry (see `/opt/registry/` on the homelab) |
+| `REGISTRY_USERNAME` | `staging-push` — htpasswd user on the registry, used for both push (CI) and pull (homelab) |
 
 **Variables — at repo level** (shared across all environments):
 
@@ -215,7 +225,7 @@ environments.
 | `SSH_HOST` | your homelab IP | Known attack target for SSH bruteforce attempts |
 | `SSH_USER` | `haider` | Username for SSH attempts |
 | `SSH_KEY` | dedicated deploy SSH private key (see below) | Remote shell on your homelab |
-| `GHCR_READ_TOKEN` | GH PAT with `read:packages` scope (so the server can pull) | Someone can pull your private images |
+| `REGISTRY_PASSWORD` | staging-push user's registry password (bcrypt-hashed in `/opt/registry/auth/htpasswd` on the homelab) | Someone can push/pull images against your registry |
 
 **Create a dedicated deploy key on the server:**
 
@@ -252,13 +262,13 @@ ssh haider@<your-ip>
 cd /home/haider/teamflow-staging
 
 # List available images — the sha tags are your rollback targets
-docker images ghcr.io/haideri-group/mountain-team
+docker images registry.appz.cc/teamflow
 
 # Point stage-latest at an older sha tag
-docker tag ghcr.io/haideri-group/mountain-team:stage-<older-sha> \
-           ghcr.io/haideri-group/mountain-team:stage-latest
+docker tag registry.appz.cc/teamflow:stage-<older-sha> \
+           registry.appz.cc/teamflow:stage-latest
 
-docker compose up -d web
+docker compose -f docker-compose.staging.yml up -d web
 ```
 
 If the migration broke things, the advisory lock + `_migrations` table make
