@@ -94,11 +94,11 @@ mkdir -p /home/haider/teamflow-staging
 cd /home/haider/teamflow-staging
 ```
 
-Copy `docker-compose.staging.yml` from the repo to this directory as `docker-compose.yml`:
+Copy `docker-compose.staging.yml` from the repo to this directory (keep the same filename — CI also SCPs the file as `docker-compose.staging.yml`, so matching names prevents having two parallel compose files on the host):
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/haideri-group/mountain-team/stage/docker-compose.staging.yml \
-  -o docker-compose.yml
+  -o docker-compose.staging.yml
 ```
 
 Copy `.env.staging.example` from the repo to this directory as `.env`, fill in every value:
@@ -133,22 +133,37 @@ For manual debugging (running `docker compose pull web` by hand), log in once:
 
 ```bash
 docker login registry.appz.cc -u staging-push
-# paste the password from /opt/registry/auth/htpasswd (in plaintext, not the hash)
-# — or from whoever provisioned the registry
+# Paste the password you saved when provisioning the registry. The file
+# /opt/registry/auth/htpasswd stores only bcrypt HASHES — the plaintext
+# is not recoverable from there.
+#
+# If you've lost it, rotate: generate a new password and regenerate htpasswd
+# (and update the REGISTRY_PASSWORD secret in the `staging` GitHub Environment
+# so CI keeps working):
+#
+#   NEW_PW=$(openssl rand -base64 32 | tr -d "=+/" | cut -c1-32)
+#   docker run --rm httpd:2.4-alpine htpasswd -nbB staging-push "$NEW_PW" \
+#     > /opt/registry/auth/htpasswd
+#   echo "$NEW_PW" | gh secret set REGISTRY_PASSWORD \
+#     --repo haideri-group/mountain-team --env staging
 ```
 
-Docker caches this in `~/.docker/config.json` and subsequent pulls work
-without re-auth.
+Docker caches the successful login in `~/.docker/config.json`; subsequent
+`docker compose pull` calls work without re-auth.
 
 ---
 
 ## 6. First boot
 
+All `docker compose` commands below use `-f docker-compose.staging.yml`
+explicitly — same filename CI SCPs on every deploy, so manual ops and CI
+operate on the single source of truth.
+
 ```bash
 cd /home/haider/teamflow-staging
 
 # Pull the latest stage image (CI will have pushed one after the first PR to stage)
-docker compose pull web
+docker compose -f docker-compose.staging.yml pull web
 
 # ONE-TIME: if you seeded the staging DB from a prod dump, mark all existing
 # migrations as already-applied. This prevents migrate-all from re-running
@@ -156,16 +171,16 @@ docker compose pull web
 # — migrate-ip-allowlist.ts pulls in code not present in the runtime image).
 # Skip this on a truly empty DB; run `yarn db:migrate:apply` instead to create
 # the schema from scratch.
-docker compose run --rm --no-deps web yarn db:migrate:baseline
+docker compose -f docker-compose.staging.yml run --rm --no-deps web yarn db:migrate:baseline
 
 # Apply any pending (new) migrations — no-op right after baseline
-docker compose run --rm --no-deps web yarn db:migrate:apply
+docker compose -f docker-compose.staging.yml run --rm --no-deps web yarn db:migrate:apply
 
 # Start the web container
-docker compose up -d web
+docker compose -f docker-compose.staging.yml up -d web
 
 # Check logs
-docker compose logs -f web
+docker compose -f docker-compose.staging.yml logs -f web
 ```
 
 If the app needs a prod-data snapshot to work against, restore one BEFORE
@@ -279,7 +294,7 @@ push; CI redeploys automatically.
 
 ## Monitoring
 
-- **Container logs:** `docker compose logs -f web` (from `/home/haider/teamflow-staging/`).
+- **Container logs:** `docker compose -f docker-compose.staging.yml logs -f web` (from `/home/haider/teamflow-staging/`).
 - **Uptime Kuma:** add a monitor for `https://staging-haider-team.appz.cc/api/health` — alerts if staging goes down.
 - **Deploy history:** GitHub Actions tab on the repo.
 - **Migration history:** `SELECT * FROM _migrations ORDER BY appliedAt DESC;` in phpMyAdmin (staging DB).
@@ -292,7 +307,7 @@ Full removal, in order:
 
 ```bash
 cd /home/haider/teamflow-staging
-docker compose down
+docker compose -f docker-compose.staging.yml down
 cd ..
 rm -rf teamflow-staging
 

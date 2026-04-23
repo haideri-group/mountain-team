@@ -154,6 +154,10 @@ jobs:
             set -euo pipefail
             cd /home/haider/teamflow-staging
 
+            # Export under the name docker compose expects for substitution in
+            # docker-compose.staging.yml's `image: ${REGISTRY_HOST:-…}` line.
+            export REGISTRY_HOST="$REG_HOST"
+
             echo "▶ Logging into registry from homelab…"
             echo "$REG_PASS" | docker login "$REG_HOST" -u "$REG_USER" --password-stdin
 
@@ -251,11 +255,17 @@ jobs:
                 PAIRS="${PAIRS}${CREATED} ${tag}
             "
               done
-              REG_OLD=$(printf '%s' "$PAIRS" | sort -r | tail -n +4 | awk '{print $2}' | tr -d '\n ' | sed 's/^/ /' )
-              if [ -z "$(echo "$REG_OLD" | tr -d ' ')" ]; then
+              # Keep newline-separated tags — piping through `while read` so
+              # each line is processed in isolation. Previous version flattened
+              # multiple tags into a single concatenated string via `tr -d '\n '`,
+              # which meant ≥2 old tags never actually got deleted.
+              REG_OLD=$(printf '%s' "$PAIRS" | sort -r | tail -n +4 | awk '{print $2}')
+              if [ -z "$REG_OLD" ]; then
                 echo "  nothing to prune from registry (≤3 stage-<sha> tags)."
               else
-                for tag in $REG_OLD; do
+                PRUNED=0
+                while IFS= read -r tag; do
+                  [ -z "$tag" ] && continue
                   # Must use the *v2* Accept header to get the correct digest
                   # back in Docker-Content-Digest for the DELETE call.
                   DIGEST=$(curl -fsSI -u "${REG_USER}:${REG_PASS}" \
@@ -267,9 +277,10 @@ jobs:
                     curl -fsS -u "${REG_USER}:${REG_PASS}" -X DELETE \
                       "${REPO_URL}/manifests/${DIGEST}" -o /dev/null || true
                     echo "  registry deleted :${tag}"
+                    PRUNED=$((PRUNED + 1))
                   fi
-                done
-                echo "  (blobs freed by next weekly garbage-collect cron)"
+                done <<< "$REG_OLD"
+                echo "  deleted ${PRUNED} tag(s); blobs freed by next weekly garbage-collect cron."
               fi
             fi
 

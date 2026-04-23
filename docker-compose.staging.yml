@@ -9,7 +9,11 @@
 
 services:
   web:
-    image: registry.appz.cc/teamflow:stage-latest
+    # Registry host is substituted from the $REGISTRY_HOST env at compose-parse
+    # time so the workflow's `vars.REGISTRY_HOST` is the single source of truth.
+    # Fallback `registry.appz.cc` keeps manual `docker compose` commands working
+    # on the homelab without needing to export the var.
+    image: ${REGISTRY_HOST:-registry.appz.cc}/teamflow:stage-latest
     container_name: tmstage-web
     restart: unless-stopped
     env_file: .env
