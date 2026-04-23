@@ -103,6 +103,13 @@ COPY --from=builder --chown=nextjs:nodejs /app/src/lib/ip ./src/lib/ip
 COPY --from=builder --chown=nextjs:nodejs /app/drizzle.config.ts ./drizzle.config.ts
 COPY --from=builder --chown=nextjs:nodejs /app/tsconfig.json ./tsconfig.json
 
+# WORKDIR /app was created by Docker as root:root, and --chown on COPY only
+# sets ownership of the placed contents, not the parent directory. Yarn 4
+# needs to write /app/.yarn/install-state.gz on every run to track workspace
+# state — fails with EACCES as the nextjs user otherwise. Transfer /app itself
+# to nextjs so yarn can create its cache subdir.
+RUN chown nextjs:nodejs /app
+
 USER nextjs
 
 EXPOSE 3000
