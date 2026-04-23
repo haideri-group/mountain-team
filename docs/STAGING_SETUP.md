@@ -176,24 +176,45 @@ Visit https://staging-haider-team.appz.cc — should be live.
 
 ## 7. GitHub Actions variables + secrets (for CI/CD)
 
-In `https://github.com/haideri-group/mountain-team/settings/secrets/actions`, add the following. The **Variables** tab is right next to Secrets — non-sensitive values go there so they're plain-readable in the GitHub UI and visible in logs for easier debugging.
+Staging-specific values live in a **GitHub Environment** named `staging`, not at
+the repository level. Two reasons:
 
-**Variables** (plain, visible in the GitHub UI):
+1. The workflow jobs opt into `environment: staging`, which exposes the env's
+   secrets/vars and **restricts deployments to the `stage` branch** at the
+   platform level (set under *Deployment branches and tags* → Selected
+   branches → `stage`) — a safety net beyond the `if: github.ref` guards in
+   the YAML.
+2. The environment name already scopes these values, so secret/variable names
+   drop the `STAGING_` prefix (`STAGING_SSH_HOST` → `SSH_HOST`, etc.).
+
+Create the environment at
+`https://github.com/haideri-group/mountain-team/settings/environments`, then
+add the items below under the `staging` environment's own Secrets/Variables
+tabs. **Shared values** (`NEXT_PUBLIC_JIRA_BASE_URL`) stay at repo level under
+`Settings → Secrets and variables → Actions` because they're identical across
+environments.
+
+**Variables — in `staging` environment** (plain, visible in the GitHub UI):
 
 | Name | Value |
 |---|---|
-| `STAGING_SSH_PORT` | `22` (or your custom SSH port) |
-| `NEXT_PUBLIC_JIRA_BASE_URL` | `https://tilemountain.atlassian.net` — baked into the client bundle anyway |
+| `SSH_PORT` | `22` (or your custom SSH port) |
 | `NEXT_PUBLIC_APP_URL` | `https://staging-haider-team.appz.cc` — staging app URL, baked at build time |
 | `GHCR_READ_USER` | GitHub username that owns the GHCR PAT (e.g., `haidertm`) — used by the server-side `docker login ghcr.io -u …` at deploy time |
 
-**Secrets** (encrypted, never shown in logs):
+**Variables — at repo level** (shared across all environments):
+
+| Name | Value |
+|---|---|
+| `NEXT_PUBLIC_JIRA_BASE_URL` | `https://tilemountain.atlassian.net` — same JIRA site for every env, baked into the client bundle |
+
+**Secrets — in `staging` environment** (encrypted, never shown in logs):
 
 | Name | Value | Leak impact |
 |---|---|---|
-| `STAGING_SSH_HOST` | your homelab IP | Known attack target for SSH bruteforce attempts |
-| `STAGING_SSH_USER` | `haider` | Username for SSH attempts |
-| `STAGING_SSH_KEY` | dedicated deploy SSH private key (see below) | Remote shell on your homelab |
+| `SSH_HOST` | your homelab IP | Known attack target for SSH bruteforce attempts |
+| `SSH_USER` | `haider` | Username for SSH attempts |
+| `SSH_KEY` | dedicated deploy SSH private key (see below) | Remote shell on your homelab |
 | `GHCR_READ_TOKEN` | GH PAT with `read:packages` scope (so the server can pull) | Someone can pull your private images |
 
 **Create a dedicated deploy key on the server:**
@@ -203,7 +224,7 @@ In `https://github.com/haideri-group/mountain-team/settings/secrets/actions`, ad
 ssh-keygen -t ed25519 -f ~/.ssh/teamflow-deploy -N "" -C "gha-deploy@teamflow"
 cat ~/.ssh/teamflow-deploy.pub >> ~/.ssh/authorized_keys
 chmod 600 ~/.ssh/authorized_keys
-cat ~/.ssh/teamflow-deploy   # ← paste this PRIVATE key into the STAGING_SSH_KEY secret
+cat ~/.ssh/teamflow-deploy   # ← paste this PRIVATE key into the SSH_KEY secret
 ```
 
 **Optional — restrict the key to only run `docker compose` commands** by editing `~/.ssh/authorized_keys` and prepending `command="..."` to the key line. Skipped here for simplicity; add later if desired.
