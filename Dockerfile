@@ -60,12 +60,9 @@ ENV NEXT_TELEMETRY_DISABLED=1
 ENV PORT=3000
 ENV HOSTNAME=0.0.0.0
 
-# Yarn 4 via corepack — kept for interactive debugging inside the container
-# (e.g. `docker exec -it tmstage-web sh` → `yarn <anything>`). The deploy
-# workflow itself does NOT use yarn at runtime: it runs tsx directly against
-# scripts/migrate-all.ts, because the runtime image doesn't ship yarn.lock
-# and yarn 4 aborts on workspace validation. Safe to remove this block if
-# interactive yarn access is never needed — saves ~30 MB per image.
+# Yarn 4 via corepack — runs `yarn db:migrate:apply` in the migration
+# one-shot container and is available for interactive debugging
+# (`docker exec -it tmstage-web sh` → any yarn command).
 RUN corepack enable \
  && corepack prepare yarn@4.13.0 --activate
 
@@ -73,40 +70,38 @@ RUN corepack enable \
 RUN addgroup --system --gid 1001 nodejs \
  && adduser  --system --uid 1001 nextjs
 
-# Standalone output includes a minimal server.js + only the node_modules it actually needs.
+# Next.js standalone output (server.js + the minimal deps it bundles
+# + a stripped package.json). We overwrite the stripped package.json below
+# with the real one so yarn script lookups resolve.
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
 COPY --from=builder --chown=nextjs:nodejs /app/public ./public
 
-# Scripts + tsx runtime — the deploy workflow runs
-# `docker compose run --rm --no-deps web node_modules/.bin/tsx scripts/migrate-all.ts --apply`
-# in a one-shot container, so these files must be present in the final image.
+# Full node_modules + yarn workspace metadata. Prior iterations of this
+# Dockerfile cherry-picked ~10 packages to keep the image at ~40 MB, but
+# every new migration that pulled in a fresh npm dep broke the deploy
+# until the cherry-pick list was manually extended — and yarn script
+# invocation itself failed because yarn.lock wasn't shipped. Shipping the
+# full tree costs ~260 MB per unique image, but Docker layer sharing
+# means the node_modules layer is reused across every deploy where
+# yarn.lock is unchanged. Steady-state disk on the homelab is dominated
+# by the per-deploy app-code layer (~30 MB), not this one.
+COPY --from=builder --chown=nextjs:nodejs /app/node_modules ./node_modules
+# Overrides the stripped package.json from .next/standalone so yarn can
+# resolve script aliases (e.g. `yarn db:migrate:apply`).
+COPY --from=builder --chown=nextjs:nodejs /app/package.json ./package.json
+COPY --from=builder --chown=nextjs:nodejs /app/yarn.lock ./yarn.lock
+COPY --from=builder --chown=nextjs:nodejs /app/.yarnrc.yml ./.yarnrc.yml
+
+# Migration + Drizzle source files (TypeScript, executed via tsx).
+# src/lib/ip is a transitive import from migrate-ip-allowlist.ts — kept so
+# the orchestrator can discover every historical migration without ENOENT
+# even before `yarn db:migrate:baseline` has been run against a fresh DB.
 COPY --from=builder --chown=nextjs:nodejs /app/scripts ./scripts
 COPY --from=builder --chown=nextjs:nodejs /app/src/lib/db ./src/lib/db
-# Historical migrate-ip-allowlist.ts imports `../src/lib/ip/match` (which pulls
-# in ipaddr.js). Copied defensively so migrate-all can load the module even if
-# the user forgot to run `yarn db:migrate:baseline` against the staging DB —
-# without this, tsx crashes at import time before idempotency checks can skip.
 COPY --from=builder --chown=nextjs:nodejs /app/src/lib/ip ./src/lib/ip
 COPY --from=builder --chown=nextjs:nodejs /app/drizzle.config.ts ./drizzle.config.ts
 COPY --from=builder --chown=nextjs:nodejs /app/tsconfig.json ./tsconfig.json
-# Cherry-picked runtime deps for scripts/migrate-all.ts + its transitive needs.
-# Rule of thumb: if a new migration script imports a package, add it here.
-# Intentional lean-image tradeoff — full node_modules is ~300 MB vs ~40 MB here.
-# Alternative: drop this entire cherry-pick and `COPY --from=builder /app/node_modules`
-# if the maintenance cost outweighs the size saving.
-COPY --from=builder --chown=nextjs:nodejs /app/node_modules/.bin/tsx ./node_modules/.bin/tsx
-COPY --from=builder --chown=nextjs:nodejs /app/node_modules/tsx ./node_modules/tsx
-# tsx's direct runtime dependencies
-COPY --from=builder --chown=nextjs:nodejs /app/node_modules/esbuild ./node_modules/esbuild
-COPY --from=builder --chown=nextjs:nodejs /app/node_modules/@esbuild ./node_modules/@esbuild
-COPY --from=builder --chown=nextjs:nodejs /app/node_modules/get-tsconfig ./node_modules/get-tsconfig
-COPY --from=builder --chown=nextjs:nodejs /app/node_modules/resolve-pkg-maps ./node_modules/resolve-pkg-maps
-# Migration-script deps
-COPY --from=builder --chown=nextjs:nodejs /app/node_modules/drizzle-orm ./node_modules/drizzle-orm
-COPY --from=builder --chown=nextjs:nodejs /app/node_modules/mysql2 ./node_modules/mysql2
-COPY --from=builder --chown=nextjs:nodejs /app/node_modules/dotenv ./node_modules/dotenv
-COPY --from=builder --chown=nextjs:nodejs /app/node_modules/ipaddr.js ./node_modules/ipaddr.js
 
 USER nextjs
 
