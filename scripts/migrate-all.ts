@@ -143,7 +143,9 @@ async function main() {
       console.error("\n✗ Refusing to apply destructive migration(s):");
       for (const m of blockedDestructive) console.error(`   • ${m.name}`);
       console.error("\nSet ALLOW_DESTRUCTIVE_MIGRATIONS=true for this deploy window to permit.");
-      process.exit(3);
+      // Throw instead of process.exit so the finally block still releases
+      // the MySQL advisory lock explicitly. Exit code carried on the error.
+      throw Object.assign(new Error("Destructive migration blocked"), { exitCode: 3 });
     }
 
     for (const m of pending) {
@@ -154,7 +156,7 @@ async function main() {
       });
       if (res.status !== 0) {
         console.error(`\n✗ ${m.name} exited with code ${res.status}. Halting.`);
-        process.exit(res.status ?? 1);
+        throw Object.assign(new Error(`Migration ${m.name} failed`), { exitCode: res.status ?? 1 });
       }
       await conn.query(
         "INSERT INTO _migrations (name, checksum) VALUES (?, ?)",
@@ -170,7 +172,7 @@ async function main() {
   }
 }
 
-main().catch((err) => {
+main().catch((err: Error & { exitCode?: number }) => {
   console.error(err);
-  process.exit(1);
+  process.exit(err.exitCode ?? 1);
 });
