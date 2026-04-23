@@ -2,11 +2,8 @@ name: Deploy — Staging
 
 # Fires on every push to the `stage` branch. Builds a Docker image, pushes it
 # to ghcr.io, then SSHes into the homelab to pull + restart the staging stack.
-# Migrations run via `tsx scripts/migrate-all.ts --apply` inside a one-shot
-# container before the long-lived web container starts, so schema lands before
-# code. tsx is invoked directly (not through yarn) because the runtime image
-# doesn't ship yarn.lock — yarn would fail workspace validation before the
-# migration script ever executes.
+# Migrations run via `yarn db:migrate:apply` inside a one-shot container before
+# the long-lived web container starts, so schema lands before code.
 
 on:
   push:
@@ -144,28 +141,57 @@ jobs:
             # One-shot container: uses the NEW image's migrate script, reaches MySQL
             # via the shared network, exits when done. --rm + --no-deps ensures we
             # don't spin up sibling services that don't exist anyway.
-            #
-            # tsx invoked directly instead of via `yarn db:migrate:apply` — the
-            # runtime image omits yarn.lock (Next.js standalone ships a stripped
-            # package.json), so yarn 4 aborts on workspace validation before the
-            # migration script runs. scripts/migrate-all.ts is already idempotent
-            # and no-ops cleanly when there are zero pending migrations.
-            docker compose run --rm --no-deps web node_modules/.bin/tsx scripts/migrate-all.ts --apply
+            docker compose run --rm --no-deps web yarn db:migrate:apply
 
             echo "▶ Restarting web with new image…"
             docker compose up -d web
 
             echo "▶ Waiting for /api/health…"
+            HEALTHY=false
             for i in {1..30}; do
               if curl -fsS http://127.0.0.1:3007/api/health >/dev/null; then
                 echo "  ✓ Healthy after ${i} attempt(s)."
-                exit 0
+                HEALTHY=true
+                break
               fi
               sleep 2
             done
-            echo "  ✗ Health check failed after 60s. Dumping recent logs:"
-            docker compose logs --tail 80 web
-            exit 1
+
+            if [ "$HEALTHY" != "true" ]; then
+              echo "  ✗ Health check failed after 60s. Dumping recent logs:"
+              docker compose logs --tail 80 web
+              exit 1
+            fi
+
+            # ─── Prune old images ──────────────────────────────────────────
+            # Keep `stage-latest` (always) + the 3 most recent `stage-<sha>`
+            # tags for quick rollback. Older per-SHA tags are deleted, then
+            # `image prune` sweeps any dangling layers those held open.
+            # Without this, disk grows unbounded as deploys accumulate — with
+            # it, steady-state usage on the homelab stays ~1 GB regardless of
+            # deploy frequency.
+            echo "▶ Pruning old images (keep stage-latest + 3 most recent stage-<sha>)…"
+            OLD_TAGS=$(
+              docker image ls ghcr.io/haideri-group/mountain-team --format '{{.CreatedAt}}|{{.Tag}}' \
+                | sort -r \
+                | awk -F'|' '$2 ~ /^stage-[a-f0-9]{7,}$/ { print $2 }' \
+                | tail -n +4
+            )
+            if [ -n "$OLD_TAGS" ]; then
+              for tag in $OLD_TAGS; do
+                echo "  removing :${tag}"
+                docker rmi -f "ghcr.io/haideri-group/mountain-team:${tag}" || true
+              done
+            else
+              echo "  nothing to prune."
+            fi
+            docker image prune -f
+
+            # Visibility: each deploy log ends with the current Docker disk
+            # footprint. If this trends upward across deploys, something is
+            # bypassing the prune (e.g., unrelated images on the host).
+            echo "▶ Docker disk usage after deploy:"
+            docker system df
 
       - name: Report success
         if: success()

@@ -5,13 +5,6 @@
  *   yarn db:migrate:plan      — dry-run; lists pending migrations, no writes
  *   yarn db:migrate:apply     — applies pending migrations
  *
- * Deploy-time invocation: the staging workflow runs this script DIRECTLY via
- * `tsx scripts/migrate-all.ts --apply`, not through the yarn alias, because
- * the runtime Docker image doesn't ship yarn.lock. If you add a pre-step to
- * the `db:migrate:apply` package.json script, it will NOT fire during staging
- * deploys — either move the logic into this file, or also update
- * `.github/workflows/deploy-staging.yml`.
- *
  * Behavior:
  *  - Discovers every `scripts/migrate-*.ts` (excluding this file) in filename
  *    order (so name them with a sortable prefix, e.g. `migrate-m1-*.ts`).
