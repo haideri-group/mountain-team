@@ -28,7 +28,7 @@ async function main() {
   for (const i of activeIssues) {
     const w = calculateTaskWeight(i);
     totalWeight += w;
-    console.log("  ", i.jiraKey, "| status:", i.status, "| type:", i.type, "| sp:", i.storyPoints, "| rp:", (i as any).requestPriority, "| weight:", w);
+    console.log("  ", i.jiraKey, "| status:", i.status, "| type:", i.type, "| sp:", i.storyPoints, "| rp:", i.requestPriority, "| weight:", w);
   }
 
   const capacity = ateeq.capacity || 15;

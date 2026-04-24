@@ -60,8 +60,28 @@ export async function POST(request: Request) {
 
 // --- deployment_status handler ---
 
+// Minimal shape covering the fields this handler consumes. The full GitHub
+// webhook schema is huge; narrowing to what we actually touch keeps the
+// type check meaningful without pulling in @octokit/webhooks-types.
+interface GitHubDeploymentStatusPayload {
+  deployment_status?: {
+    state?: string;
+    creator?: { login?: string };
+    updated_at?: string;
+    created_at?: string;
+  };
+  deployment?: {
+    id?: number | string;
+    ref?: string;
+    sha?: string;
+    description?: string;
+    creator?: { login?: string };
+    created_at?: string;
+  };
+}
+
 async function handleDeploymentStatus(
-  payload: any,
+  payload: GitHubDeploymentStatusPayload,
   repo: { id: string; fullName: string },
 ) {
   const status = payload.deployment_status?.state;
@@ -129,8 +149,26 @@ async function handleDeploymentStatus(
 
 // --- pull_request handler ---
 
+interface GitHubPullRequestPayload {
+  action?: string;
+  pull_request?: {
+    merged?: boolean;
+    base?: { ref?: string };
+    head?: { ref?: string };
+    title?: string;
+    body?: string | null;
+    number?: number;
+    html_url?: string;
+    merged_by?: { login?: string };
+    user?: { login?: string };
+    merge_commit_sha?: string | null;
+    merged_at?: string;
+    labels?: Array<{ name?: string }>;
+  };
+}
+
 async function handlePullRequest(
-  payload: any,
+  payload: GitHubPullRequestPayload,
   repo: { id: string; fullName: string },
 ) {
   // Only process merged PRs
@@ -158,7 +196,9 @@ async function handlePullRequest(
       title: prTitle,
       head: { ref: sourceBranch },
       body: prBody,
-      number: prNumber,
+      // GitHub guarantees a PR number on a merged-PR webhook; the type is
+      // optional because the looser Payload interface covers the whole shape.
+      number: prNumber ?? 0,
       base: { repo: { full_name: repo.fullName } },
     });
   }

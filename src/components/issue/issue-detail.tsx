@@ -21,6 +21,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 
 import type { Phase1Data, Phase2Data, GitHubData, ActivityEntry } from "./issue-types";
+import type { DeploymentSummary } from "@/lib/github/deployments";
 import { PRIORITY_COLORS, formatSmartDate, mergeActivity } from "./issue-helpers";
 import { IssueSidebar } from "./issue-sidebar";
 import { ActivityTabs } from "./issue-activity";
@@ -38,7 +39,7 @@ export function IssueDetail({ issueKey }: IssueDetailProps) {
   const [phase1, setPhase1] = useState<Phase1Data | null>(null);
   const [phase2, setPhase2] = useState<Phase2Data | null>(null);
   const [github, setGithub] = useState<GitHubData | null>(null);
-  const [deploymentData, setDeploymentData] = useState<any>(null);
+  const [deploymentData, setDeploymentData] = useState<DeploymentSummary | null>(null);
   const [phase1Loading, setPhase1Loading] = useState(true);
   const [phase2Loading, setPhase2Loading] = useState(true);
   const [githubLoading, setGithubLoading] = useState(true);
@@ -536,7 +537,7 @@ export function IssueDetail({ issueKey }: IssueDetailProps) {
           )}
 
           {/* Deployments */}
-          {(deploymentLoading || (deploymentData?.deployments?.length > 0)) && (
+          {(deploymentLoading || ((deploymentData?.deployments?.length ?? 0) > 0)) && (
             <div className="bg-card rounded-xl p-6 shadow-sm">
               <DeploymentPipeline
                 pipeline={deploymentData?.pipeline ?? []}

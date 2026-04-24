@@ -80,25 +80,27 @@ async function main() {
   await db.insert(team_members).values(developers);
 
   // Procedurally Generate 60 Mock Issues
-  const mockIssues = [];
-  const statuses = ["todo", "in_progress", "done"];
-  const priorities = ["low", "medium", "high", "highest"];
-  const types = ["story", "bug", "task"];
+  const mockIssues: (typeof issues.$inferInsert)[] = [];
+  // `as const` + explicit item types → elements are literal unions that
+  // match the drizzle enum columns without needing `as any` casts on push.
+  const statuses: NonNullable<typeof issues.$inferInsert.status>[] = ["todo", "in_progress", "done"];
+  const priorities: NonNullable<typeof issues.$inferInsert.priority>[] = ["low", "medium", "high", "highest"];
+  const types: NonNullable<typeof issues.$inferInsert.type>[] = ["story", "bug", "task"];
   const boardIds = ["brd_1", "brd_2", "brd_3", "brd_4", "brd_5"];
-  
+
   for (let i = 1; i <= 60; i++) {
     const boardId = boardIds[i % boardIds.length];
     const prefix = boardId === "brd_1" ? "PROD" : boardId === "brd_2" ? "BUTTERFLY" : boardId === "brd_3" ? "EAGLE" : boardId === "brd_4" ? "DOLPHIN" : "FALCON";
-    
+
     mockIssues.push({
       id: `iss_${i}`,
       jiraKey: `${prefix}-${1000 + i}`,
       boardId,
       assigneeId: developers[i % developers.length].id,
       title: `Generated Development Task ${i} for ${prefix}`,
-      status: statuses[i % statuses.length] as any,
-      priority: priorities[i % priorities.length] as any,
-      type: types[i % types.length] as any,
+      status: statuses[i % statuses.length],
+      priority: priorities[i % priorities.length],
+      type: types[i % types.length],
       storyPoints: (i % 5) + 1,
     });
   }
