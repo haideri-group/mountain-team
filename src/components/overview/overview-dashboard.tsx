@@ -4,10 +4,15 @@ import { useState, useEffect, useMemo } from "react";
 import { Loader2 } from "lucide-react";
 import { MetricsStrip } from "./metrics-strip";
 import { FilterBar } from "./filter-bar";
-import { DevCard } from "./dev-card";
+import { DevCard, type DevCardMember } from "./dev-card";
+
+// The /api/overview response returns DevCardMember-shaped rows with an extra
+// `teamName` field layered on top (used for team-filter rendering here;
+// DevCard itself doesn't render it).
+type OverviewMember = DevCardMember & { teamName: string | null };
 
 interface OverviewData {
-  members: (Record<string, any> & { id: string; teamName: string | null; status: string })[];
+  members: OverviewMember[];
   metrics: {
     teamMembers: number;
     activeIssues: number;
@@ -98,8 +103,8 @@ export function OverviewDashboard({ isAdmin }: { isAdmin: boolean }) {
       if (filters.board) {
         const hasIssueFromBoard =
           member.currentIssue?.boardKey === filters.board ||
-          member.queuedIssues.some((i: any) => i.boardKey === filters.board) ||
-          member.recentDone.some((i: any) => i.boardKey === filters.board);
+          member.queuedIssues.some((i) => i.boardKey === filters.board) ||
+          member.recentDone.some((i) => i.boardKey === filters.board);
         if (!hasIssueFromBoard) return false;
       }
 
@@ -107,8 +112,8 @@ export function OverviewDashboard({ isAdmin }: { isAdmin: boolean }) {
       if (filters.type) {
         const hasType =
           member.currentIssue?.type === filters.type ||
-          member.queuedIssues.some((i: any) => i.type === filters.type) ||
-          member.recentDone.some((i: any) => i.type === filters.type);
+          member.queuedIssues.some((i) => i.type === filters.type) ||
+          member.recentDone.some((i) => i.type === filters.type);
         if (!hasType) return false;
       }
 
@@ -116,8 +121,8 @@ export function OverviewDashboard({ isAdmin }: { isAdmin: boolean }) {
       if (filters.priority) {
         const hasPriority =
           member.currentIssue?.priority === filters.priority ||
-          member.queuedIssues.some((i: any) => i.priority === filters.priority) ||
-          member.recentDone.some((i: any) => i.priority === filters.priority);
+          member.queuedIssues.some((i) => i.priority === filters.priority) ||
+          member.recentDone.some((i) => i.priority === filters.priority);
         if (!hasPriority) return false;
       }
 
@@ -125,8 +130,8 @@ export function OverviewDashboard({ isAdmin }: { isAdmin: boolean }) {
       if (filters.status) {
         const hasStatus =
           member.currentIssue?.status === filters.status ||
-          member.queuedIssues.some((i: any) => i.status === filters.status) ||
-          member.recentDone.some((i: any) => i.status === filters.status);
+          member.queuedIssues.some((i) => i.status === filters.status) ||
+          member.recentDone.some((i) => i.status === filters.status);
         if (!hasStatus) return false;
       }
 
@@ -218,7 +223,7 @@ export function OverviewDashboard({ isAdmin }: { isAdmin: boolean }) {
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">
           {filteredMembers.map((member) => (
-            <DevCard key={member.id} member={member as any} />
+            <DevCard key={member.id} member={member} />
           ))}
         </div>
       )}

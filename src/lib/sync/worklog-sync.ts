@@ -38,18 +38,24 @@ function formatDateForJql(date: Date): string {
 function parseComment(comment: JiraWorklog["comment"]): string | null {
   if (!comment) return null;
   if (typeof comment === "string") return comment;
-  // ADF format — extract plain text from content nodes
+  // ADF format — extract plain text from content nodes. Atlassian Document
+  // Format nodes have `type`, optional `text`, optional `content` children.
+  interface ADFNode {
+    type?: string;
+    text?: string;
+    content?: ADFNode[];
+  }
   try {
-    const extract = (nodes: unknown[]): string => {
+    const extract = (nodes: ADFNode[]): string => {
       return nodes
-        .map((node: any) => {
+        .map((node) => {
           if (node.type === "text") return node.text || "";
           if (node.content) return extract(node.content);
           return "";
         })
         .join("");
     };
-    return extract(comment.content || []) || null;
+    return extract((comment.content ?? []) as ADFNode[]) || null;
   } catch {
     return null;
   }

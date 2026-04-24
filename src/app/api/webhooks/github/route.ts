@@ -60,8 +60,28 @@ export async function POST(request: Request) {
 
 // --- deployment_status handler ---
 
+// Minimal shape covering the fields this handler consumes. The full GitHub
+// webhook schema is huge; narrowing to what we actually touch keeps the
+// type check meaningful without pulling in @octokit/webhooks-types.
+interface GitHubDeploymentStatusPayload {
+  deployment_status?: {
+    state?: string;
+    creator?: { login?: string };
+    updated_at?: string;
+    created_at?: string;
+  };
+  deployment?: {
+    id?: number | string;
+    ref?: string;
+    sha?: string;
+    description?: string;
+    creator?: { login?: string };
+    created_at?: string;
+  };
+}
+
 async function handleDeploymentStatus(
-  payload: any,
+  payload: GitHubDeploymentStatusPayload,
   repo: { id: string; fullName: string },
 ) {
   const status = payload.deployment_status?.state;
@@ -129,8 +149,26 @@ async function handleDeploymentStatus(
 
 // --- pull_request handler ---
 
+interface GitHubPullRequestPayload {
+  action?: string;
+  pull_request?: {
+    merged?: boolean;
+    base?: { ref?: string };
+    head?: { ref?: string };
+    title?: string;
+    body?: string | null;
+    number?: number;
+    html_url?: string;
+    merged_by?: { login?: string };
+    user?: { login?: string };
+    merge_commit_sha?: string | null;
+    merged_at?: string;
+    labels?: Array<{ name?: string }>;
+  };
+}
+
 async function handlePullRequest(
-  payload: any,
+  payload: GitHubPullRequestPayload,
   repo: { id: string; fullName: string },
 ) {
   // Only process merged PRs
@@ -152,8 +190,14 @@ async function handlePullRequest(
   // Extract JIRA keys from PR title, source branch, body
   let jiraKeys = extractJiraKeys([prTitle, sourceBranch, prBody]);
 
-  // Fallback: fetch commit messages
-  if (jiraKeys.length === 0) {
+  // Fallback: fetch commit messages from the PR's /commits endpoint.
+  // Requires a real `prNumber` — without it, extractKeysFromPR would issue
+  // a GET /pulls/0/commits call that 404s and silently returns no keys
+  // (the inner try/catch swallows the error), making the whole webhook a
+  // no-op for PRs that would have matched via commit messages.
+  // GitHub guarantees `number` on merged-PR webhooks; the optional type is
+  // a defensive consequence of the looser Payload interface.
+  if (jiraKeys.length === 0 && typeof prNumber === "number" && prNumber > 0) {
     jiraKeys = await extractKeysFromPR({
       title: prTitle,
       head: { ref: sourceBranch },
