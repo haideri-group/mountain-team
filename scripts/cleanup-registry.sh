@@ -39,6 +39,13 @@ set +e
 
 REPO_URL="https://${REG_HOST}/v2/${IMAGE_NAME}"
 
+# Per-call curl budget. Without these, a slow/hung registry can eat the
+# whole SSH session's 10-minute timeout (we issue up to ~60 curl calls
+# at steady state — 20 tags × 3 metadata calls + 17 DELETE round-trips).
+# 5s to connect / 20s total matches typical registry response times
+# without letting a single pathological call stall cleanup indefinitely.
+CURL_OPTS=(--connect-timeout 5 --max-time 20)
+
 # `docker buildx --attest type=provenance,mode=max` stores images as OCI
 # indexes, not Docker v2 manifests. Accept both (and Docker manifest-list
 # for multi-arch) so manifest lookups don't 404 with MANIFEST_UNKNOWN on
@@ -47,7 +54,7 @@ ACCEPT_MANIFEST='application/vnd.oci.image.index.v1+json, application/vnd.oci.im
 
 echo "▶ Pruning old tags on ${REG_HOST}/${IMAGE_NAME} (keep 3 newest)…"
 
-ALL_TAGS=$(curl -fsS -u "${REG_USER}:${REG_PASS}" "${REPO_URL}/tags/list" \
+ALL_TAGS=$(curl -fsS "${CURL_OPTS[@]}" -u "${REG_USER}:${REG_PASS}" "${REPO_URL}/tags/list" \
   | jq -r '.tags[]? // empty' \
   | grep -E '^stage-[a-f0-9]{7,}$' \
   || true)
@@ -73,7 +80,7 @@ for tag in $ALL_TAGS; do
   # For OCI indexes, .config.digest lives inside the first image
   # manifest, not the index itself. Resolve the index first, then follow
   # to a platform manifest to read .config.digest.
-  INDEX=$(curl -fsS -u "${REG_USER}:${REG_PASS}" \
+  INDEX=$(curl -fsS "${CURL_OPTS[@]}" -u "${REG_USER}:${REG_PASS}" \
     -H "Accept: ${ACCEPT_MANIFEST}" \
     "${REPO_URL}/manifests/${tag}")
   if [ -z "$INDEX" ]; then
@@ -92,7 +99,7 @@ for tag in $ALL_TAGS; do
       echo "  skip ${tag}: no sub-manifest in OCI index"
       continue
     fi
-    SUB_MANIFEST=$(curl -fsS -u "${REG_USER}:${REG_PASS}" \
+    SUB_MANIFEST=$(curl -fsS "${CURL_OPTS[@]}" -u "${REG_USER}:${REG_PASS}" \
       -H "Accept: ${ACCEPT_MANIFEST}" \
       "${REPO_URL}/manifests/${SUB_DIGEST}")
     CONFIG_DIGEST=$(jq -r '.config.digest // empty' <<< "$SUB_MANIFEST")
@@ -104,7 +111,7 @@ for tag in $ALL_TAGS; do
     echo "  skip ${tag}: no config.digest resolved"
     continue
   fi
-  CREATED=$(curl -fsS -u "${REG_USER}:${REG_PASS}" \
+  CREATED=$(curl -fsS "${CURL_OPTS[@]}" -u "${REG_USER}:${REG_PASS}" \
     "${REPO_URL}/blobs/${CONFIG_DIGEST}" \
     | jq -r '.created // "1970-01-01T00:00:00Z"')
   pairs+=("${CREATED} ${tag}")
@@ -127,16 +134,22 @@ while IFS= read -r tag; do
   [ -z "$tag" ] && continue
   # HEAD with the same broad Accept header so the registry returns the
   # correct Docker-Content-Digest for the DELETE.
-  DIGEST=$(curl -fsSI -u "${REG_USER}:${REG_PASS}" \
+  DIGEST=$(curl -fsSI "${CURL_OPTS[@]}" -u "${REG_USER}:${REG_PASS}" \
     -H "Accept: ${ACCEPT_MANIFEST}" \
     "${REPO_URL}/manifests/${tag}" \
     | grep -i '^docker-content-digest:' \
     | awk '{print $2}' | tr -d '\r\n')
   if [ -n "$DIGEST" ]; then
-    curl -fsS -u "${REG_USER}:${REG_PASS}" -X DELETE \
-      "${REPO_URL}/manifests/${DIGEST}" -o /dev/null
-    echo "  registry deleted :${tag}"
-    PRUNED=$((PRUNED + 1))
+    # `set +e` is active, so the DELETE's exit status is NOT checked
+    # implicitly — test the command directly so PRUNED reflects reality
+    # and a silent registry regression can't masquerade as cleanup.
+    if curl -fsS "${CURL_OPTS[@]}" -u "${REG_USER}:${REG_PASS}" -X DELETE \
+      "${REPO_URL}/manifests/${DIGEST}" -o /dev/null; then
+      echo "  registry deleted :${tag}"
+      PRUNED=$((PRUNED + 1))
+    else
+      echo "  skip ${tag}: DELETE failed (curl exit $?, digest ${DIGEST})"
+    fi
   fi
 done <<< "$REG_OLD"
 

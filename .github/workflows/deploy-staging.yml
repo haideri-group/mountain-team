@@ -227,10 +227,14 @@ jobs:
             #
             # Logic lives in scripts/cleanup-registry.sh (scp'd above) so it
             # can be shellchecked in CI and run locally for debugging. The
-            # `|| echo …` wrapper is a belt-and-braces failsafe; the script
-            # itself already treats registry API errors as non-fatal.
+            # script handles expected registry API errors internally (set +e)
+            # and always exits 0; any non-zero exit means an unexpected
+            # regression (env var missing, shell-level bug, etc.). We keep the
+            # wrapper as a failsafe so housekeeping never fails an already-
+            # healthy deploy, but escalate to a ::warning:: annotation so the
+            # failure is visible on the run page instead of buried in logs.
             bash ./scripts/cleanup-registry.sh \
-              || echo "⚠ registry pruning encountered errors — deploy itself succeeded; housekeeping will retry next deploy / weekly GC"
+              || echo "::warning title=Registry pruning failed::cleanup-registry.sh exited non-zero — deploy itself succeeded and weekly GC is the backstop, but this indicates a script-level regression worth investigating."
 
             # Visibility: each deploy log ends with the current Docker disk
             # footprint. If this trends upward across deploys, something is
