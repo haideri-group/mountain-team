@@ -113,7 +113,15 @@ jobs:
             NEXT_PUBLIC_JIRA_BASE_URL=${{ vars.NEXT_PUBLIC_JIRA_BASE_URL }}
             NEXT_PUBLIC_APP_URL=${{ vars.NEXT_PUBLIC_APP_URL }}
           cache-from: type=gha
-          cache-to: type=gha,mode=max
+          # `ignore-error=true` makes cache EXPORT failures non-fatal. GHA
+          # cache's Azure edge occasionally 502s mid-export, which used to
+          # fail the whole build (even though the image itself pushed fine
+          # to registry.appz.cc). With this flag, the image push stays strict
+          # but a cache hiccup only slows the next build instead of killing
+          # CI. Still on GHA (free quota, zero homelab disk) — switching to
+          # type=registry caching would have been simpler but would grow
+          # registry storage on every deploy, which we deliberately avoid.
+          cache-to: type=gha,mode=max,ignore-error=true
 
   deploy:
     name: SSH Deploy → Homelab
