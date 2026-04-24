@@ -190,15 +190,19 @@ async function handlePullRequest(
   // Extract JIRA keys from PR title, source branch, body
   let jiraKeys = extractJiraKeys([prTitle, sourceBranch, prBody]);
 
-  // Fallback: fetch commit messages
-  if (jiraKeys.length === 0) {
+  // Fallback: fetch commit messages from the PR's /commits endpoint.
+  // Requires a real `prNumber` — without it, extractKeysFromPR would issue
+  // a GET /pulls/0/commits call that 404s and silently returns no keys
+  // (the inner try/catch swallows the error), making the whole webhook a
+  // no-op for PRs that would have matched via commit messages.
+  // GitHub guarantees `number` on merged-PR webhooks; the optional type is
+  // a defensive consequence of the looser Payload interface.
+  if (jiraKeys.length === 0 && typeof prNumber === "number" && prNumber > 0) {
     jiraKeys = await extractKeysFromPR({
       title: prTitle,
       head: { ref: sourceBranch },
       body: prBody,
-      // GitHub guarantees a PR number on a merged-PR webhook; the type is
-      // optional because the looser Payload interface covers the whole shape.
-      number: prNumber ?? 0,
+      number: prNumber,
       base: { repo: { full_name: repo.fullName } },
     });
   }
