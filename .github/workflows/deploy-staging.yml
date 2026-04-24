@@ -222,14 +222,27 @@ jobs:
             # we fetch each tag's manifest → config blob → `created` ourselves.
             # With <20 tags steady-state, this is <1 s of extra HTTP traffic.
             echo "▶ Pruning old tags on ${REG_HOST}/${IMAGE_NAME} (keep 3 newest)…"
-            REPO_URL="https://${REG_HOST}/v2/${IMAGE_NAME}"
-            ALL_TAGS=$(curl -fsS -u "${REG_USER}:${REG_PASS}" "${REPO_URL}/tags/list" \
-              | jq -r '.tags[]? // empty' \
-              | grep -E '^stage-[a-f0-9]{7,}$' \
-              || true)
-            if [ -z "$ALL_TAGS" ]; then
-              echo "  no stage-<sha> tags found in registry."
-            else
+            # Run the whole pruning block in a subshell with `set +e` so any
+            # registry API hiccup (401/404/timeout/etc.) doesn't fail a deploy
+            # whose app container is already live and healthy. Pruning is pure
+            # housekeeping; the weekly garbage-collect cron is the backstop.
+            (
+              set +e
+              REPO_URL="https://${REG_HOST}/v2/${IMAGE_NAME}"
+              # `docker buildx --attest type=provenance,mode=max` stores images
+              # as OCI indexes, not Docker v2 manifests. Accept both (and
+              # Docker manifest-list for multi-arch) so manifest lookups don't
+              # 404 with MANIFEST_UNKNOWN on provenance-enabled pushes.
+              ACCEPT_MANIFEST='application/vnd.oci.image.index.v1+json, application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.docker.distribution.manifest.v2+json'
+
+              ALL_TAGS=$(curl -fsS -u "${REG_USER}:${REG_PASS}" "${REPO_URL}/tags/list" \
+                | jq -r '.tags[]? // empty' \
+                | grep -E '^stage-[a-f0-9]{7,}$' \
+                || true)
+              if [ -z "$ALL_TAGS" ]; then
+                echo "  no stage-<sha> tags found in registry."
+                exit 0
+              fi
               # Sanity check: at steady state we should have 3-4 tags. More
               # than 20 means cleanup has been silently failing — surface it
               # loudly so we notice at the next deploy instead of after 50.
@@ -242,11 +255,38 @@ jobs:
               # Build "<iso-date> <tag>" pairs, sort desc, skip top 3.
               PAIRS=""
               for tag in $ALL_TAGS; do
-                MANIFEST=$(curl -fsS -u "${REG_USER}:${REG_PASS}" \
-                  -H 'Accept: application/vnd.docker.distribution.manifest.v2+json' \
+                # For OCI indexes, .config.digest lives inside the first image
+                # manifest, not the index itself. Resolve the index first, then
+                # follow to a platform manifest to read .config.digest.
+                INDEX=$(curl -fsS -u "${REG_USER}:${REG_PASS}" \
+                  -H "Accept: ${ACCEPT_MANIFEST}" \
                   "${REPO_URL}/manifests/${tag}")
-                CONFIG_DIGEST=$(echo "$MANIFEST" | jq -r '.config.digest // empty')
+                if [ -z "$INDEX" ]; then
+                  echo "  skip ${tag}: empty manifest response"
+                  continue
+                fi
+                MEDIA_TYPE=$(echo "$INDEX" | jq -r '.mediaType // ""')
+                if [[ "$MEDIA_TYPE" == *"index"* || "$MEDIA_TYPE" == *"manifest.list"* ]]; then
+                  # It's an index — pick the linux/amd64 image manifest digest.
+                  SUB_DIGEST=$(echo "$INDEX" | jq -r '.manifests[] | select((.platform.os? == "linux") and (.platform.architecture? == "amd64")) | .digest' | head -n1)
+                  if [ -z "$SUB_DIGEST" ]; then
+                    # Fallback: first entry
+                    SUB_DIGEST=$(echo "$INDEX" | jq -r '.manifests[0].digest // empty')
+                  fi
+                  if [ -z "$SUB_DIGEST" ]; then
+                    echo "  skip ${tag}: no sub-manifest in OCI index"
+                    continue
+                  fi
+                  SUB_MANIFEST=$(curl -fsS -u "${REG_USER}:${REG_PASS}" \
+                    -H "Accept: ${ACCEPT_MANIFEST}" \
+                    "${REPO_URL}/manifests/${SUB_DIGEST}")
+                  CONFIG_DIGEST=$(echo "$SUB_MANIFEST" | jq -r '.config.digest // empty')
+                else
+                  # Plain manifest — config.digest is directly here.
+                  CONFIG_DIGEST=$(echo "$INDEX" | jq -r '.config.digest // empty')
+                fi
                 if [ -z "$CONFIG_DIGEST" ]; then
+                  echo "  skip ${tag}: no config.digest resolved"
                   continue
                 fi
                 CREATED=$(curl -fsS -u "${REG_USER}:${REG_PASS}" \
@@ -262,27 +302,28 @@ jobs:
               REG_OLD=$(printf '%s' "$PAIRS" | sort -r | tail -n +4 | awk '{print $2}')
               if [ -z "$REG_OLD" ]; then
                 echo "  nothing to prune from registry (≤3 stage-<sha> tags)."
-              else
-                PRUNED=0
-                while IFS= read -r tag; do
-                  [ -z "$tag" ] && continue
-                  # Must use the *v2* Accept header to get the correct digest
-                  # back in Docker-Content-Digest for the DELETE call.
-                  DIGEST=$(curl -fsSI -u "${REG_USER}:${REG_PASS}" \
-                    -H 'Accept: application/vnd.docker.distribution.manifest.v2+json' \
-                    "${REPO_URL}/manifests/${tag}" \
-                    | grep -i '^docker-content-digest:' \
-                    | awk '{print $2}' | tr -d '\r\n')
-                  if [ -n "$DIGEST" ]; then
-                    curl -fsS -u "${REG_USER}:${REG_PASS}" -X DELETE \
-                      "${REPO_URL}/manifests/${DIGEST}" -o /dev/null || true
-                    echo "  registry deleted :${tag}"
-                    PRUNED=$((PRUNED + 1))
-                  fi
-                done <<< "$REG_OLD"
-                echo "  deleted ${PRUNED} tag(s); blobs freed by next weekly garbage-collect cron."
+                exit 0
               fi
-            fi
+
+              PRUNED=0
+              while IFS= read -r tag; do
+                [ -z "$tag" ] && continue
+                # HEAD with the same broad Accept header so the registry
+                # returns the correct Docker-Content-Digest for the DELETE.
+                DIGEST=$(curl -fsSI -u "${REG_USER}:${REG_PASS}" \
+                  -H "Accept: ${ACCEPT_MANIFEST}" \
+                  "${REPO_URL}/manifests/${tag}" \
+                  | grep -i '^docker-content-digest:' \
+                  | awk '{print $2}' | tr -d '\r\n')
+                if [ -n "$DIGEST" ]; then
+                  curl -fsS -u "${REG_USER}:${REG_PASS}" -X DELETE \
+                    "${REPO_URL}/manifests/${DIGEST}" -o /dev/null
+                  echo "  registry deleted :${tag}"
+                  PRUNED=$((PRUNED + 1))
+                fi
+              done <<< "$REG_OLD"
+              echo "  deleted ${PRUNED} tag(s); blobs freed by next weekly garbage-collect cron."
+            ) || echo "⚠ registry pruning encountered errors — deploy itself succeeded; housekeeping will retry next deploy / weekly GC"
 
             # Visibility: each deploy log ends with the current Docker disk
             # footprint. If this trends upward across deploys, something is
