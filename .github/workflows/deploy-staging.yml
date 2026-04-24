@@ -40,14 +40,14 @@ jobs:
     # with that branch's code and push it to the homelab.
     if: github.ref == 'refs/heads/stage'
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
         with:
           node-version: 24
       - name: Enable Corepack
         run: corepack enable && corepack prepare yarn@4.13.0 --activate
       - name: Cache Yarn
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: |
             .yarn/cache
@@ -76,13 +76,13 @@ jobs:
     outputs:
       sha_tag: ${{ steps.meta.outputs.sha_tag }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       - name: Login to registry
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           registry: ${{ vars.REGISTRY_HOST }}
           username: ${{ vars.REGISTRY_USERNAME }}
@@ -97,7 +97,7 @@ jobs:
           echo "Will tag image as: ${{ env.LATEST_TAG }} + ${SHA_TAG}"
 
       - name: Build + push
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           push: true
@@ -123,14 +123,14 @@ jobs:
     # "missing server host".
     environment: staging
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       # The homelab's docker-compose file is manually maintained (no git
       # checkout at /home/haider/teamflow-staging/). SCP the repo's
       # docker-compose.staging.yml on every deploy so the `image:` line on the
       # homelab always matches what CI just pushed — one source of truth.
       - name: Sync compose file to homelab
-        uses: appleboy/scp-action@v0.1.7
+        uses: appleboy/scp-action@v1.0.0
         with:
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USER }}
@@ -140,7 +140,7 @@ jobs:
           target: /home/haider/teamflow-staging/
 
       - name: Deploy to homelab
-        uses: appleboy/ssh-action@v1.2.0
+        uses: appleboy/ssh-action@v1.2.5
         with:
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USER }}
