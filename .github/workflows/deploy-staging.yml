@@ -62,6 +62,10 @@ jobs:
       # dedicated `chore/lint-cleanup` PR later.
       - run: yarn lint
         continue-on-error: true
+      # ShellCheck is blocking: scripts/ bash is production infra, not advisory.
+      # shellcheck is preinstalled on ubuntu-latest runners (no setup step).
+      - name: ShellCheck scripts
+        run: shellcheck scripts/cleanup-registry.sh
 
   build-and-push:
     name: Build + Push Image
@@ -127,16 +131,24 @@ jobs:
 
       # The homelab's docker-compose file is manually maintained (no git
       # checkout at /home/haider/teamflow-staging/). SCP the repo's
-      # docker-compose.staging.yml on every deploy so the `image:` line on the
-      # homelab always matches what CI just pushed — one source of truth.
-      - name: Sync compose file to homelab
+      # docker-compose.staging.yml AND any helper scripts on every deploy so
+      # the homelab always runs the code matching this commit — one source
+      # of truth. scp-action preserves paths, so cleanup-registry.sh lands
+      # at /home/haider/teamflow-staging/scripts/cleanup-registry.sh.
+      #
+      # `source` MUST be comma-separated. The underlying drone-scp binary
+      # uses urfave/cli's StringSliceFlag, which splits env vars on commas
+      # only — a multi-line YAML block would become a single string with
+      # embedded newlines that filepath.Glob can't expand, silently
+      # uploading nothing.
+      - name: Sync compose + scripts to homelab
         uses: appleboy/scp-action@v1.0.0
         with:
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USER }}
           key: ${{ secrets.SSH_KEY }}
           port: ${{ vars.SSH_PORT || 22 }}
-          source: docker-compose.staging.yml
+          source: "docker-compose.staging.yml,scripts/cleanup-registry.sh"
           target: /home/haider/teamflow-staging/
 
       - name: Deploy to homelab
@@ -214,116 +226,19 @@ jobs:
             # ─── Prune old tags on the registry itself ─────────────────────
             # Mirrors the local policy (keep 3 newest stage-<sha>) but against
             # the registry HTTP API so registry disk is bounded too. Only
-            # deletes manifests here — actual blob reclamation happens in the
+            # deletes manifests — actual blob reclamation happens in the
             # weekly `registry garbage-collect` cron on the homelab.
             #
-            # Sorting by the `created` field in each tag's image config blob.
-            # The registry v2 tags API returns names only, not timestamps, so
-            # we fetch each tag's manifest → config blob → `created` ourselves.
-            # With <20 tags steady-state, this is <1 s of extra HTTP traffic.
-            echo "▶ Pruning old tags on ${REG_HOST}/${IMAGE_NAME} (keep 3 newest)…"
-            # Run the whole pruning block in a subshell with `set +e` so any
-            # registry API hiccup (401/404/timeout/etc.) doesn't fail a deploy
-            # whose app container is already live and healthy. Pruning is pure
-            # housekeeping; the weekly garbage-collect cron is the backstop.
-            (
-              set +e
-              REPO_URL="https://${REG_HOST}/v2/${IMAGE_NAME}"
-              # `docker buildx --attest type=provenance,mode=max` stores images
-              # as OCI indexes, not Docker v2 manifests. Accept both (and
-              # Docker manifest-list for multi-arch) so manifest lookups don't
-              # 404 with MANIFEST_UNKNOWN on provenance-enabled pushes.
-              ACCEPT_MANIFEST='application/vnd.oci.image.index.v1+json, application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.docker.distribution.manifest.v2+json'
-
-              ALL_TAGS=$(curl -fsS -u "${REG_USER}:${REG_PASS}" "${REPO_URL}/tags/list" \
-                | jq -r '.tags[]? // empty' \
-                | grep -E '^stage-[a-f0-9]{7,}$' \
-                || true)
-              if [ -z "$ALL_TAGS" ]; then
-                echo "  no stage-<sha> tags found in registry."
-                exit 0
-              fi
-              # Sanity check: at steady state we should have 3-4 tags. More
-              # than 20 means cleanup has been silently failing — surface it
-              # loudly so we notice at the next deploy instead of after 50.
-              TAG_COUNT=$(echo "$ALL_TAGS" | wc -l)
-              if [ "$TAG_COUNT" -gt 20 ]; then
-                echo "  ⚠ ${TAG_COUNT} stage-<sha> tags found — cleanup may have been failing."
-                echo "    Investigate: manual cleanup may be needed, or this script's API calls are being rejected."
-              fi
-
-              # Build "<iso-date> <tag>" pairs, sort desc, skip top 3.
-              PAIRS=""
-              for tag in $ALL_TAGS; do
-                # For OCI indexes, .config.digest lives inside the first image
-                # manifest, not the index itself. Resolve the index first, then
-                # follow to a platform manifest to read .config.digest.
-                INDEX=$(curl -fsS -u "${REG_USER}:${REG_PASS}" \
-                  -H "Accept: ${ACCEPT_MANIFEST}" \
-                  "${REPO_URL}/manifests/${tag}")
-                if [ -z "$INDEX" ]; then
-                  echo "  skip ${tag}: empty manifest response"
-                  continue
-                fi
-                MEDIA_TYPE=$(echo "$INDEX" | jq -r '.mediaType // ""')
-                if [[ "$MEDIA_TYPE" == *"index"* || "$MEDIA_TYPE" == *"manifest.list"* ]]; then
-                  # It's an index — pick the linux/amd64 image manifest digest.
-                  SUB_DIGEST=$(echo "$INDEX" | jq -r '.manifests[] | select((.platform.os? == "linux") and (.platform.architecture? == "amd64")) | .digest' | head -n1)
-                  if [ -z "$SUB_DIGEST" ]; then
-                    # Fallback: first entry
-                    SUB_DIGEST=$(echo "$INDEX" | jq -r '.manifests[0].digest // empty')
-                  fi
-                  if [ -z "$SUB_DIGEST" ]; then
-                    echo "  skip ${tag}: no sub-manifest in OCI index"
-                    continue
-                  fi
-                  SUB_MANIFEST=$(curl -fsS -u "${REG_USER}:${REG_PASS}" \
-                    -H "Accept: ${ACCEPT_MANIFEST}" \
-                    "${REPO_URL}/manifests/${SUB_DIGEST}")
-                  CONFIG_DIGEST=$(echo "$SUB_MANIFEST" | jq -r '.config.digest // empty')
-                else
-                  # Plain manifest — config.digest is directly here.
-                  CONFIG_DIGEST=$(echo "$INDEX" | jq -r '.config.digest // empty')
-                fi
-                if [ -z "$CONFIG_DIGEST" ]; then
-                  echo "  skip ${tag}: no config.digest resolved"
-                  continue
-                fi
-                CREATED=$(curl -fsS -u "${REG_USER}:${REG_PASS}" \
-                  "${REPO_URL}/blobs/${CONFIG_DIGEST}" \
-                  | jq -r '.created // "1970-01-01T00:00:00Z"')
-                PAIRS="${PAIRS}${CREATED} ${tag}
-            "
-              done
-              # Keep newline-separated tags — piping through `while read` so
-              # each line is processed in isolation. Previous version flattened
-              # multiple tags into a single concatenated string via `tr -d '\n '`,
-              # which meant ≥2 old tags never actually got deleted.
-              REG_OLD=$(printf '%s' "$PAIRS" | sort -r | tail -n +4 | awk '{print $2}')
-              if [ -z "$REG_OLD" ]; then
-                echo "  nothing to prune from registry (≤3 stage-<sha> tags)."
-                exit 0
-              fi
-
-              PRUNED=0
-              while IFS= read -r tag; do
-                [ -z "$tag" ] && continue
-                # HEAD with the same broad Accept header so the registry
-                # returns the correct Docker-Content-Digest for the DELETE.
-                DIGEST=$(curl -fsSI -u "${REG_USER}:${REG_PASS}" \
-                  -H "Accept: ${ACCEPT_MANIFEST}" \
-                  "${REPO_URL}/manifests/${tag}" \
-                  | grep -i '^docker-content-digest:' \
-                  | awk '{print $2}' | tr -d '\r\n')
-                if [ -n "$DIGEST" ]; then
-                  curl -fsS -u "${REG_USER}:${REG_PASS}" -X DELETE \
-                    "${REPO_URL}/manifests/${DIGEST}" -o /dev/null
-                  echo "  registry deleted :${tag}"
-                  PRUNED=$((PRUNED + 1))
-                fi
-              done <<< "$REG_OLD"
-              echo "  deleted ${PRUNED} tag(s); blobs freed by next weekly garbage-collect cron."
-            ) || echo "⚠ registry pruning encountered errors — deploy itself succeeded; housekeeping will retry next deploy / weekly GC"
+            # Logic lives in scripts/cleanup-registry.sh (scp'd above) so it
+            # can be shellchecked in CI and run locally for debugging. The
+            # script handles expected registry API errors internally (set +e)
+            # and always exits 0; any non-zero exit means an unexpected
+            # regression (env var missing, shell-level bug, etc.). We keep the
+            # wrapper as a failsafe so housekeeping never fails an already-
+            # healthy deploy, but escalate to a ::warning:: annotation so the
+            # failure is visible on the run page instead of buried in logs.
+            bash ./scripts/cleanup-registry.sh \
+              || echo "::warning title=Registry pruning failed::cleanup-registry.sh exited non-zero — deploy itself succeeded and weekly GC is the backstop, but this indicates a script-level regression worth investigating."
 
             # Visibility: each deploy log ends with the current Docker disk
             # footprint. If this trends upward across deploys, something is
