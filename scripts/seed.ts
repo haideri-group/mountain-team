@@ -81,8 +81,8 @@ async function main() {
 
   // Procedurally Generate 60 Mock Issues
   const mockIssues: (typeof issues.$inferInsert)[] = [];
-  // `as const` + explicit item types → elements are literal unions that
-  // match the drizzle enum columns without needing `as any` casts on push.
+  // Explicit drizzle-derived item types → elements are literal unions that
+  // match the enum columns, so push() assignments don't need `as any` casts.
   const statuses: NonNullable<typeof issues.$inferInsert.status>[] = ["todo", "in_progress", "done"];
   const priorities: NonNullable<typeof issues.$inferInsert.priority>[] = ["low", "medium", "high", "highest"];
   const types: NonNullable<typeof issues.$inferInsert.type>[] = ["story", "bug", "task"];
