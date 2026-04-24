@@ -135,6 +135,12 @@ jobs:
       # the homelab always runs the code matching this commit — one source
       # of truth. scp-action preserves paths, so cleanup-registry.sh lands
       # at /home/haider/teamflow-staging/scripts/cleanup-registry.sh.
+      #
+      # `source` MUST be comma-separated. The underlying drone-scp binary
+      # uses urfave/cli's StringSliceFlag, which splits env vars on commas
+      # only — a multi-line YAML block would become a single string with
+      # embedded newlines that filepath.Glob can't expand, silently
+      # uploading nothing.
       - name: Sync compose + scripts to homelab
         uses: appleboy/scp-action@v1.0.0
         with:
@@ -142,9 +148,7 @@ jobs:
           username: ${{ secrets.SSH_USER }}
           key: ${{ secrets.SSH_KEY }}
           port: ${{ vars.SSH_PORT || 22 }}
-          source: |
-            docker-compose.staging.yml
-            scripts/cleanup-registry.sh
+          source: "docker-compose.staging.yml,scripts/cleanup-registry.sh"
           target: /home/haider/teamflow-staging/
 
       - name: Deploy to homelab
