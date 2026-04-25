@@ -34,7 +34,11 @@ export async function POST(request: Request) {
     const countResult = await db.execute(
       sql`SELECT COUNT(*) as affected FROM issues WHERE LOWER(jiraStatusName) = LOWER(${mapping.jiraStatusName}) AND status != ${mapping.workflowStage}`,
     );
-    const affected = (countResult[0] as any)?.[0]?.affected || 0;
+    // db.execute returns [rows, fieldInfo]. For SELECT it's an array of
+    // objects; for DML it's a ResultSetHeader. We know this is SELECT, so
+    // cast via `unknown` to narrow to the row-array shape.
+    const countRows = countResult[0] as unknown as Array<{ affected: number }>;
+    const affected = countRows?.[0]?.affected ?? 0;
 
     // Mark mapping as reviewed (clear auto-mapped flag)
     if (mapping.isAutoMapped) {

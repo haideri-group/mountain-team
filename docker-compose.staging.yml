@@ -1,0 +1,54 @@
+# Staging stack for TeamFlow — deployed to /home/haider/teamflow-staging/.
+# The `web` image is published by CI to the self-hosted registry at
+# `registry.appz.cc/teamflow`. MySQL is NOT defined here — we reuse the
+# existing shared mysql-server container on the mysql-phpmyadmin_mysql-network
+# network (see STAGING_SETUP.md).
+#
+# This file is SCP'd from the repo to the homelab on every deploy, so the
+# image: line here is the source of truth — edit it here, not on the homelab.
+
+services:
+  web:
+    # Registry host is substituted from the $REGISTRY_HOST env at compose-parse
+    # time so the workflow's `vars.REGISTRY_HOST` is the single source of truth.
+    # Fallback `registry.appz.cc` keeps manual `docker compose` commands working
+    # on the homelab without needing to export the var.
+    image: ${REGISTRY_HOST:-registry.appz.cc}/teamflow:stage-latest
+    container_name: tmstage-web
+    restart: unless-stopped
+    env_file: .env
+    # Runtime env vars sourced from the `staging` GitHub Environment via the
+    # CI deploy workflow. Substituted at compose-parse time from the SSH
+    # session's exported envs. Anything set here overrides any same-named
+    # entry in `.env`. Keep this list narrow — only vars where the GitHub
+    # repo is a more reliable source than the homelab file.
+    environment:
+      # CDN base URL for avatars resolved via resolveAvatarUrl(). Just the
+      # PUBLIC URL — no R2 write credentials, so isR2Configured() returns
+      # false on staging and avatar caching is skipped here. Staging displays
+      # whatever production has cached at the same R2 keys (read-through).
+      CLOUDFLARE_R2_PUBLIC_URL: ${CLOUDFLARE_R2_PUBLIC_URL:-}
+    # Bind to localhost only — nginx on the host handles TLS and proxies
+    # https://staging-haider-team.appz.cc → 127.0.0.1:3007.
+    ports:
+      - "127.0.0.1:3007:3000"
+    networks:
+      - mysql-network
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    # Modest resource cap — this box runs many stacks, be polite.
+    deploy:
+      resources:
+        limits:
+          memory: 1g
+
+networks:
+  # Reuse the network created by /home/haider/mysql-phpmyadmin. `web` reaches
+  # MySQL at `mysql-server:3306` via this shared network.
+  mysql-network:
+    external: true
+    name: mysql-phpmyadmin_mysql-network

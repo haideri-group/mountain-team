@@ -1,0 +1,280 @@
+name: Deploy — Staging
+
+# Fires on every push to the `stage` branch. Builds a Docker image, pushes it
+# to the self-hosted registry at `registry.appz.cc`, then SSHes into the
+# homelab to pull + restart the staging stack. Migrations run via
+# `yarn db:migrate:apply` inside a one-shot container before the long-lived
+# web container starts, so schema lands before code.
+#
+# Registry lives on the same homelab (see `/opt/registry/` and the nginx site
+# `/etc/nginx/sites-available/registry.appz.cc`). Credentials: staging env →
+# `vars.REGISTRY_{HOST,USERNAME}` + `secrets.REGISTRY_PASSWORD`.
+
+on:
+  push:
+    branches: [stage]
+  workflow_dispatch: # manual re-run button
+
+concurrency:
+  # Only one staging deploy in flight at a time. `cancel-in-progress: false`
+  # means newer pushes QUEUE behind the current run — we don't cancel a deploy
+  # mid-migration. Queue depth >1 means the intermediate run is wasted but
+  # never leaves the DB in a half-migrated state.
+  group: deploy-staging
+  cancel-in-progress: false
+
+env:
+  # Image coordinates: registry.appz.cc/teamflow:{stage-latest, stage-<sha>}.
+  # REGISTRY host comes from staging env vars so we can swap it without editing
+  # the workflow. IMAGE_NAME stays hardcoded — one project per registry repo.
+  IMAGE_NAME: teamflow
+  LATEST_TAG: stage-latest
+
+jobs:
+  checks:
+    name: Type-check + Lint
+    runs-on: ubuntu-latest
+    # Guard: workflow_dispatch can fire from any branch/tag. Staging must
+    # only ever be built + deployed from the `stage` branch — otherwise a
+    # manual trigger from a feature branch would overwrite `stage-latest`
+    # with that branch's code and push it to the homelab.
+    if: github.ref == 'refs/heads/stage'
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+      - name: Enable Corepack
+        run: corepack enable && corepack prepare yarn@4.13.0 --activate
+      - name: Cache Yarn
+        uses: actions/cache@v5
+        with:
+          path: |
+            .yarn/cache
+            node_modules
+          key: yarn-${{ hashFiles('yarn.lock') }}
+      - run: yarn install --immutable
+      - run: yarn type-check
+      # Lint is advisory for now — the codebase has pre-existing
+      # `no-explicit-any` errors in legacy files (seed.ts, overview-dashboard,
+      # webhooks/github, etc.) that predate this staging pipeline. Keeping the
+      # step for visibility but not letting it block the deploy; clean up in a
+      # dedicated `chore/lint-cleanup` PR later.
+      - run: yarn lint
+        continue-on-error: true
+      # ShellCheck is blocking: scripts/ bash is production infra, not advisory.
+      # shellcheck is preinstalled on ubuntu-latest runners (no setup step).
+      - name: ShellCheck scripts
+        run: shellcheck scripts/cleanup-registry.sh
+
+  build-and-push:
+    name: Build + Push Image
+    needs: checks
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/stage'
+    # Opts into the `staging` GitHub Environment so env-scoped vars
+    # (NEXT_PUBLIC_APP_URL, REGISTRY_*) are available during the build.
+    # Environment branch protection also blocks workflow_dispatch from
+    # any branch other than `stage` at the platform level.
+    environment: staging
+    outputs:
+      sha_tag: ${{ steps.meta.outputs.sha_tag }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Login to registry
+        uses: docker/login-action@v4
+        with:
+          registry: ${{ vars.REGISTRY_HOST }}
+          username: ${{ vars.REGISTRY_USERNAME }}
+          password: ${{ secrets.REGISTRY_PASSWORD }}
+
+      - name: Compute tags
+        id: meta
+        run: |
+          SHA_SHORT=$(echo "${{ github.sha }}" | cut -c1-7)
+          SHA_TAG="stage-${SHA_SHORT}"
+          echo "sha_tag=${SHA_TAG}" >> "$GITHUB_OUTPUT"
+          echo "Will tag image as: ${{ env.LATEST_TAG }} + ${SHA_TAG}"
+
+      - name: Build + push
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ vars.REGISTRY_HOST }}/${{ env.IMAGE_NAME }}:${{ env.LATEST_TAG }}
+            ${{ vars.REGISTRY_HOST }}/${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.sha_tag }}
+          # NEXT_PUBLIC_* vars are baked in at build time — pass via build-args.
+          build-args: |
+            NEXT_PUBLIC_JIRA_BASE_URL=${{ vars.NEXT_PUBLIC_JIRA_BASE_URL }}
+            NEXT_PUBLIC_APP_URL=${{ vars.NEXT_PUBLIC_APP_URL }}
+          cache-from: type=gha
+          # `ignore-error=true` makes cache EXPORT failures non-fatal. GHA
+          # cache's Azure edge occasionally 502s mid-export, which used to
+          # fail the whole build (even though the image itself pushed fine
+          # to registry.appz.cc). With this flag, the image push stays strict
+          # but a cache hiccup only slows the next build instead of killing
+          # CI. Still on GHA (free quota, zero homelab disk) — switching to
+          # type=registry caching would have been simpler but would grow
+          # registry storage on every deploy, which we deliberately avoid.
+          cache-to: type=gha,mode=max,ignore-error=true
+
+  deploy:
+    name: SSH Deploy → Homelab
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/stage'
+    # Opts into the `staging` GitHub Environment so env-scoped secrets
+    # (SSH_HOST, SSH_USER, SSH_KEY, REGISTRY_PASSWORD) and vars (SSH_PORT,
+    # REGISTRY_{HOST,USERNAME}) resolve. Without this, `${{ secrets.* }}`
+    # silently expand to empty and appleboy/ssh-action aborts with
+    # "missing server host".
+    environment: staging
+    steps:
+      - uses: actions/checkout@v6
+
+      # The homelab's docker-compose file is manually maintained (no git
+      # checkout at /home/haider/teamflow-staging/). SCP the repo's
+      # docker-compose.staging.yml AND any helper scripts on every deploy so
+      # the homelab always runs the code matching this commit — one source
+      # of truth. scp-action preserves paths, so cleanup-registry.sh lands
+      # at /home/haider/teamflow-staging/scripts/cleanup-registry.sh.
+      #
+      # `source` MUST be comma-separated. The underlying drone-scp binary
+      # uses urfave/cli's StringSliceFlag, which splits env vars on commas
+      # only — a multi-line YAML block would become a single string with
+      # embedded newlines that filepath.Glob can't expand, silently
+      # uploading nothing.
+      - name: Sync compose + scripts to homelab
+        uses: appleboy/scp-action@v1.0.0
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_KEY }}
+          port: ${{ vars.SSH_PORT || 22 }}
+          source: "docker-compose.staging.yml,scripts/cleanup-registry.sh"
+          target: /home/haider/teamflow-staging/
+
+      - name: Deploy to homelab
+        uses: appleboy/ssh-action@v1.2.5
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_KEY }}
+          port: ${{ vars.SSH_PORT || 22 }}
+          command_timeout: 10m
+          # Pass registry creds + compose-substitution vars into the SSH
+          # session. Listed here so appleboy/ssh-action propagates them; the
+          # `env:` block at the bottom of this step provides the values from
+          # the `staging` GitHub Environment.
+          envs: REG_HOST,REG_USER,REG_PASS,IMAGE_NAME,R2_PUBLIC_URL
+          script: |
+            set -euo pipefail
+            cd /home/haider/teamflow-staging
+
+            # Export under the name docker compose expects for substitution in
+            # docker-compose.staging.yml's `image: ${REGISTRY_HOST:-…}` line.
+            export REGISTRY_HOST="$REG_HOST"
+
+            # Runtime env vars sourced from the `staging` GitHub Environment.
+            # Re-exported here under the names docker-compose.staging.yml's
+            # `environment:` block references via ${VAR:-} substitution.
+            # Single source of truth is the GitHub Environment `vars.*`, not
+            # the homelab .env.
+            export CLOUDFLARE_R2_PUBLIC_URL="$R2_PUBLIC_URL"
+
+            echo "▶ Logging into registry from homelab…"
+            echo "$REG_PASS" | docker login "$REG_HOST" -u "$REG_USER" --password-stdin
+
+            echo "▶ Pulling new image…"
+            docker compose -f docker-compose.staging.yml pull web
+
+            echo "▶ Running migrations (one-shot container)…"
+            # One-shot container: uses the NEW image's migrate script, reaches MySQL
+            # via the shared network, exits when done. --rm + --no-deps ensures we
+            # don't spin up sibling services that don't exist anyway.
+            docker compose -f docker-compose.staging.yml run --rm --no-deps web yarn db:migrate:apply
+
+            echo "▶ Restarting web with new image…"
+            docker compose -f docker-compose.staging.yml up -d web
+
+            echo "▶ Waiting for /api/health…"
+            HEALTHY=false
+            for i in {1..30}; do
+              if curl -fsS http://127.0.0.1:3007/api/health >/dev/null; then
+                echo "  ✓ Healthy after ${i} attempt(s)."
+                HEALTHY=true
+                break
+              fi
+              sleep 2
+            done
+
+            if [ "$HEALTHY" != "true" ]; then
+              echo "  ✗ Health check failed after 60s. Dumping recent logs:"
+              docker compose -f docker-compose.staging.yml logs --tail 80 web
+              exit 1
+            fi
+
+            # ─── Prune old local images (homelab docker daemon) ────────────
+            # Keep `stage-latest` + 3 most recent `stage-<sha>` tags locally
+            # for fast rollback. Doesn't free registry-side storage — that's
+            # the next block. Bounds homelab docker cache at ~400-800 MB.
+            echo "▶ Pruning old local images (keep stage-latest + 3 stage-<sha>)…"
+            LOCAL_OLD=$(
+              docker image ls "${REG_HOST}/${IMAGE_NAME}" --format '{{.CreatedAt}}|{{.Tag}}' \
+                | sort -r \
+                | awk -F'|' '$2 ~ /^stage-[a-f0-9]{7,}$/ { print $2 }' \
+                | tail -n +4
+            )
+            if [ -n "$LOCAL_OLD" ]; then
+              for tag in $LOCAL_OLD; do
+                echo "  local removing :${tag}"
+                docker rmi -f "${REG_HOST}/${IMAGE_NAME}:${tag}" || true
+              done
+            else
+              echo "  nothing to prune locally."
+            fi
+            docker image prune -f
+
+            # ─── Prune old tags on the registry itself ─────────────────────
+            # Mirrors the local policy (keep 3 newest stage-<sha>) but against
+            # the registry HTTP API so registry disk is bounded too. Only
+            # deletes manifests — actual blob reclamation happens in the
+            # weekly `registry garbage-collect` cron on the homelab.
+            #
+            # Logic lives in scripts/cleanup-registry.sh (scp'd above) so it
+            # can be shellchecked in CI and run locally for debugging. The
+            # script handles expected registry API errors internally (set +e)
+            # and always exits 0; any non-zero exit means an unexpected
+            # regression (env var missing, shell-level bug, etc.). We keep the
+            # wrapper as a failsafe so housekeeping never fails an already-
+            # healthy deploy, but escalate to a ::warning:: annotation so the
+            # failure is visible on the run page instead of buried in logs.
+            bash ./scripts/cleanup-registry.sh \
+              || echo "::warning title=Registry pruning failed::cleanup-registry.sh exited non-zero — deploy itself succeeded and weekly GC is the backstop, but this indicates a script-level regression worth investigating."
+
+            # Visibility: each deploy log ends with the current Docker disk
+            # footprint. If this trends upward across deploys, something is
+            # bypassing the prune (e.g., unrelated images on the host).
+            echo "▶ Docker disk usage after deploy:"
+            docker system df
+        env:
+          REG_HOST: ${{ vars.REGISTRY_HOST }}
+          REG_USER: ${{ vars.REGISTRY_USERNAME }}
+          REG_PASS: ${{ secrets.REGISTRY_PASSWORD }}
+          IMAGE_NAME: ${{ env.IMAGE_NAME }}
+          # `staging` GitHub Environment variable (Settings → Environments →
+          # staging → Variables). Resolves because the deploy job opts in via
+          # `environment: staging` above. Empty value is non-fatal —
+          # resolveAvatarUrl() falls back to relative paths and avatars just
+          # don't load.
+          R2_PUBLIC_URL: ${{ vars.CLOUDFLARE_R2_PUBLIC_URL }}
+
+      - name: Report success
+        if: success()
+        run: |
+          echo "::notice title=Staging deployed::Image ${{ vars.REGISTRY_HOST }}/${{ env.IMAGE_NAME }}:${{ needs.build-and-push.outputs.sha_tag }} is live at https://staging-haider-team.appz.cc"

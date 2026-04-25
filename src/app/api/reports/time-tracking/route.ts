@@ -127,8 +127,6 @@ export async function GET(request: Request) {
     }
 
     let teamTotal = 0;
-    let teamJira = 0;
-    let teamTD = 0;
 
     const memberResults = members
       .map((m) => {
@@ -139,8 +137,6 @@ export async function GET(request: Request) {
         const allDays = new Set([...jira.days, ...td.days]);
 
         teamTotal += totalSeconds;
-        teamJira += jira.seconds;
-        teamTD += td.seconds;
 
         return {
           memberId: m.id,

@@ -9,7 +9,7 @@ import { IssueTypeIcon } from "@/components/shared/issue-type-icon";
 import { DeploymentIndicator } from "./deployment-indicator";
 import type { MemberStatus } from "@/types";
 
-interface EnrichedIssue {
+export interface EnrichedIssue {
   id: string;
   jiraKey: string;
   title: string;
@@ -25,7 +25,7 @@ interface EnrichedIssue {
   deploymentStatus: "production" | "staging" | null;
 }
 
-interface DevCardMember {
+export interface DevCardMember {
   id: string;
   displayName: string;
   email: string | null;

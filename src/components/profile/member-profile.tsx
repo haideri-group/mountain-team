@@ -10,13 +10,35 @@ import { MonthlyChart } from "./monthly-chart";
 import { TaskHistoryTable } from "./task-history-table";
 import { TimeTracking } from "./time-tracking";
 
+// Shape of GET /api/team/[id]/profile. Each child component
+// (ProfileHeader, StatsStrip, CurrentWork, MonthlyChart, TaskHistoryTable)
+// owns its own prop contract but does not export its types — this boundary
+// passes through server data to the children. Properly typing every field
+// here means re-declaring ~6 interfaces; leaving it loose keeps the file
+// small while child-prop validation still runs at each call site. Follow-up
+// (tracked separately): extract a shared `src/types/profile.ts` and remove
+// the escape hatch.
+/* eslint-disable @typescript-eslint/no-explicit-any */
+type MemberProfileData = {
+  member: any;
+  stats: any;
+  currentIssue: any;
+  queuedIssues: any[];
+  inReviewIssues: any[];
+  recentDone: any[];
+  allIssues: any[];
+  monthlyData: any[];
+  boards: Array<{ id: string; jiraKey: string; name: string; color: string | null }>;
+};
+/* eslint-enable @typescript-eslint/no-explicit-any */
+
 interface MemberProfileProps {
   memberId: string;
   isAdmin?: boolean;
 }
 
 export function MemberProfile({ memberId, isAdmin = false }: MemberProfileProps) {
-  const [data, setData] = useState<any>(null);
+  const [data, setData] = useState<MemberProfileData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 

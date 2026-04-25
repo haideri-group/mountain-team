@@ -42,6 +42,10 @@ yarn-error.log*
 local.db
 local.db-*
 
+# Local database dumps from scripts/dump-prod-to-sql.sh — contain real user data
+teamflow-*-backup-*.sql
+*.sql.gz
+
 # vercel
 .vercel
 

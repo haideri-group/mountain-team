@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 import { auth } from "@/auth";
+import { sanitizeErrorText } from "@/lib/jira/client";
 
 const PEOPLE_API = "https://people.googleapis.com/v1";
 
@@ -50,9 +51,19 @@ export async function GET(request: NextRequest) {
     );
 
     if (!res.ok) {
-      const text = await res.text();
+      // Surface the upstream Google API error body to the client — it's
+      // typically a JSON-encoded `{ error: { code, message, status } }`
+      // structure that's far more useful for debugging than a bare status
+      // code (e.g., expired token vs missing scope vs revoked grant).
+      // sanitizeErrorText() redacts any token-shaped strings (project-wide
+      // pattern from src/lib/jira/client). The 1000-char cap prevents an
+      // unexpected upstream response (HTML maintenance page, multi-MB
+      // stacktrace) from blowing up our response size.
+      const raw = await res.text();
+      const safe = sanitizeErrorText(raw);
+      const truncated = safe.length > 1000 ? safe.slice(0, 1000) + "…" : safe;
       return NextResponse.json(
-        { error: `Directory search failed: ${res.status}` },
+        { error: `Directory search failed: ${res.status} ${truncated}` },
         { status: res.status },
       );
     }

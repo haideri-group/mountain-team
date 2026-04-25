@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { issues, boards, team_members } from "@/lib/db/schema";
-import { eq, and } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { withResolvedAvatar } from "@/lib/db/helpers";
 import { requirePublicOrSession } from "@/lib/ip/gate";
 

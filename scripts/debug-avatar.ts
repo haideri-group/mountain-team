@@ -46,8 +46,8 @@ async function main() {
         if (res.status >= 300 && res.status < 400) {
           console.log("Redirects to:", res.headers.get("location")?.substring(0, 80));
         }
-      } catch (e: any) {
-        console.log("Avatar fetch error:", e.message);
+      } catch (e) {
+        console.log("Avatar fetch error:", e instanceof Error ? e.message : String(e));
       }
     }
   }
