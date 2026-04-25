@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 import { db } from "@/lib/db";
 import { team_members, issues, boards } from "@/lib/db/schema";
-import { like, or, eq, ne } from "drizzle-orm";
+import { like, or } from "drizzle-orm";
 import { auth } from "@/auth";
 import { withResolvedAvatars } from "@/lib/db/helpers";
 

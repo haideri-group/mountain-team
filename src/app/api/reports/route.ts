@@ -29,12 +29,6 @@ function dateDiffDays(a: string, b: string): number {
   return (new Date(b).getTime() - new Date(a).getTime()) / (1000 * 60 * 60 * 24);
 }
 
-function getWeekNumber(dateStr: string): number {
-  const d = new Date(dateStr);
-  const startOfYear = new Date(d.getFullYear(), 0, 1);
-  return Math.ceil(((d.getTime() - startOfYear.getTime()) / 86400000 + startOfYear.getDay() + 1) / 7);
-}
-
 // --- Period calculation ---
 
 function getPeriodDates(period: string): { from: string; to: string; prevFrom: string; prevTo: string; months: number } {
@@ -71,7 +65,7 @@ export async function GET(request: NextRequest) {
     const boardFilter = searchParams.get("board") || "";
     const period = searchParams.get("period") || "last-6-months";
 
-    const { from, to, prevFrom, prevTo, months } = getPeriodDates(period);
+    const { from, prevFrom, prevTo, months } = getPeriodDates(period);
     const today = new Date().toISOString().split("T")[0];
 
     // Fetch tracked boards
