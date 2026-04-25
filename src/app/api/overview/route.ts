@@ -304,12 +304,14 @@ export async function GET(request: Request) {
       },
       {
         headers: {
-          // Cache for 30s, serve stale for up to 60s more while revalidating.
-          // Overview data moves on webhook-driven syncs, so 30s of staleness
-          // is invisible to users but eliminates re-query cost on rapid
-          // re-navigation (e.g., clicking between tabs, back-navigation).
-          "Cache-Control": "public, max-age=30, stale-while-revalidate=60",
-          // DIAG: temporary timing instrumentation — see top of handler.
+          // DIAG: cache disabled while X-Diag-* headers are present, so each
+          // request re-runs the handler and the timings reflect THIS request.
+          // Otherwise Fastly caches the response with the headers, and a
+          // subsequent cache hit would serve stale timings from someone
+          // else's request — invalidating the measurement experiment.
+          // Restore "public, max-age=30, stale-while-revalidate=60" when the
+          // diagnostic instrumentation is removed.
+          "Cache-Control": "private, no-store",
           "X-Diag-Total-Ms": String(__marks["before-response"]),
           "X-Diag-Marks": JSON.stringify(__marks),
         },
