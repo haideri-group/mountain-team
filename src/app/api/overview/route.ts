@@ -21,22 +21,38 @@ const ACTIVE_STATUSES = [
 ] as const;
 
 export async function GET(request: Request) {
+  // ─── DIAG: temporary instrumentation ─────────────────────────────────────
+  // Records timing at handler entry, after each major step, and at return.
+  // Surfaced in response headers (X-Diag-*) so curl -D - can read them
+  // without parsing the JSON body. Comparing X-Diag-Total-Ms (handler) to
+  // observed TTFB tells us whether the slowness is inside the handler or
+  // somewhere else in the Railway/Fastly/Next.js stack. Will be removed in
+  // the fix-PR.
+  const __t0 = performance.now();
+  const __mark = (label: string, marks: Record<string, number>) => {
+    marks[label] = Math.round((performance.now() - __t0) * 10) / 10;
+  };
+  const __marks: Record<string, number> = {};
+
   try {
     // Guest-readable endpoint — allowed for logged-in users OR for
     // requests from IPs in the admin-managed allowlist.
     const gate = await requirePublicOrSession(request);
+    __mark("after-gate", __marks);
     if (!gate.allowed) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
     // Fetch all members (exclude departed by default — client can filter)
     const allMembers = withResolvedAvatars(await db.select().from(team_members));
+    __mark("after-Q1-members", __marks);
 
     // Fetch tracked boards
     const trackedBoards = await db
       .select()
       .from(boards)
       .where(eq(boards.isTracked, true));
+    __mark("after-Q2-boards", __marks);
 
     const trackedBoardIds = trackedBoards.map((b) => b.id);
 
@@ -109,6 +125,7 @@ export async function GET(request: Request) {
           ),
         )) as IssueRow[];
     }
+    __mark("after-Q3-issues", __marks);
 
     // Build board lookup for colors
     const boardMap = new Map(trackedBoards.map((b) => [b.id, b]));
@@ -121,6 +138,7 @@ export async function GET(request: Request) {
           .from(deployments)
           .where(inArray(deployments.jiraKey, issueKeys))
       : [];
+    __mark("after-Q4-deployments", __marks);
 
     const deploymentStatusMap = new Map<string, "production" | "staging">();
     for (const d of matchingDeployments) {
@@ -151,6 +169,7 @@ export async function GET(request: Request) {
           )
           .groupBy(issues.assigneeId, issues.status)
       : [];
+    __mark("after-Q5-lifetime", __marks);
     const doneByAssignee = new Map<string, number>();
     const closedByAssignee = new Map<string, number>();
     for (const row of lifetimeCounts) {
@@ -271,6 +290,7 @@ export async function GET(request: Request) {
       overdueChange: 0, // TODO: compute vs last week
     };
 
+    __mark("before-response", __marks);
     return NextResponse.json(
       {
         members: membersWithIssues,
@@ -289,6 +309,9 @@ export async function GET(request: Request) {
           // is invisible to users but eliminates re-query cost on rapid
           // re-navigation (e.g., clicking between tabs, back-navigation).
           "Cache-Control": "public, max-age=30, stale-while-revalidate=60",
+          // DIAG: temporary timing instrumentation — see top of handler.
+          "X-Diag-Total-Ms": String(__marks["before-response"]),
+          "X-Diag-Marks": JSON.stringify(__marks),
         },
       },
     );
