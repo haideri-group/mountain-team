@@ -198,15 +198,13 @@ export async function GET(request: Request) {
     // ── Metrics ────────────────────────────────────────────────────────
     const deploymentsThisWeek = allDeployments.filter((d) => d.deployedAt >= weekStart).length;
 
-    // Pending releases: staging but not production
-    const stagingKeys = new Set<string>();
+    // Production-deployed key set — looked up later (`productionKeys.has`)
+    // to filter already-shipped issues out of the "pending" computation.
     const productionKeys = new Set<string>();
     for (const d of allDeployments) {
-      const key = `${d.jiraKey}:${d.siteName || "_"}`;
-      if (d.environment === "staging") stagingKeys.add(key);
-      if (d.environment === "production" || d.environment === "canonical") productionKeys.add(key);
+      if (d.environment !== "production" && d.environment !== "canonical") continue;
+      productionKeys.add(`${d.jiraKey}:${d.siteName || "_"}`);
     }
-    const pendingKeys = [...stagingKeys].filter((k) => !productionKeys.has(k));
 
     // Build per-issue production deployed sites map
     const issueDeployedSites = new Map<string, string[]>();

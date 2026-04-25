@@ -50,9 +50,13 @@ export async function GET(request: NextRequest) {
     );
 
     if (!res.ok) {
+      // Surface the upstream Google API error body to the client — it's
+      // typically a JSON-encoded `{ error: { code, message, status } }`
+      // structure that's far more useful for debugging than a bare status
+      // code (e.g., expired token vs missing scope vs revoked grant).
       const text = await res.text();
       return NextResponse.json(
-        { error: `Directory search failed: ${res.status}` },
+        { error: `Directory search failed: ${res.status} ${text}` },
         { status: res.status },
       );
     }

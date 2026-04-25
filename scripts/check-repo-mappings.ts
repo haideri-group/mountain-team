@@ -27,7 +27,6 @@ async function main() {
 
   // Check deployments for PROD-5338
   const { deployments } = await import("../src/lib/db/schema");
-  const { like } = await import("drizzle-orm");
   const deploys = await db.select().from(deployments).where(eq(deployments.jiraKey, "PROD-5338"));
   console.log(`Deployments for PROD-5338: ${deploys.length}`);
   for (const d of deploys) {
