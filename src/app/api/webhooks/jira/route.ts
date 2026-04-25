@@ -20,6 +20,26 @@ async function logWebhook(event: string | null, summary: string, payload?: strin
   } catch { /* non-fatal */ }
 }
 
+// Helper: drop the cached /api/overview payload so the next page load
+// reflects the webhook event immediately. Best-effort — invalidation
+// failures must not propagate (the unstable_cache 30s fallback is the
+// safety net), and `next/cache` is a sync-aware import inside an async
+// scope so it's loaded lazily.
+async function invalidateOverviewCache() {
+  try {
+    const { revalidateTag } = await import("next/cache");
+    // "max" profile = stale-while-revalidate: serves stale immediately,
+    // recomputes in background. Single-arg revalidateTag(tag) is
+    // deprecated in Next.js 16.
+    revalidateTag("overview", "max");
+  } catch (err) {
+    console.error(
+      "Overview cache invalidation failed:",
+      err instanceof Error ? err.message : String(err),
+    );
+  }
+}
+
 // POST /api/webhooks/jira -- Receives JIRA webhook events
 export async function POST(request: Request) {
   try {
@@ -81,6 +101,7 @@ export async function POST(request: Request) {
           .update(issues)
           .set({ status: "closed" })
           .where(eq(issues.id, existing.id));
+        await invalidateOverviewCache();
       }
 
       return NextResponse.json({ ok: true, action: "marked_closed" });
@@ -185,6 +206,11 @@ export async function POST(request: Request) {
     } catch {
       // Non-fatal
     }
+
+    // Drop the cached /api/overview payload so the next page load reflects
+    // this webhook event immediately, instead of waiting for the 30s
+    // unstable_cache fallback to expire.
+    await invalidateOverviewCache();
 
     return NextResponse.json({
       ok: true,
