@@ -12,16 +12,18 @@ import { and, eq, gte, inArray, or, sql } from "drizzle-orm";
 // where the 15-second TTFB is actually going: per-query latency, in-memory work,
 // auth check, etc.
 //
-// Auth: admin session OR ?secret=<DIAG_SECRET env var>. The secret path lets
-// the agent run this without a session cookie; constant-time compared, fails
-// closed if DIAG_SECRET is unset or shorter than 16 chars.
+// Auth: admin session OR `Authorization: Bearer <DIAG_SECRET>` header. The
+// secret path lets the agent run this without a session cookie; constant-time
+// compared at the byte level, fails closed if DIAG_SECRET is unset or under
+// 16 bytes. Header (not query string) so the secret never lands in nginx /
+// Cloudflare / Railway access logs, browser history, or referrer chains.
 //
 // After diagnosing, this endpoint should be deleted (or kept under a feature
 // flag) — it's not meant for steady-state use.
 //
 // Usage:
 //   curl -b "authjs.session-token=…" https://haider-team.appz.cc/api/debug/overview-timing
-//   curl 'https://haider-team.appz.cc/api/debug/overview-timing?secret=…'
+//   curl -H "Authorization: Bearer <DIAG_SECRET>" https://haider-team.appz.cc/api/debug/overview-timing
 
 const ACTIVE_STATUSES = [
   "backlog",
@@ -43,25 +45,34 @@ export async function GET(request: Request) {
 
   // Auth gate. Two paths, either is sufficient:
   //   1. Admin session cookie (normal browser usage).
-  //   2. ?secret=<value> matching DIAG_SECRET env var (lets the agent run
-  //      this from a terminal without scraping a session cookie). Fails
-  //      closed if DIAG_SECRET is unset or <16 chars; constant-time compared.
+  //   2. `Authorization: Bearer <DIAG_SECRET>` header. Lets the agent run
+  //      this from a terminal without scraping a session cookie. Header
+  //      (not query) so the secret never lands in access logs / referrers /
+  //      browser history. Constant-time compared on raw bytes; fails closed
+  //      if DIAG_SECRET is unset or under 16 bytes.
   const authStart = performance.now();
   const session = await auth();
   phases.push({ name: "auth()", ms: round(performance.now() - authStart) });
 
   const isAdminSession = session?.user?.role === "admin";
-  const providedSecret = new URL(request.url).searchParams.get("secret");
+
+  const authHeader = request.headers.get("authorization");
+  const providedSecret = authHeader?.startsWith("Bearer ")
+    ? authHeader.slice("Bearer ".length)
+    : null;
   const expectedSecret = process.env.DIAG_SECRET;
-  const isSecretValid =
-    !!expectedSecret &&
-    expectedSecret.length >= 16 &&
-    !!providedSecret &&
-    providedSecret.length === expectedSecret.length &&
-    crypto.timingSafeEqual(
-      Buffer.from(providedSecret),
-      Buffer.from(expectedSecret),
-    );
+
+  // Compare byte-for-byte (timingSafeEqual operates on bytes; String.length
+  // counts UTF-16 code units which can differ from UTF-8 byte length for
+  // non-ASCII inputs — mismatched buffer lengths would throw and 500).
+  const isSecretValid = (() => {
+    if (!expectedSecret || Buffer.byteLength(expectedSecret) < 16) return false;
+    if (!providedSecret) return false;
+    const provided = Buffer.from(providedSecret);
+    const expected = Buffer.from(expectedSecret);
+    if (provided.length !== expected.length) return false;
+    return crypto.timingSafeEqual(provided, expected);
+  })();
 
   if (!isAdminSession && !isSecretValid) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
