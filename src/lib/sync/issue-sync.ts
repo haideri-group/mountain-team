@@ -13,6 +13,7 @@ import {
 } from "@/lib/jira/issues";
 import { normalizeIssue, calculateCycleTime, loadStatusMappingCache, invalidateStatusMappingCache } from "@/lib/jira/normalizer";
 import { sanitizeErrorText } from "@/lib/jira/client";
+import { OVERVIEW_CACHE_TAG } from "@/lib/config";
 import { recordDeploymentsForIssue } from "@/lib/github/issue-deployment-sync";
 import { clearCompareCache } from "@/lib/github/deployment-propagation";
 import { emitSyncLogChange } from "./events";
@@ -429,6 +430,21 @@ export async function runIssueSync(
       await generateReleaseNotifications();
     } catch (relNotifError) {
       logHookFailure("Release notification generation", relNotifError);
+    }
+
+    // Drop the cached /api/overview payload so the next page load reflects
+    // freshly-synced issues immediately. Without this, users would see
+    // up-to-30s stale data after each sync (the unstable_cache time-based
+    // fallback). Wrapped in try/catch because cache invalidation is a
+    // best-effort optimization — a failure here mustn't fail the sync.
+    try {
+      const { revalidateTag } = await import("next/cache");
+      // "max" profile = stale-while-revalidate: serves stale immediately,
+      // recomputes in background. Single-arg revalidateTag(tag) is
+      // deprecated in Next.js 16.
+      revalidateTag(OVERVIEW_CACHE_TAG, "max");
+    } catch (revalErr) {
+      logHookFailure("Overview cache invalidation", revalErr);
     }
 
     return { logId, result };
