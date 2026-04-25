@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import crypto from "node:crypto";
 import { auth } from "@/auth";
 import { db } from "@/lib/db";
 import { team_members, issues, boards, deployments } from "@/lib/db/schema";
@@ -11,11 +12,16 @@ import { and, eq, gte, inArray, or, sql } from "drizzle-orm";
 // where the 15-second TTFB is actually going: per-query latency, in-memory work,
 // auth check, etc.
 //
-// Admin-only. After diagnosing, this endpoint should be deleted (or kept under
-// a feature flag) — it's not meant for steady-state use.
+// Auth: admin session OR ?secret=<DIAG_SECRET env var>. The secret path lets
+// the agent run this without a session cookie; constant-time compared, fails
+// closed if DIAG_SECRET is unset or shorter than 16 chars.
+//
+// After diagnosing, this endpoint should be deleted (or kept under a feature
+// flag) — it's not meant for steady-state use.
 //
 // Usage:
 //   curl -b "authjs.session-token=…" https://haider-team.appz.cc/api/debug/overview-timing
+//   curl 'https://haider-team.appz.cc/api/debug/overview-timing?secret=…'
 
 const ACTIVE_STATUSES = [
   "backlog",
@@ -31,17 +37,34 @@ const ACTIVE_STATUSES = [
 
 type Phase = { name: string; ms: number; rows?: number; note?: string };
 
-export async function GET() {
+export async function GET(request: Request) {
   const phases: Phase[] = [];
   const t0 = performance.now();
 
-  // Auth gate (admin-only — diagnostic endpoint exposes timing internals)
+  // Auth gate. Two paths, either is sufficient:
+  //   1. Admin session cookie (normal browser usage).
+  //   2. ?secret=<value> matching DIAG_SECRET env var (lets the agent run
+  //      this from a terminal without scraping a session cookie). Fails
+  //      closed if DIAG_SECRET is unset or <16 chars; constant-time compared.
   const authStart = performance.now();
   const session = await auth();
   phases.push({ name: "auth()", ms: round(performance.now() - authStart) });
 
-  if (!session?.user || session.user.role !== "admin") {
-    return NextResponse.json({ error: "Admin only" }, { status: 401 });
+  const isAdminSession = session?.user?.role === "admin";
+  const providedSecret = new URL(request.url).searchParams.get("secret");
+  const expectedSecret = process.env.DIAG_SECRET;
+  const isSecretValid =
+    !!expectedSecret &&
+    expectedSecret.length >= 16 &&
+    !!providedSecret &&
+    providedSecret.length === expectedSecret.length &&
+    crypto.timingSafeEqual(
+      Buffer.from(providedSecret),
+      Buffer.from(expectedSecret),
+    );
+
+  if (!isAdminSession && !isSecretValid) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
   // ── Baseline: trivial round-trip ──────────────────────────────────────────
