@@ -13,6 +13,7 @@ import {
 } from "@/lib/jira/issues";
 import { normalizeIssue, calculateCycleTime, loadStatusMappingCache, invalidateStatusMappingCache } from "@/lib/jira/normalizer";
 import { sanitizeErrorText } from "@/lib/jira/client";
+import { OVERVIEW_CACHE_TAG } from "@/lib/config";
 import { recordDeploymentsForIssue } from "@/lib/github/issue-deployment-sync";
 import { clearCompareCache } from "@/lib/github/deployment-propagation";
 import { emitSyncLogChange } from "./events";
@@ -441,7 +442,7 @@ export async function runIssueSync(
       // "max" profile = stale-while-revalidate: serves stale immediately,
       // recomputes in background. Single-arg revalidateTag(tag) is
       // deprecated in Next.js 16.
-      revalidateTag("overview", "max");
+      revalidateTag(OVERVIEW_CACHE_TAG, "max");
     } catch (revalErr) {
       logHookFailure("Overview cache invalidation", revalErr);
     }

@@ -9,6 +9,8 @@ import { generateNotificationForIssue } from "@/lib/notifications/generator";
 import { refreshReleasesForIssue } from "@/lib/sync/release-sync";
 import { reconcileReleaseIssues } from "@/lib/releases/sync-release-issues";
 import type { JiraIssueRaw } from "@/lib/jira/issues";
+import { sanitizeErrorText } from "@/lib/jira/client";
+import { OVERVIEW_CACHE_TAG } from "@/lib/config";
 
 // Helper: log webhook event for diagnostics
 async function logWebhook(event: string | null, summary: string, payload?: string) {
@@ -31,11 +33,11 @@ async function invalidateOverviewCache() {
     // "max" profile = stale-while-revalidate: serves stale immediately,
     // recomputes in background. Single-arg revalidateTag(tag) is
     // deprecated in Next.js 16.
-    revalidateTag("overview", "max");
+    revalidateTag(OVERVIEW_CACHE_TAG, "max");
   } catch (err) {
     console.error(
       "Overview cache invalidation failed:",
-      err instanceof Error ? err.message : String(err),
+      sanitizeErrorText(err instanceof Error ? err.message : String(err)),
     );
   }
 }
@@ -177,6 +179,15 @@ export async function POST(request: Request) {
       .values({ id, jiraKey: normalized.jiraKey, ...fields })
       .onDuplicateKeyUpdate({ set: fields });
 
+    // Drop the cached /api/overview payload IMMEDIATELY after the issues
+    // upsert. Doing this *before* the downstream reconciliation/notification
+    // steps means a thrown exception in those hooks (e.g. reconcileReleaseIssues
+    // failing on a transient DB error) can't leave the cache stale until the
+    // 30s fallback expires — the `issues` table has already changed and the
+    // cache must reflect that, regardless of whether the downstream work
+    // succeeds.
+    await invalidateOverviewCache();
+
     // Auto-discover new releases from fixVersions (also refreshes existing release status)
     try {
       await refreshReleasesForIssue(normalized.fixVersions, normalized.projectKey);
@@ -206,11 +217,6 @@ export async function POST(request: Request) {
     } catch {
       // Non-fatal
     }
-
-    // Drop the cached /api/overview payload so the next page load reflects
-    // this webhook event immediately, instead of waiting for the 30s
-    // unstable_cache fallback to expire.
-    await invalidateOverviewCache();
 
     return NextResponse.json({
       ok: true,

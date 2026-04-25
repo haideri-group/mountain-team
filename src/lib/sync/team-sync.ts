@@ -15,6 +15,8 @@ import {
   type MemberWithTeam,
 } from "@/lib/jira/atlassian-teams";
 import { matchFromDirectory } from "@/lib/google/directory";
+import { sanitizeErrorText } from "@/lib/jira/client";
+import { OVERVIEW_CACHE_TAG } from "@/lib/config";
 
 // --- Constants ---
 
@@ -510,11 +512,13 @@ export async function runTeamSync(
       // "max" profile = stale-while-revalidate: serves stale immediately,
       // recomputes in background. Single-arg revalidateTag(tag) is
       // deprecated in Next.js 16.
-      revalidateTag("overview", "max");
+      revalidateTag(OVERVIEW_CACHE_TAG, "max");
     } catch (revalErr) {
       console.error(
         "Overview cache invalidation failed:",
-        revalErr instanceof Error ? revalErr.message : String(revalErr),
+        sanitizeErrorText(
+          revalErr instanceof Error ? revalErr.message : String(revalErr),
+        ),
       );
     }
 

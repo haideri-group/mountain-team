@@ -35,3 +35,23 @@ export const APP_TIMEZONE = "Asia/Karachi";
  * unreachable or overloaded, in which case failing fast is correct.
  */
 export const CRONICLE_REQUEST_TIMEOUT_MS = 10_000;
+
+/**
+ * Cache identifiers for the /api/overview Next.js `unstable_cache` entry.
+ *
+ * - `OVERVIEW_CACHE_KEY` is the cache-key array element passed to
+ *   `unstable_cache(fn, [OVERVIEW_CACHE_KEY], ...)`. Bumping the version
+ *   suffix (e.g. "overview-v2") forces a one-shot invalidation of every
+ *   existing cached entry, useful when the SHAPE of the cached payload
+ *   changes (callers parsing the JSON depend on a stable contract).
+ * - `OVERVIEW_CACHE_TAG` is the tag passed via `{ tags: [OVERVIEW_CACHE_TAG] }`.
+ *   Sync paths and the JIRA webhook call `revalidateTag(OVERVIEW_CACHE_TAG, "max")`
+ *   to invalidate the cache when underlying data changes.
+ *
+ * Centralised here because the same string is referenced from four
+ * unrelated files (the route handler + three sync/webhook callers).
+ * A rename in only one of them silently breaks freshness — a class of
+ * bug whose only signal is "the dashboard is stale" with no error.
+ */
+export const OVERVIEW_CACHE_KEY = "overview-v1";
+export const OVERVIEW_CACHE_TAG = "overview";

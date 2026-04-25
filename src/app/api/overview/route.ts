@@ -6,6 +6,7 @@ import { and, eq, gte, inArray, or, sql } from "drizzle-orm";
 import { withResolvedAvatars } from "@/lib/db/helpers";
 import { calculateTaskWeight, WORKLOAD_COUNTED_STATUSES } from "@/lib/workload/snapshots";
 import { requirePublicOrSession } from "@/lib/ip/gate";
+import { OVERVIEW_CACHE_KEY, OVERVIEW_CACHE_TAG } from "@/lib/config";
 
 // Statuses the overview treats as "active". Used both in the SQL filter and in
 // the in-memory metrics calc — keep in sync.
@@ -296,11 +297,11 @@ async function computeOverviewUncached() {
   };
 }
 
-// Cached wrapper. Sync paths invalidate via revalidateTag("overview").
+// Cached wrapper. Sync paths invalidate via revalidateTag(OVERVIEW_CACHE_TAG, "max").
 const computeOverview = unstable_cache(
   computeOverviewUncached,
-  ["overview-v1"],
-  { revalidate: 30, tags: ["overview"] },
+  [OVERVIEW_CACHE_KEY],
+  { revalidate: 30, tags: [OVERVIEW_CACHE_TAG] },
 );
 
 export async function GET(request: Request) {
@@ -317,12 +318,15 @@ export async function GET(request: Request) {
 
     return NextResponse.json(data, {
       headers: {
-        // 30s browser/CDN cache + 60s stale-while-revalidate. Note that the
-        // primary cache layer is Next.js's unstable_cache (server-side, tag-
-        // invalidated). This Cache-Control header is a secondary helper for
-        // logged-in browsers doing rapid back-navigation, and for any path
-        // that allows CDN caching (logged-out access from allowlisted IPs).
-        "Cache-Control": "public, max-age=30, stale-while-revalidate=60",
+        // `private` (not `public`) to keep this response out of shared
+        // caches. The endpoint is gated by requirePublicOrSession (session
+        // OR allowlisted IP); a public response could be cached by Fastly /
+        // Cloudflare and replayed to clients that don't satisfy the gate,
+        // bypassing the IP allowlist. Browsers may still cache for 30s for
+        // back-navigation. The primary cache is Next.js's server-side
+        // unstable_cache (tag-invalidated), so we don't need shared-CDN
+        // cache for performance — the upstream cache hit is in-process.
+        "Cache-Control": "private, max-age=30, stale-while-revalidate=60",
       },
     });
   } catch (error) {
