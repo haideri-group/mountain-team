@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import Image from "next/image";
 import {
   ArrowDown,
   ArrowUp,
@@ -9,7 +10,6 @@ import {
   Edit,
   Link2,
 } from "lucide-react";
-import { IssueStatusBadge } from "@/components/overview/issue-status-badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 import type { ActivityEntry, PaginatedComment, ThreadedComment } from "./issue-types";
@@ -80,9 +80,17 @@ function SingleComment({
     <div className={cn("flex gap-3 group/comment", isReply && "ml-11")}>
       <div className="shrink-0">
         {c.authorAvatar ? (
-          <img
+          // unoptimized: avatars come from many domains (gravatar, atlassian,
+          // google, dicebear, our R2 CDN, etc.). Maintaining `images.remote
+          // Patterns` for all of them is brittle, and at 24-32px display size
+          // Next.js Image optimization gains nothing — we'd just round-trip
+          // already-tiny PNGs through /_next/image for no benefit.
+          <Image
             src={c.authorAvatar}
             alt=""
+            width={isReply ? 24 : 32}
+            height={isReply ? 24 : 32}
+            unoptimized
             referrerPolicy="no-referrer"
             className={cn("rounded-full object-cover", isReply ? "h-6 w-6" : "h-8 w-8")}
           />
@@ -373,9 +381,15 @@ export function ActivityTabs({
                   <div key={`comment-${entry.id}`} className="flex gap-3">
                     <div className="shrink-0">
                       {entry.authorAvatar ? (
-                        <img
+                        // See note on the comment-avatar Image above for the
+                        // `unoptimized` rationale (multi-domain avatars, tiny
+                        // display size, no benefit from /_next/image).
+                        <Image
                           src={entry.authorAvatar}
                           alt=""
+                          width={32}
+                          height={32}
+                          unoptimized
                           referrerPolicy="no-referrer"
                           className="h-8 w-8 rounded-full object-cover"
                         />

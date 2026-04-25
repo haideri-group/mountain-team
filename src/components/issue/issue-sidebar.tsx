@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import Image from "next/image";
 import {
   ExternalLink,
   Paperclip,
@@ -88,8 +89,6 @@ export function IssueSidebar({
   phase2Loading,
   github,
   githubLoading,
-  jiraBaseUrl,
-  issueKey,
 }: IssueSidebarProps) {
   const { issue, context } = phase1;
 
@@ -111,9 +110,13 @@ export function IssueSidebar({
         {issue.assigneeName && (
           <div className="flex items-center gap-3 pt-1">
             {issue.assigneeAvatarUrl ? (
-              <img
+              // unoptimized: tiny multi-domain avatars (gravatar/atlassian/google/R2/dicebear)
+              <Image
                 src={issue.assigneeAvatarUrl}
                 alt=""
+                width={32}
+                height={32}
+                unoptimized
                 referrerPolicy="no-referrer"
                 className="h-8 w-8 rounded-full object-cover shrink-0"
               />
@@ -424,9 +427,12 @@ export function IssueSidebar({
                     return (
                       <div key={wl.author} className="flex items-center gap-2">
                         {wl.authorAvatar ? (
-                          <img
+                          <Image
                             src={wl.authorAvatar}
                             alt=""
+                            width={16}
+                            height={16}
+                            unoptimized
                             referrerPolicy="no-referrer"
                             className="h-4 w-4 rounded-full shrink-0"
                           />
@@ -555,10 +561,13 @@ export function IssueSidebar({
                               {pr.reviewers.length > 0 && (
                                 <div className="flex -space-x-1">
                                   {pr.reviewers.slice(0, 3).map((r, i) => (
-                                    <img
+                                    <Image
                                       key={i}
                                       src={r.avatar}
                                       alt={r.name}
+                                      width={12}
+                                      height={12}
+                                      unoptimized
                                       referrerPolicy="no-referrer"
                                       className="h-3 w-3 rounded-full ring-1 ring-card"
                                     />
@@ -652,11 +661,17 @@ export function IssueSidebar({
                     className="relative group rounded-lg overflow-hidden bg-muted/20 border border-border/30 hover:border-primary/40 transition-colors aspect-[4/3] flex items-center justify-center"
                   >
                     {isImage && att.thumbnail ? (
-                      <img
+                      // `fill`: the parent has a fixed aspect ratio (4/3) and
+                      // we want the thumbnail to cover it. unoptimized for the
+                      // same multi-domain reason as avatars elsewhere.
+                      <Image
                         src={att.thumbnail}
                         alt={att.filename}
+                        fill
+                        unoptimized
+                        sizes="(max-width: 768px) 100vw, 25vw"
                         referrerPolicy="no-referrer"
-                        className="absolute inset-0 w-full h-full object-cover"
+                        className="absolute inset-0 object-cover"
                       />
                     ) : (
                       <div className="flex flex-col items-center gap-1 p-2 text-muted-foreground">

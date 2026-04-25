@@ -7,11 +7,10 @@ import {
   discoverCustomFieldIds,
   fetchIssuesByJql,
   fetchSingleIssue,
-  fetchWithRetry,
   buildFullSyncJql,
   buildIncrementalSyncJql,
 } from "@/lib/jira/issues";
-import { normalizeIssue, calculateCycleTime, loadStatusMappingCache, invalidateStatusMappingCache } from "@/lib/jira/normalizer";
+import { normalizeIssue, calculateCycleTime, loadStatusMappingCache } from "@/lib/jira/normalizer";
 import { sanitizeErrorText } from "@/lib/jira/client";
 import { OVERVIEW_CACHE_TAG } from "@/lib/config";
 import { recordDeploymentsForIssue } from "@/lib/github/issue-deployment-sync";

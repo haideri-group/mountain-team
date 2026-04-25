@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
+import Image from "next/image";
 import { User, Settings, ExternalLink, LogOut } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { logout } from "@/app/actions/auth";
@@ -43,9 +44,12 @@ function Avatar({
 
   if (src && !imgError) {
     return (
-      <img
+      <Image
         src={src}
         alt={name}
+        width={size}
+        height={size}
+        unoptimized
         referrerPolicy="no-referrer"
         onError={() => setImgError(true)}
         className={cn(

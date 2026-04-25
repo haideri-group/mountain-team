@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { Inbox, Check, Circle } from "lucide-react";
 import { StatusBadge } from "@/components/shared/status-badge";
@@ -82,9 +83,12 @@ export function DevCard({ member }: { member: DevCardMember }) {
       {/* Header */}
       <div className="px-5 pt-5 pb-3 flex items-center gap-3">
         {member.avatarUrl ? (
-          <img
+          <Image
             src={member.avatarUrl}
             alt=""
+            width={40}
+            height={40}
+            unoptimized
             className="h-10 w-10 rounded-full object-cover"
           />
         ) : (

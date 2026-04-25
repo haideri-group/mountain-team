@@ -1,5 +1,15 @@
-const TOKEN_ENDPOINT = "https://oauth2.googleapis.com/token";
+import { sanitizeErrorText } from "@/lib/jira/client";
+
 const PEOPLE_API = "https://people.googleapis.com/v1";
+
+// Bound the upstream-error text we surface to error messages, matching the
+// approach in src/app/api/google/directory-search/route.ts. Keeps the error
+// useful for debugging without letting an unexpected Google response (HTML
+// maintenance page, multi-MB stacktrace) inflate our log lines.
+function sanitizeAndTruncate(raw: string): string {
+  const safe = sanitizeErrorText(raw);
+  return safe.length > 1000 ? safe.slice(0, 1000) + "…" : safe;
+}
 
 interface DirectoryDate {
   year?: number;
@@ -70,43 +80,6 @@ interface SearchResponse {
   totalSize?: number;
 }
 
-// Refresh the Google access token using the refresh token
-async function refreshAccessToken(refreshToken: string): Promise<string> {
-  const res = await fetch(TOKEN_ENDPOINT, {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({
-      client_id: process.env.GOOGLE_CLIENT_ID || "",
-      client_secret: process.env.GOOGLE_CLIENT_SECRET || "",
-      refresh_token: refreshToken,
-      grant_type: "refresh_token",
-    }),
-  });
-
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`Failed to refresh Google token: ${res.status}`);
-  }
-
-  const data: { access_token: string } = await res.json();
-  return data.access_token;
-}
-
-// Get a valid access token (refresh if needed)
-async function getValidToken(): Promise<string> {
-  // We store the refresh token in the DB or use env as fallback
-  // For now, read from the auth session via a stored token
-  const refreshToken = process.env.GOOGLE_REFRESH_TOKEN;
-
-  if (!refreshToken) {
-    throw new Error(
-      "No Google refresh token available. Sign in with Google OAuth first.",
-    );
-  }
-
-  return refreshAccessToken(refreshToken);
-}
-
 // Build search queries from a display name: full name, first+last, first only
 function buildSearchQueries(displayName: string): string[] {
   const parts = displayName.trim().split(/\s+/);
@@ -149,8 +122,9 @@ async function searchDirectory(
   );
 
   if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`Google Directory search failed: ${res.status}`);
+    throw new Error(
+      `Google Directory search failed: ${res.status} ${sanitizeAndTruncate(await res.text())}`,
+    );
   }
 
   const data: SearchResponse = await res.json();

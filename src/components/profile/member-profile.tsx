@@ -86,7 +86,7 @@ export function MemberProfile({ memberId, isAdmin = false }: MemberProfileProps)
     );
   }
 
-  const { member, stats, currentIssue, queuedIssues, inReviewIssues, recentDone, allIssues, monthlyData, boards } = data;
+  const { member, stats, currentIssue, queuedIssues, inReviewIssues, allIssues, monthlyData, boards } = data;
   const isDeparted = member.status === "departed";
 
   return (

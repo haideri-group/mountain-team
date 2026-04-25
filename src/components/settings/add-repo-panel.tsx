@@ -3,7 +3,6 @@
 import { useState, useCallback } from "react";
 import {
   Search,
-  GitBranch,
   Loader2,
   AlertTriangle,
   Globe,

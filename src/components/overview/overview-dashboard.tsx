@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useCallback } from "react";
 import { Loader2 } from "lucide-react";
 import { MetricsStrip } from "./metrics-strip";
 import { FilterBar } from "./filter-bar";
@@ -38,32 +38,37 @@ export function OverviewDashboard({ isAdmin }: { isAdmin: boolean }) {
   const [filters, setFilters] = useState(defaultFilters);
   const [selectedTeam, setSelectedTeam] = useState<string>("");
 
-  const fetchData = async () => {
+  // Stable across renders so the refresh button (`onClick={fetchData}`) gets
+  // a consistent reference. Uses a functional setter for selectedTeam so
+  // we don't need it in the dependency array — that would cause a re-fetch
+  // on every team-filter change, which is wrong.
+  const fetchData = useCallback(async () => {
     try {
       setLoading(true);
       const res = await fetch("/api/overview");
       if (!res.ok) throw new Error("Failed to load overview data");
       const json = await res.json();
       setData(json);
-      // Auto-select first team if not already selected
-      if (!selectedTeam && json.members) {
+      // Auto-select first team if not already selected (functional update
+      // so we read prev without depending on selectedTeam in closure).
+      if (json.members) {
         const teams = [...new Set(
           json.members
             .map((m: { teamName: string | null }) => m.teamName)
             .filter(Boolean) as string[],
         )].sort();
-        if (teams.length > 0) setSelectedTeam(teams[0]);
+        if (teams.length > 0) setSelectedTeam((prev) => prev || teams[0]);
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Something went wrong");
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
     fetchData();
-  }, []);
+  }, [fetchData]);
 
   const handleFilterChange = (key: string, value: string) => {
     setFilters((prev) => ({ ...prev, [key]: value }));

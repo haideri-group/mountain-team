@@ -6,6 +6,7 @@ import {
   useCallback,
 } from "react";
 import Link from "next/link";
+import Image from "next/image";
 import {
   Flame,
   ArrowUp,
@@ -302,7 +303,6 @@ function BarRow({
   // Scale: 150% = full bar width. So 100% capacity = 66.7% of visual bar.
   // This ensures even 150% members stay within the container.
   const maxScale = 150;
-  const barPct = Math.min(member.percentage, maxScale);
   const mainBarWidth = Math.min(member.percentage, 100) / maxScale * 100; // 0-66.7%
   const overflowBarWidth = member.percentage > 100
     ? (Math.min(member.percentage, maxScale) - 100) / maxScale * 100
@@ -323,9 +323,12 @@ function BarRow({
           className="shrink-0 hover:opacity-80 transition-opacity"
         >
           {member.avatarUrl ? (
-            <img
+            <Image
               src={member.avatarUrl}
               alt={member.displayName}
+              width={32}
+              height={32}
+              unoptimized
               referrerPolicy="no-referrer"
               className="h-8 w-8 rounded-full object-cover"
             />

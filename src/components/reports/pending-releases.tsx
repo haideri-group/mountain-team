@@ -4,7 +4,6 @@ import { useState, useEffect } from "react";
 import { ChartInfo } from "./chart-info";
 import { Rocket, Loader2 } from "lucide-react";
 import Link from "next/link";
-import { IssueTypeIcon } from "@/components/shared/issue-type-icon";
 
 interface PendingRelease {
   jiraKey: string;

@@ -69,7 +69,7 @@ export async function POST(request: NextRequest) {
 }
 
 // GET /api/sync/board?progress=1 — Live progress for board sync
-export async function GET(request: NextRequest) {
+export async function GET() {
   try {
     const session = await auth();
     if (!session?.user) {
@@ -77,7 +77,7 @@ export async function GET(request: NextRequest) {
     }
 
     return NextResponse.json({ progress: getSyncProgress() });
-  } catch (error) {
+  } catch {
     return NextResponse.json({ progress: null });
   }
 }
