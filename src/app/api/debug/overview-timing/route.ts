@@ -150,9 +150,58 @@ export async function GET(request: Request) {
           )
       : [];
   phases.push({
-    name: "Q3: SELECT … FROM issues WHERE active|recent-done",
+    name: "Q3 (narrow, 6 cols): SELECT … FROM issues WHERE active|recent-done",
     ms: round(performance.now() - q3Start),
     rows: allIssues.length,
+  });
+
+  // Q3-FULL: select the same 16 columns /api/overview actually uses, to test
+  // whether the wider projection (labels, title, priority, ...) is the slow bit.
+  const q3FullStart = performance.now();
+  const allIssuesFull =
+    trackedBoardIds.length > 0
+      ? await db
+          .select({
+            id: issues.id,
+            jiraKey: issues.jiraKey,
+            title: issues.title,
+            status: issues.status,
+            type: issues.type,
+            boardId: issues.boardId,
+            assigneeId: issues.assigneeId,
+            startDate: issues.startDate,
+            dueDate: issues.dueDate,
+            completedDate: issues.completedDate,
+            cycleTime: issues.cycleTime,
+            storyPoints: issues.storyPoints,
+            priority: issues.priority,
+            requestPriority: issues.requestPriority,
+            labels: issues.labels,
+            jiraCreatedAt: issues.jiraCreatedAt,
+          })
+          .from(issues)
+          .where(
+            and(
+              inArray(issues.boardId, trackedBoardIds),
+              or(
+                inArray(issues.status, [...ACTIVE_STATUSES]),
+                and(
+                  eq(issues.status, "done"),
+                  gte(issues.completedDate, thirtyDaysAgoStr),
+                ),
+                and(
+                  eq(issues.status, "closed"),
+                  gte(issues.completedDate, thirtyDaysAgoStr),
+                ),
+              ),
+            ),
+          )
+      : [];
+  phases.push({
+    name: "Q3-FULL (16 cols, same as /api/overview): same WHERE",
+    ms: round(performance.now() - q3FullStart),
+    rows: allIssuesFull.length,
+    note: "If much slower than narrow Q3, the wider projection (labels JSON, title) is the bottleneck",
   });
 
   const issueKeys = allIssues.map((i) => i.jiraKey);
@@ -196,6 +245,58 @@ export async function GET(request: Request) {
     name: "Q5: SELECT assigneeId, status, COUNT(*) GROUP BY (lifetime)",
     ms: round(performance.now() - q5Start),
     rows: lifetimeCounts.length,
+  });
+
+  // ── Replicate /api/overview's in-memory mapping work ──────────────────────
+  // 47 members × 785 issues × ~6 filters/sort each. Should be tens of ms in JS.
+  // If this is multi-second, the slowness is in here, not the DB.
+  const mapStart = performance.now();
+  const boardMap = new Map(trackedBoards.map((b) => [b.id, b]));
+  const sevenDaysAgo = new Date();
+  sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+  const sevenDaysAgoStr = sevenDaysAgo.toISOString().split("T")[0];
+  const result = allMembers.map((member) => {
+    const memberIssues = allIssuesFull.filter((i) => i.assigneeId === member.id);
+    const currentIssue = memberIssues.find((i) => i.status === "in_progress") || null;
+    const queuedIssues = memberIssues
+      .filter((i) => i.status === "todo")
+      .sort((a, b) => (a.startDate || "").localeCompare(b.startDate || ""));
+    const recentDone = memberIssues
+      .filter(
+        (i) =>
+          i.status === "done" &&
+          i.completedDate &&
+          i.completedDate >= sevenDaysAgoStr,
+      )
+      .sort((a, b) => (b.completedDate || "").localeCompare(a.completedDate || ""));
+    // Touch boardMap for each issue (mimic enrichIssue) so we measure that too.
+    [...queuedIssues, ...recentDone].forEach((i) => boardMap.get(i.boardId));
+    return {
+      memberId: member.id,
+      currentIssue: currentIssue?.id ?? null,
+      queuedCount: queuedIssues.length,
+      recentDoneCount: recentDone.length,
+    };
+  });
+  phases.push({
+    name: "In-memory mapping (47 members × 785 issues filter/sort/enrich)",
+    ms: round(performance.now() - mapStart),
+    rows: result.length,
+  });
+
+  // ── JSON serialize a payload comparable to /api/overview's response ───────
+  const serStart = performance.now();
+  const _payload = JSON.stringify({
+    members: result,
+    issuesFull: allIssuesFull,
+    deployments: matchingDeployments,
+    boards: trackedBoards,
+    members_raw: allMembers,
+  });
+  void _payload; // discard, just measure serialize time
+  phases.push({
+    name: "JSON.stringify of full payload (87KB-equivalent)",
+    ms: round(performance.now() - serStart),
   });
 
   // ── Same 5 queries, parallelized along their actual dependency DAG ────────
