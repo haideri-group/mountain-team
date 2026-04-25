@@ -89,6 +89,7 @@ export function DevCard({ member }: { member: DevCardMember }) {
             width={40}
             height={40}
             unoptimized
+            referrerPolicy="no-referrer"
             className="h-10 w-10 rounded-full object-cover"
           />
         ) : (

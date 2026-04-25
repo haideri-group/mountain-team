@@ -154,7 +154,7 @@ export function TeamTimeTracking({ team }: { team?: string }) {
             >
               {/* Avatar */}
               {m.avatarUrl ? (
-                <Image src={m.avatarUrl} alt="" width={28} height={28} unoptimized className="h-7 w-7 rounded-full object-cover shrink-0" />
+                <Image src={m.avatarUrl} alt="" width={28} height={28} unoptimized referrerPolicy="no-referrer" className="h-7 w-7 rounded-full object-cover shrink-0" />
               ) : (
                 <div className="h-7 w-7 rounded-full bg-muted/50 flex items-center justify-center text-[9px] font-bold font-mono text-muted-foreground shrink-0">
                   {getInitials(m.displayName)}

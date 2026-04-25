@@ -76,6 +76,7 @@ export function ProfileHeader({ member }: ProfileHeaderProps) {
               width={64}
               height={64}
               unoptimized
+              referrerPolicy="no-referrer"
               className="h-16 w-16 rounded-full object-cover"
             />
           ) : (

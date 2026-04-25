@@ -70,7 +70,7 @@ function PipelineColumn({
                 <div className="flex items-center gap-1.5">
                   {task.assigneeAvatar ? (
                     // unoptimized: tiny multi-domain avatars (see issue-activity.tsx for full reasoning)
-                    <Image src={task.assigneeAvatar} alt="" width={14} height={14} unoptimized className="h-3.5 w-3.5 rounded-full" />
+                    <Image src={task.assigneeAvatar} alt="" width={14} height={14} unoptimized referrerPolicy="no-referrer" className="h-3.5 w-3.5 rounded-full" />
                   ) : (
                     <div className="h-3.5 w-3.5 rounded-full bg-muted/50 flex items-center justify-center text-[6px] font-bold font-mono text-muted-foreground">
                       {getInitials(task.assigneeName)}

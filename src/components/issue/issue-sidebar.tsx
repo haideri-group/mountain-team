@@ -560,18 +560,33 @@ export function IssueSidebar({
                               {pr.commentCount > 0 && <span>{pr.commentCount} comment{pr.commentCount > 1 ? "s" : ""}</span>}
                               {pr.reviewers.length > 0 && (
                                 <div className="flex -space-x-1">
-                                  {pr.reviewers.slice(0, 3).map((r, i) => (
-                                    <Image
-                                      key={i}
-                                      src={r.avatar}
-                                      alt={r.name}
-                                      width={12}
-                                      height={12}
-                                      unoptimized
-                                      referrerPolicy="no-referrer"
-                                      className="h-3 w-3 rounded-full ring-1 ring-card"
-                                    />
-                                  ))}
+                                  {pr.reviewers.slice(0, 3).map((r, i) =>
+                                    r.avatar ? (
+                                      // Guard: next/image throws on empty/undefined src
+                                      // (unlike <img> which just rendered broken). The
+                                      // upstream JIRA dev-status API doesn't always
+                                      // include a reviewer avatar URL, so we fall back
+                                      // to an initials chip.
+                                      <Image
+                                        key={i}
+                                        src={r.avatar}
+                                        alt={r.name}
+                                        width={12}
+                                        height={12}
+                                        unoptimized
+                                        referrerPolicy="no-referrer"
+                                        className="h-3 w-3 rounded-full ring-1 ring-card"
+                                      />
+                                    ) : (
+                                      <div
+                                        key={i}
+                                        title={r.name}
+                                        className="h-3 w-3 rounded-full ring-1 ring-card bg-muted/50 flex items-center justify-center text-[5px] font-bold font-mono text-muted-foreground"
+                                      >
+                                        {r.name.charAt(0).toUpperCase()}
+                                      </div>
+                                    ),
+                                  )}
                                 </div>
                               )}
                             </div>

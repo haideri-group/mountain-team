@@ -54,7 +54,7 @@ export function PendingReleasesTable({ releases }: { releases: PendingRelease[] 
                     <div className="flex items-center gap-1.5">
                       {pr.assigneeAvatar && (
                         // unoptimized: tiny multi-domain avatars (see issue-activity.tsx for full reasoning)
-                        <Image src={pr.assigneeAvatar} alt="" width={16} height={16} unoptimized className="h-4 w-4 rounded-full" />
+                        <Image src={pr.assigneeAvatar} alt="" width={16} height={16} unoptimized referrerPolicy="no-referrer" className="h-4 w-4 rounded-full" />
                       )}
                       <span className="text-muted-foreground">{pr.assigneeName}</span>
                     </div>

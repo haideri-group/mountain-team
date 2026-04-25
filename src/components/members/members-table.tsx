@@ -437,7 +437,7 @@ export function MembersTable({ isAdmin }: MembersTableProps) {
                                       }`}
                                     >
                                       {s.photo ? (
-                                        <Image src={s.photo} alt="" width={24} height={24} unoptimized className="h-6 w-6 rounded-full shrink-0" />
+                                        <Image src={s.photo} alt="" width={24} height={24} unoptimized referrerPolicy="no-referrer" className="h-6 w-6 rounded-full shrink-0" />
                                       ) : (
                                         <div className="h-6 w-6 rounded-full bg-muted/50 flex items-center justify-center text-[9px] font-bold font-mono text-muted-foreground shrink-0">
                                           {s.name.split(" ").map((n) => n[0]).join("").substring(0, 2).toUpperCase()}

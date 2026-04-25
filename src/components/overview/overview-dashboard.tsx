@@ -45,19 +45,28 @@ export function OverviewDashboard({ isAdmin }: { isAdmin: boolean }) {
   const fetchData = useCallback(async () => {
     try {
       setLoading(true);
+      // Clear stale error so a successful retry actually shows data;
+      // otherwise the render check `if (error || !data)` keeps the user
+      // stuck on the error view even after the next fetch succeeds.
+      setError(null);
       const res = await fetch("/api/overview");
       if (!res.ok) throw new Error("Failed to load overview data");
       const json = await res.json();
       setData(json);
-      // Auto-select first team if not already selected (functional update
-      // so we read prev without depending on selectedTeam in closure).
+      // Validate selectedTeam against the new data: keep it if still
+      // present, otherwise fall back to the first available team. Without
+      // this, a stale selection (e.g. team removed from JIRA) would render
+      // an empty grid because the line ~97 filter has nothing to match.
       if (json.members) {
         const teams = [...new Set(
           json.members
             .map((m: { teamName: string | null }) => m.teamName)
             .filter(Boolean) as string[],
         )].sort();
-        if (teams.length > 0) setSelectedTeam((prev) => prev || teams[0]);
+        setSelectedTeam((prev) => {
+          if (teams.length === 0) return "";
+          return prev && teams.includes(prev) ? prev : teams[0];
+        });
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Something went wrong");
