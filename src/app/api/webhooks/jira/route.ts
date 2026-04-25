@@ -9,6 +9,8 @@ import { generateNotificationForIssue } from "@/lib/notifications/generator";
 import { refreshReleasesForIssue } from "@/lib/sync/release-sync";
 import { reconcileReleaseIssues } from "@/lib/releases/sync-release-issues";
 import type { JiraIssueRaw } from "@/lib/jira/issues";
+import { sanitizeErrorText } from "@/lib/jira/client";
+import { OVERVIEW_CACHE_TAG } from "@/lib/config";
 
 // Helper: log webhook event for diagnostics
 async function logWebhook(event: string | null, summary: string, payload?: string) {
@@ -18,6 +20,26 @@ async function logWebhook(event: string | null, summary: string, payload?: strin
       sql`INSERT INTO webhook_logs (id, source, event, result, payload) VALUES (${id}, 'jira', ${event || 'unknown'}, ${summary}, ${(payload || '').substring(0, 2000)})`,
     );
   } catch { /* non-fatal */ }
+}
+
+// Helper: drop the cached /api/overview payload so the next page load
+// reflects the webhook event immediately. Best-effort — invalidation
+// failures must not propagate (the unstable_cache 30s fallback is the
+// safety net), and `next/cache` is a sync-aware import inside an async
+// scope so it's loaded lazily.
+async function invalidateOverviewCache() {
+  try {
+    const { revalidateTag } = await import("next/cache");
+    // "max" profile = stale-while-revalidate: serves stale immediately,
+    // recomputes in background. Single-arg revalidateTag(tag) is
+    // deprecated in Next.js 16.
+    revalidateTag(OVERVIEW_CACHE_TAG, "max");
+  } catch (err) {
+    console.error(
+      "Overview cache invalidation failed:",
+      sanitizeErrorText(err instanceof Error ? err.message : String(err)),
+    );
+  }
 }
 
 // POST /api/webhooks/jira -- Receives JIRA webhook events
@@ -81,6 +103,7 @@ export async function POST(request: Request) {
           .update(issues)
           .set({ status: "closed" })
           .where(eq(issues.id, existing.id));
+        await invalidateOverviewCache();
       }
 
       return NextResponse.json({ ok: true, action: "marked_closed" });
@@ -155,6 +178,15 @@ export async function POST(request: Request) {
       .insert(issues)
       .values({ id, jiraKey: normalized.jiraKey, ...fields })
       .onDuplicateKeyUpdate({ set: fields });
+
+    // Drop the cached /api/overview payload IMMEDIATELY after the issues
+    // upsert. Doing this *before* the downstream reconciliation/notification
+    // steps means a thrown exception in those hooks (e.g. reconcileReleaseIssues
+    // failing on a transient DB error) can't leave the cache stale until the
+    // 30s fallback expires — the `issues` table has already changed and the
+    // cache must reflect that, regardless of whether the downstream work
+    // succeeds.
+    await invalidateOverviewCache();
 
     // Auto-discover new releases from fixVersions (also refreshes existing release status)
     try {
