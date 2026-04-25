@@ -35,14 +35,6 @@ type ReleaseNotificationType =
   | "release_scope_changed"
   | "release_stale";
 
-const RELEASE_TYPES: ReleaseNotificationType[] = [
-  "release_overdue",
-  "release_ready",
-  "release_deployed",
-  "release_scope_changed",
-  "release_stale",
-];
-
 /** Types that should fire at most once per release for the lifetime of the
  *  release. Marking them read should NOT allow a re-fire. */
 const ONE_SHOT_TYPES: ReadonlySet<ReleaseNotificationType> = new Set([

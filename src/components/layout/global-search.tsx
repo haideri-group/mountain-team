@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import {
   useState,
   useEffect,
@@ -8,7 +9,7 @@ import {
   KeyboardEvent,
 } from "react";
 import { useRouter } from "next/navigation";
-import { Search, Clock, X } from "lucide-react";
+import { Search, Clock } from "lucide-react";
 import { IssueStatusBadge } from "@/components/overview/issue-status-badge";
 import { IssueTypeIcon } from "@/components/shared/issue-type-icon";
 import { cn } from "@/lib/utils";
@@ -110,9 +111,12 @@ function MemberAvatar({
 
   if (src && !imgError) {
     return (
-      <img
+      <Image
         src={src}
         alt={name}
+        width={28}
+        height={28}
+        unoptimized
         referrerPolicy="no-referrer"
         onError={() => setImgError(true)}
         className="h-7 w-7 rounded-full object-cover shrink-0"

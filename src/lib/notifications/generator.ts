@@ -6,7 +6,7 @@ import {
   boards,
   dashboardConfig,
 } from "@/lib/db/schema";
-import { eq, and, ne, lt, inArray } from "drizzle-orm";
+import { eq, and, ne, inArray } from "drizzle-orm";
 import { calculateTaskWeight } from "@/lib/workload/snapshots";
 
 // --- Helpers ---

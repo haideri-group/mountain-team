@@ -5,7 +5,6 @@ import {
   findSyncLogIdNearTime,
   getPersistedProgress,
   getSyncLogStatusById,
-  medianRecentDurationMs,
   type SyncLogType,
 } from "@/lib/sync/logs-query";
 import { TYPE_TO_URL_PATH } from "./correlate";

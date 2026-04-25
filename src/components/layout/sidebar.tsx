@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { Users, LayoutDashboard, Calendar, Settings, UserCircle, PieChart } from "lucide-react";
+import { Users } from "lucide-react";
 import { auth } from "@/auth";
 import { SidebarNav } from "./sidebar-nav";
 

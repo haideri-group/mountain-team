@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
+import Image from "next/image";
 import { ChartInfo } from "./chart-info";
 import { TrendingUp, TrendingDown, Minus, ChevronUp, ChevronDown, ChevronsUpDown } from "lucide-react";
 
@@ -177,9 +178,12 @@ export function DeveloperRanking({ data }: DeveloperRankingProps) {
                     className="flex items-center gap-3 group"
                   >
                     {dev.avatarUrl ? (
-                      <img
+                      <Image
                         src={dev.avatarUrl}
                         alt={dev.memberName}
+                        width={28}
+                        height={28}
+                        unoptimized
                         className="h-7 w-7 rounded-full object-cover"
                         referrerPolicy="no-referrer"
                       />

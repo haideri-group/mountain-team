@@ -36,12 +36,6 @@ interface GitHubRepo {
   branchMappings: BranchMapping[];
 }
 
-const envColors = {
-  staging: "bg-amber-50 text-amber-700 dark:bg-amber-950 dark:text-amber-400",
-  production: "bg-emerald-50 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-400",
-  canonical: "bg-blue-50 text-blue-700 dark:bg-blue-950 dark:text-blue-400",
-};
-
 export function GitHubReposManager() {
   const [repos, setRepos] = useState<GitHubRepo[]>([]);
   const [loading, setLoading] = useState(true);

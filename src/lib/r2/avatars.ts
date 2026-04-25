@@ -1,5 +1,5 @@
 import { createHash } from "crypto";
-import { uploadToR2, getR2PublicUrl } from "./client";
+import { uploadToR2 } from "./client";
 
 interface CacheResult {
   r2UrlSmall: string;

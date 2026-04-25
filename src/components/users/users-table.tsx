@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
+import Image from "next/image";
 import { Search, Loader2, ShieldCheck, UserX, UserCheck, Users, Shield } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { FilterSelect } from "@/components/shared/filter-select";
@@ -267,9 +268,12 @@ export function UsersTable({ currentUserId }: UsersTableProps) {
                       <td className="px-5 py-4">
                         <div className="flex items-center gap-3">
                           {user.avatarUrl ? (
-                            <img
+                            <Image
                               src={user.avatarUrl}
                               alt=""
+                              width={36}
+                              height={36}
+                              unoptimized
                               className="h-9 w-9 rounded-full object-cover"
                               referrerPolicy="no-referrer"
                             />

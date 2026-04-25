@@ -1,7 +1,6 @@
 import type { JiraIssueRaw, CustomFieldIds } from "./issues";
 import { db } from "@/lib/db";
 import { statusMappings } from "@/lib/db/schema";
-import { eq } from "drizzle-orm";
 
 // --- App Enum Values ---
 

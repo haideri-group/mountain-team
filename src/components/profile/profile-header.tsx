@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Image from "next/image";
 import { Mail, Calendar, UserX, ExternalLink, Users, Check, Copy } from "lucide-react";
 import { StatusBadge } from "@/components/shared/status-badge";
 import { APP_TIMEZONE } from "@/lib/config";
@@ -69,9 +70,13 @@ export function ProfileHeader({ member }: ProfileHeaderProps) {
         <div className="flex items-start gap-5">
           {/* Avatar */}
           {member.avatarUrl ? (
-            <img
+            <Image
               src={member.avatarUrl}
               alt=""
+              width={64}
+              height={64}
+              unoptimized
+              referrerPolicy="no-referrer"
               className="h-16 w-16 rounded-full object-cover"
             />
           ) : (

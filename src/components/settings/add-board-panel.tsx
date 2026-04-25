@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
+import Image from "next/image";
 import { Plus, Search, Check, Loader2, AlertTriangle, Wifi, WifiOff, ChevronDown } from "lucide-react";
 
 interface JiraProject {
@@ -260,7 +261,7 @@ export function AddBoardPanel({ onBoardAdded }: AddBoardPanelProps) {
                 className="flex items-center gap-3 p-3 rounded-xl border border-border/50 hover:bg-muted/10 transition-all"
               >
                 {project.avatarUrl ? (
-                  <img src={project.avatarUrl} alt="" className="h-9 w-9 rounded-lg" />
+                  <Image src={project.avatarUrl} alt="" width={36} height={36} unoptimized className="h-9 w-9 rounded-lg" />
                 ) : (
                   <div className="h-9 w-9 rounded-lg bg-muted/30 flex items-center justify-center text-xs font-bold font-mono text-muted-foreground">
                     {project.key.substring(0, 2)}
@@ -296,7 +297,7 @@ export function AddBoardPanel({ onBoardAdded }: AddBoardPanelProps) {
             {alreadyTracked.map((project) => (
               <div key={project.key} className="flex items-center gap-3 p-3 rounded-xl opacity-50">
                 {project.avatarUrl ? (
-                  <img src={project.avatarUrl} alt="" className="h-9 w-9 rounded-lg" />
+                  <Image src={project.avatarUrl} alt="" width={36} height={36} unoptimized className="h-9 w-9 rounded-lg" />
                 ) : (
                   <div className="h-9 w-9 rounded-lg bg-muted/30 flex items-center justify-center text-xs font-bold font-mono text-muted-foreground">
                     {project.key.substring(0, 2)}

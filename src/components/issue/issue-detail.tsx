@@ -9,7 +9,6 @@ import {
   Clock,
   ChevronRight,
   CheckSquare,
-  Square,
   Link2,
   FileText,
   RefreshCw,
@@ -263,7 +262,7 @@ export function IssueDetail({ issueKey }: IssueDetailProps) {
     );
   }
 
-  const { issue, context } = phase1;
+  const { issue } = phase1;
   const jiraBaseUrl = process.env.NEXT_PUBLIC_JIRA_BASE_URL ?? "";
   const createdDisplay = formatSmartDate(issue.jiraCreatedAt);
 

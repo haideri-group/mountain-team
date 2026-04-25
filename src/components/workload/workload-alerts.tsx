@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import Image from "next/image";
 import { AlertTriangle, Flame, Inbox, PauseCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -96,9 +97,12 @@ function AlertRow({ alert }: { alert: WorkloadAlert }) {
         title={`View ${alert.memberName}'s profile`}
       >
         {alert.avatarUrl ? (
-          <img
+          <Image
             src={alert.avatarUrl}
             alt={alert.memberName}
+            width={32}
+            height={32}
+            unoptimized
             referrerPolicy="no-referrer"
             className="h-8 w-8 rounded-full object-cover ring-2 ring-background"
           />

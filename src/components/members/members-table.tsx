@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useRef, useCallback, useEffect } from "react";
+import Image from "next/image";
 import { Search, RefreshCw, Loader2, Pencil, Check, X } from "lucide-react";
 import { StatusBadge } from "@/components/shared/status-badge";
 import { FilterSelect } from "@/components/shared/filter-select";
@@ -367,7 +368,7 @@ export function MembersTable({ isAdmin }: MembersTableProps) {
                       <div className="flex items-center gap-3">
                         <Link href={`/members/${member.id}`} className="shrink-0">
                           {member.avatarUrl ? (
-                            <img src={member.avatarUrl} alt="" className="h-9 w-9 rounded-full object-cover" referrerPolicy="no-referrer" />
+                            <Image src={member.avatarUrl} alt="" width={36} height={36} unoptimized className="h-9 w-9 rounded-full object-cover" referrerPolicy="no-referrer" />
                           ) : (
                             <div
                               className="h-9 w-9 rounded-full flex items-center justify-center text-white text-xs font-bold"
@@ -436,7 +437,7 @@ export function MembersTable({ isAdmin }: MembersTableProps) {
                                       }`}
                                     >
                                       {s.photo ? (
-                                        <img src={s.photo} alt="" className="h-6 w-6 rounded-full shrink-0" />
+                                        <Image src={s.photo} alt="" width={24} height={24} unoptimized referrerPolicy="no-referrer" className="h-6 w-6 rounded-full shrink-0" />
                                       ) : (
                                         <div className="h-6 w-6 rounded-full bg-muted/50 flex items-center justify-center text-[9px] font-bold font-mono text-muted-foreground shrink-0">
                                           {s.name.split(" ").map((n) => n[0]).join("").substring(0, 2).toUpperCase()}
