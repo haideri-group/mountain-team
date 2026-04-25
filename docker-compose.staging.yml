@@ -17,6 +17,17 @@ services:
     container_name: tmstage-web
     restart: unless-stopped
     env_file: .env
+    # Runtime env vars sourced from the `staging` GitHub Environment via the
+    # CI deploy workflow. Substituted at compose-parse time from the SSH
+    # session's exported envs. Anything set here overrides any same-named
+    # entry in `.env`. Keep this list narrow — only vars where the GitHub
+    # repo is a more reliable source than the homelab file.
+    environment:
+      # CDN base URL for avatars resolved via resolveAvatarUrl(). Just the
+      # PUBLIC URL — no R2 write credentials, so isR2Configured() returns
+      # false on staging and avatar caching is skipped here. Staging displays
+      # whatever production has cached at the same R2 keys (read-through).
+      CLOUDFLARE_R2_PUBLIC_URL: ${CLOUDFLARE_R2_PUBLIC_URL:-}
     # Bind to localhost only — nginx on the host handles TLS and proxies
     # https://staging-haider-team.appz.cc → 127.0.0.1:3007.
     ports:

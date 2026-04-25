@@ -167,9 +167,11 @@ jobs:
           key: ${{ secrets.SSH_KEY }}
           port: ${{ vars.SSH_PORT || 22 }}
           command_timeout: 10m
-          # Pass registry creds into the SSH session via envs so we can use them
-          # without echoing secrets inline (appleboy/ssh-action handles masking).
-          envs: REG_HOST,REG_USER,REG_PASS,IMAGE_NAME
+          # Pass registry creds + compose-substitution vars into the SSH
+          # session. Listed here so appleboy/ssh-action propagates them; the
+          # `env:` block at the bottom of this step provides the values from
+          # the `staging` GitHub Environment.
+          envs: REG_HOST,REG_USER,REG_PASS,IMAGE_NAME,R2_PUBLIC_URL
           script: |
             set -euo pipefail
             cd /home/haider/teamflow-staging
@@ -177,6 +179,13 @@ jobs:
             # Export under the name docker compose expects for substitution in
             # docker-compose.staging.yml's `image: ${REGISTRY_HOST:-…}` line.
             export REGISTRY_HOST="$REG_HOST"
+
+            # Runtime env vars sourced from the `staging` GitHub Environment.
+            # Re-exported here under the names docker-compose.staging.yml's
+            # `environment:` block references via ${VAR:-} substitution.
+            # Single source of truth is the GitHub Environment `vars.*`, not
+            # the homelab .env.
+            export CLOUDFLARE_R2_PUBLIC_URL="$R2_PUBLIC_URL"
 
             echo "▶ Logging into registry from homelab…"
             echo "$REG_PASS" | docker login "$REG_HOST" -u "$REG_USER" --password-stdin
@@ -258,6 +267,12 @@ jobs:
           REG_USER: ${{ vars.REGISTRY_USERNAME }}
           REG_PASS: ${{ secrets.REGISTRY_PASSWORD }}
           IMAGE_NAME: ${{ env.IMAGE_NAME }}
+          # `staging` GitHub Environment variable (Settings → Environments →
+          # staging → Variables). Resolves because the deploy job opts in via
+          # `environment: staging` above. Empty value is non-fatal —
+          # resolveAvatarUrl() falls back to relative paths and avatars just
+          # don't load.
+          R2_PUBLIC_URL: ${{ vars.CLOUDFLARE_R2_PUBLIC_URL }}
 
       - name: Report success
         if: success()
